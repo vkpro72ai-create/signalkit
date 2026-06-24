@@ -1,0 +1,4 @@
+{
+  "$comment": "Canonical TS base for apps that live outside the package graph (web/mobile) and want to extend a published config. Mirrors ../../tsconfig.base.json.",
+  "extends": "../../tsconfig.base.json"
+}

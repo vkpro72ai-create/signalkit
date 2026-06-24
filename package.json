@@ -1,0 +1,39 @@
+{
+  "name": "signalkit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SignalKit / NicheOS — AI-first B2B/SaaS platform for evidence-backed market opportunity discovery and Product Document Pack generation.",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "test": "pnpm -r run test",
+    "clean": "tsc -b --clean && pnpm -r exec rimraf dist .turbo node_modules/.cache",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\""
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react@^19": "19.0.12",
+      "@types/react-dom@^19": "19.0.4"
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

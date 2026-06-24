@@ -1,0 +1,865 @@
+// SignalKit production data model.
+//
+// This is the first real migration — the full domain, not a simplified MVP base.
+// It is a faithful projection of @signalkit/shared. Identity / geo / settings /
+// RBAC / audit (Session 2) are fully fleshed out; sources, niches, evidence,
+// documents, LLM, exports and commercial tables exist so the database already
+// supports language, geo, LLM, evidence and exports from day one (their feature
+// modules arrive in later sessions).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum WorkspaceRole {
+  owner
+  admin
+  strategist
+  product_manager
+  designer
+  engineer
+  growth
+  viewer
+  client_viewer
+}
+
+enum MemberStatus {
+  active
+  invited
+  suspended
+}
+
+enum GeoConsentStatus {
+  unknown
+  granted
+  denied
+  revoked
+}
+
+enum LocationUsageMode {
+  off
+  country_only
+  region_only
+}
+
+enum MarketScope {
+  current_location
+  country_of_residence
+  manual_country
+  manual_region
+  multi_country
+  global
+}
+
+enum RegulatorySensitivity {
+  low
+  medium
+  high
+}
+
+enum LlmMode {
+  byok
+  platform
+}
+
+enum PlanType {
+  free
+  founder_pro
+  agency
+  studio
+  enterprise
+}
+
+enum ProjectStatus {
+  draft
+  active
+  archived
+}
+
+enum DocumentStatus {
+  empty
+  generating
+  draft
+  in_review
+  changes_requested
+  approved
+  locked
+  archived
+  failed
+}
+
+enum ExportStatus {
+  queued
+  processing
+  ready
+  failed
+  expired
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+enum SourceItemStatus {
+  collected
+  parsed
+  failed
+  excluded
+}
+
+enum LlmConnectionStatus {
+  active
+  invalid
+  revoked
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity & platform
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  passwordHash    String?
+  displayName     String?
+  avatarUrl       String?
+  emailVerified   Boolean  @default(false)
+  interfaceLocale String   @default("en")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  settings        UserSettings?
+  memberships     WorkspaceMember[]
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+  auditEvents     AuditLog[]        @relation("AuditActor")
+  createdProjects Project[]         @relation("ProjectCreator")
+  llmConnections  UserLLMConnection[]
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner            User               @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members          WorkspaceMember[]
+  settings         WorkspaceSettings?
+  llmSettings      WorkspaceLLMSettings?
+  projects         Project[]
+  auditEvents      AuditLog[]
+  llmConnections   UserLLMConnection[]
+  billingAccount   BillingAccount?
+  apiKeys          APIKey[]
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(viewer)
+  status      MemberStatus  @default(active)
+  invitedById String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model UserSettings {
+  id                      String            @id @default(cuid())
+  userId                  String            @unique
+  interfaceLocale         String            @default("en")
+  defaultDocumentLanguage String            @default("en")
+  fallbackLanguage        String            @default("en")
+  timezone                String            @default("UTC")
+  // Geo (consent-gated; never precise coordinates)
+  geoConsentStatus        GeoConsentStatus  @default(unknown)
+  locationUsageMode       LocationUsageMode @default(off)
+  detectedCountry         String?
+  detectedRegion          String?
+  countryOfResidence      String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WorkspaceSettings {
+  id                  String   @id @default(cuid())
+  workspaceId         String   @unique
+  defaultLocale       String   @default("en")
+  defaultMarketCountry String?
+  defaultMarketRegion String?
+  defaultLlmMode      LlmMode  @default(byok)
+  billingPlan         PlanType @default(free)
+  // White-label (real schema now; full feature in Session 17)
+  whiteLabelEnabled   Boolean  @default(false)
+  brandName           String?
+  logoUrl             String?
+  accentTokenName     String?
+  footerText          String?
+  customDisclaimer    String?
+  hideSignalKitBrand  Boolean  @default(false)
+  clientName          String?
+  preparedBy          String?
+  agencyContact       String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  action      String
+  actorId     String?
+  subjectType String
+  subjectId   String?
+  metadata    Json     @default("{}")
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([workspaceId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Geo / market reference
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Country {
+  code            String  @id // ISO 3166-1 alpha-2
+  names           Json    @default("{}") // localized names keyed by locale
+  primaryLanguage String  @default("en")
+  currency        String  @default("USD")
+
+  regions Region[]
+}
+
+model Region {
+  code        String @id // ISO 3166-2 / internal
+  countryCode String
+  names       Json   @default("{}")
+
+  country Country @relation(fields: [countryCode], references: [code], onDelete: Cascade)
+
+  @@index([countryCode])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Projects & search context
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Project {
+  id                  String        @id @default(cuid())
+  workspaceId         String
+  name                String
+  goal                String        @default("")
+  status              ProjectStatus @default(draft)
+  // Market profile (denormalized onto the project)
+  marketScope         MarketScope   @default(global)
+  targetCountry       String?
+  targetRegion        String?
+  targetCountries     String[]      @default([])
+  targetRegions       String[]      @default([])
+  marketLanguage      String        @default("en")
+  regulatorySensitivity RegulatorySensitivity @default(medium)
+  defaultOutputLanguage String      @default("en")
+  createdById         String
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy      User            @relation("ProjectCreator", fields: [createdById], references: [id])
+  searchContexts SearchContext[]
+  sourceRefs     SourceReference[]
+  signals        TrendSignal[]
+  niches         Niche[]
+
+  @@index([workspaceId])
+}
+
+model SearchContext {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  version         Int      @default(1)
+  industry        String?
+  theme           String?
+  audience        String?
+  productFormat   String?
+  marketScope     MarketScope @default(global)
+  targetCountry   String?
+  targetRegion    String?
+  targetCountries String[] @default([])
+  targetRegions   String[] @default([])
+  marketLanguage  String   @default("en")
+  outputLanguage  String   @default("en")
+  languageMode    String   @default("follow_interface")
+  localContextRules String[] @default([])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sources & signals  (feature module: Session 7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SourceReference {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  projectId    String
+  adapter      String
+  url          String?
+  title        String?
+  publisher    String?
+  language     String?
+  country      String?
+  userProvided Boolean  @default(false)
+  collectedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  rawItems      RawSourceItem[]
+  evidenceItems EvidenceItem[]
+
+  @@index([projectId])
+}
+
+model RawSourceItem {
+  id          String           @id @default(cuid())
+  workspaceId String
+  projectId   String
+  sourceRefId String
+  adapter     String
+  content     String
+  url         String?
+  language    String?
+  country     String?
+  status      SourceItemStatus @default(collected)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  sourceRef       SourceReference     @relation(fields: [sourceRefId], references: [id], onDelete: Cascade)
+  normalizedItems NormalizedSourceItem[]
+
+  @@index([sourceRefId])
+}
+
+model NormalizedSourceItem {
+  id               String   @id @default(cuid())
+  rawSourceItemId  String
+  summary          String
+  extractedEntities String[] @default([])
+  detectedMarket   String?
+  detectedLanguage String?
+  relevance        Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  rawItem RawSourceItem @relation(fields: [rawSourceItemId], references: [id], onDelete: Cascade)
+
+  @@index([rawSourceItemId])
+}
+
+model TrendSignal {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  projectId     String
+  signalType    String
+  text          String
+  strengthScore Float    @default(0)
+  freshnessScore Float   @default(0)
+  sourceQuality Float    @default(0)
+  industry      String?
+  topic         String?
+  audience      String?
+  sourceRefIds  String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Niches & scoring  (feature module: Session 9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Niche {
+  id                       String    @id @default(cuid())
+  workspaceId              String
+  projectId                String
+  title                    String
+  oneLiner                 String    @default("")
+  problem                  String    @default("")
+  targetAudience           String    @default("")
+  whyNow                   String    @default("")
+  useCases                 String[]  @default([])
+  competitors              String[]  @default([])
+  mvpConcept               String    @default("")
+  monetization             String    @default("")
+  recommendedProductFormat String    @default("")
+  riskLevel                RiskLevel @default(medium)
+  language                 String    @default("en")
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scores     NicheScore[]
+  claims     Claim[]
+  packs      ProductDocumentPack[]
+
+  @@index([projectId])
+}
+
+model ScoringVersion {
+  id          String   @id @default(cuid())
+  version     String   @unique
+  description String   @default("")
+  createdAt   DateTime @default(now())
+
+  scores NicheScore[]
+}
+
+model NicheScore {
+  id               String   @id @default(cuid())
+  nicheId          String
+  scoringVersionId String
+  totalScore       Float    @default(0)
+  confidenceValue  Float    @default(0)
+  confidenceLevel  String   @default("low")
+  breakdown        Json     @default("[]")
+  riskPenalties    Json     @default("[]")
+  explanation      String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  niche          Niche          @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  scoringVersion ScoringVersion @relation(fields: [scoringVersionId], references: [id])
+
+  @@index([nicheId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Evidence graph  (feature module: Session 8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model EvidenceItem {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  sourceRefId      String
+  evidenceType     String
+  originalText     String
+  sourceLanguage   String?
+  summary          String
+  summaryLanguage  String   @default("en")
+  country          String?
+  region           String?
+  relevanceScore   Float    @default(0)
+  freshnessScore   Float    @default(0)
+  sourceQuality    Float    @default(0)
+  extractionMethod String   @default("manual")
+  extractedAt      DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sourceRef SourceReference     @relation(fields: [sourceRefId], references: [id], onDelete: Cascade)
+  links     ClaimEvidenceLink[]
+
+  @@index([sourceRefId])
+}
+
+model Claim {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  nicheId         String?
+  text            String
+  type            String
+  confidenceValue Float    @default(0)
+  confidenceLevel String   @default("low")
+  market          String?
+  language        String   @default("en")
+  generatedBy     String   @default("llm")
+  reviewStatus    String   @default("unreviewed")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  niche          Niche?              @relation(fields: [nicheId], references: [id])
+  evidenceLinks  ClaimEvidenceLink[]
+  contradictions Contradiction[]
+
+  @@index([nicheId])
+}
+
+model ClaimEvidenceLink {
+  id             String @id @default(cuid())
+  claimId        String
+  evidenceItemId String
+  role           String @default("supports")
+  weight         Float  @default(1)
+
+  claim    Claim        @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  evidence EvidenceItem @relation(fields: [evidenceItemId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId, evidenceItemId])
+}
+
+model Contradiction {
+  id                   String   @id @default(cuid())
+  claimId              String
+  conflictingEvidenceIds String[] @default([])
+  reason               String
+  suggestedQuestion    String?
+  resolved             Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
+}
+
+model Assumption {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  text             String
+  language         String   @default("en")
+  rationale        String   @default("")
+  validationStatus String   @default("untested")
+  impactIfWrong    String   @default("medium")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Constraint {
+  id        String   @id @default(cuid())
+  text      String
+  category  String   @default("technical")
+  language  String   @default("en")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UnresolvedQuestion {
+  id        String   @id @default(cuid())
+  text      String
+  language  String   @default("en")
+  priority  String   @default("medium")
+  status    String   @default("open")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Product Document Pack  (feature module: Session 10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ProductDocumentPack {
+  id              String         @id @default(cuid())
+  workspaceId     String
+  nicheId         String
+  projectId       String
+  title           String
+  depth           String
+  verticalTemplate String
+  primaryLanguage String         @default("en")
+  status          DocumentStatus @default(draft)
+  confidenceValue Float          @default(0)
+  confidenceLevel String         @default("low")
+  version         Int            @default(1)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  niche     Niche                 @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  documents ProductPackDocument[]
+
+  @@index([nicheId])
+}
+
+model ProductPackDocument {
+  id                String         @id @default(cuid())
+  packId            String
+  docType           String
+  title             String
+  body              String         @default("")
+  language          String         @default("en")
+  status            DocumentStatus @default(draft)
+  confidenceValue   Float          @default(0)
+  confidenceLevel   String         @default("low")
+  qualityGateStatus String         @default("not_run")
+  version           Int            @default(1)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  pack     ProductDocumentPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  versions DocumentVersion[]
+
+  @@index([packId])
+}
+
+model DocumentVersion {
+  id            String   @id @default(cuid())
+  documentId    String
+  version       Int
+  body          String
+  changeSummary String   @default("")
+  authorId      String?
+  generatedBy   String   @default("llm")
+  createdAt     DateTime @default(now())
+
+  document ProductPackDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LLM marketplace  (feature module: Session 4-5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model LLMProvider {
+  id          String   @id @default(cuid())
+  type        String   @unique
+  displayName String
+  baseUrl     String?
+  docsUrl     String?
+  hasAdapter  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model LLMModel {
+  id                   String   @id @default(cuid())
+  provider             String
+  modelId              String
+  displayName          String
+  contextWindow        Int      @default(0)
+  maxOutputTokens      Int      @default(0)
+  inputTokenPrice      Float    @default(0)
+  outputTokenPrice     Float    @default(0)
+  currency             String   @default("USD")
+  pricingSource        String?
+  pricingFetchedAt     DateTime?
+  ratingOverall        Float?
+  ratingReasoning      Float?
+  ratingResearch       Float?
+  ratingDocumentWriting Float?
+  ratingCodingContext  Float?
+  ratingMultilingual   Float?
+  speedRating          Float?
+  privacyRating        Float?
+  strengths            String[] @default([])
+  weaknesses           String[] @default([])
+  bestUseCases         String[] @default([])
+  supportedLanguages   String[] @default([])
+  supportsJsonMode     Boolean  @default(false)
+  supportsTools        Boolean  @default(false)
+  supportsVision       Boolean  @default(false)
+  supportsReasoning    Boolean  @default(false)
+  sourceUrl            String?
+  lastBenchmarkedAt    DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([provider, modelId])
+}
+
+model UserLLMConnection {
+  id            String              @id @default(cuid())
+  workspaceId   String
+  userId        String?
+  provider      String
+  label         String
+  // Encrypted at rest. NEVER returned to clients — services expose maskedKey only.
+  encryptedKey  String
+  maskedKey     String
+  baseUrl       String?
+  status        LlmConnectionStatus @default(active)
+  lastTestedAt  DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id])
+
+  @@index([workspaceId])
+}
+
+model WorkspaceLLMSettings {
+  id             String  @id @default(cuid())
+  workspaceId    String  @unique
+  mode           LlmMode @default(byok)
+  defaultModelId String?
+  fallbackModelId String?
+  routingRules   Json    @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model LLMUsageLog {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  userId        String?
+  projectId     String?
+  packId        String?
+  documentId    String?
+  provider      String
+  model         String
+  taskType      String
+  inputTokens   Int      @default(0)
+  outputTokens  Int      @default(0)
+  estimatedCost Float    @default(0)
+  actualCost    Float?
+  latencyMs     Int      @default(0)
+  status        String   @default("success")
+  errorCode     String?
+  createdAt     DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exports  (feature module: Session 12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ExportJob {
+  id            String       @id @default(cuid())
+  workspaceId   String
+  packId        String
+  type          String
+  language      String       @default("en")
+  roleBrief     String?
+  applyBranding Boolean      @default(false)
+  status        ExportStatus @default(queued)
+  requestedById String
+  retries       Int          @default(0)
+  errorCode     String?
+  expiresAt     DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  artifact ExportArtifact?
+
+  @@index([workspaceId])
+}
+
+model ExportArtifact {
+  id          String   @id @default(cuid())
+  exportJobId String   @unique
+  storageKey  String
+  fileName    String
+  mimeType    String
+  sizeBytes   Int      @default(0)
+  checksum    String   @default("")
+  createdAt   DateTime @default(now())
+
+  exportJob ExportJob @relation(fields: [exportJobId], references: [id], onDelete: Cascade)
+}
+
+model ShareLink {
+  id                  String   @id @default(cuid())
+  workspaceId         String
+  packId              String
+  variant             String
+  token               String   @unique
+  passwordHash        String?
+  expiresAt           DateTime?
+  revoked             Boolean  @default(false)
+  hideInternalEvidence Boolean @default(false)
+  viewCount           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commercial  (feature module: Session 15)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BillingAccount {
+  id                String   @id @default(cuid())
+  workspaceId       String   @unique
+  plan              PlanType @default(free)
+  paymentProvider   String?
+  externalCustomerId String?
+  creditBalance     Float    @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions CreditTransaction[]
+}
+
+model CreditTransaction {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  billingAccountId String
+  amount          Float
+  reason          String
+  taskType        String?
+  balanceAfter    Float
+  createdAt       DateTime @default(now())
+
+  billingAccount BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model UsageCounter {
+  id          String @id @default(cuid())
+  workspaceId String
+  key         String
+  period      String
+  used        Float  @default(0)
+
+  @@unique([workspaceId, key, period])
+}
+
+model APIKey {
+  id          String   @id @default(cuid())
+  workspaceId String
+  label       String
+  // Hashed secret; clients see maskedKey only.
+  keyHash     String   @unique
+  maskedKey   String
+  scopes      String[] @default([])
+  lastUsedAt  DateTime?
+  revoked     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}

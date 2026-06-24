@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/config" },
+    { "path": "packages/shared" },
+    { "path": "packages/i18n" },
+    { "path": "packages/ui" },
+    { "path": "packages/llm" },
+    { "path": "packages/evidence" },
+    { "path": "packages/exports" }
+  ]
+}
