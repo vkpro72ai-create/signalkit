@@ -14,6 +14,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,10 +434,11 @@ model Niche {
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
-  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scores     NicheScore[]
-  claims     Claim[]
-  packs      ProductDocumentPack[]
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scores         NicheScore[]
+  claims         Claim[]
+  packs          ProductDocumentPack[]
+  ventureTheses  VentureThesis[]
 
   @@index([projectId])
 }
@@ -470,12 +472,41 @@ model NicheScore {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Breakout Opportunity Engine — Venture Thesis + Venture Scale Score
+// (feature module: Session 14). Additive, backwards-compatible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VentureThesis {
+  id                      String   @id @default(cuid())
+  workspaceId             String
+  nicheId                 String
+  projectId               String
+  // Full structured VentureThesis contract (shared type).
+  thesis                  Json     @default("{}")
+  // Venture Scale Score — SEPARATE from opportunity & confidence.
+  ventureScaleScore       Float    @default(0)
+  ventureScaleConfidence  Float    @default(0)
+  ventureScaleLevel       String   @default("low")
+  ventureScaleBreakdown   Json     @default("[]")
+  whatMustBeTrue          Json     @default("[]")
+  version                 Int      @default(1)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  niche Niche @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+
+  @@index([nicheId])
+  @@index([projectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Evidence graph  (feature module: Session 8)
 // ─────────────────────────────────────────────────────────────────────────────
 
 model EvidenceItem {
   id               String   @id @default(cuid())
   workspaceId      String
+  projectId        String?
   sourceRefId      String
   evidenceType     String
   originalText     String
@@ -496,11 +527,13 @@ model EvidenceItem {
   links     ClaimEvidenceLink[]
 
   @@index([sourceRefId])
+  @@index([projectId])
 }
 
 model Claim {
   id              String   @id @default(cuid())
   workspaceId     String
+  projectId       String?
   nicheId         String?
   text            String
   type            String
@@ -518,6 +551,7 @@ model Claim {
   contradictions Contradiction[]
 
   @@index([nicheId])
+  @@index([projectId])
 }
 
 model ClaimEvidenceLink {
@@ -551,6 +585,8 @@ model Contradiction {
 model Assumption {
   id               String   @id @default(cuid())
   workspaceId      String
+  projectId        String?
+  claimId          String?
   text             String
   language         String   @default("en")
   rationale        String   @default("")
@@ -558,25 +594,38 @@ model Assumption {
   impactIfWrong    String   @default("medium")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([claimId])
 }
 
 model Constraint {
-  id        String   @id @default(cuid())
-  text      String
-  category  String   @default("technical")
-  language  String   @default("en")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  workspaceId String?
+  projectId   String?
+  text        String
+  category    String   @default("technical")
+  language    String   @default("en")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
 }
 
 model UnresolvedQuestion {
-  id        String   @id @default(cuid())
-  text      String
-  language  String   @default("en")
-  priority  String   @default("medium")
-  status    String   @default("open")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  workspaceId String?
+  projectId   String?
+  claimId     String?
+  text        String
+  language    String   @default("en")
+  priority    String   @default("medium")
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([claimId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -616,6 +665,9 @@ model ProductPackDocument {
   confidenceValue   Float          @default(0)
   confidenceLevel   String         @default("low")
   qualityGateStatus String         @default("not_run")
+  // Per-document metadata contract: market, packDepth, verticalTemplate,
+  // sourceRefIds, claimIds, assumptionIds, constraintIds, unresolvedQuestionIds.
+  metadata          Json           @default("{}")
   version           Int            @default(1)
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -626,18 +678,118 @@ model ProductPackDocument {
   @@index([packId])
 }
 
+model QualityGateResult {
+  id          String   @id @default(cuid())
+  packId      String
+  status      String   @default("not_run")
+  checks      Json     @default("[]")
+  passedCount Int      @default(0)
+  warnCount   Int      @default(0)
+  failCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([packId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build Blueprint Layer (feature module: Session 14). Additive.
+// One blueprint per pack: screen contracts, state matrix, API↔screen map,
+// component contracts, permission matrix, analytics events, DO_NOT_BUILD.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BuildBlueprint {
+  id                       String   @id @default(cuid())
+  workspaceId              String
+  packId                   String
+  nicheId                  String
+  projectId                String
+  screenContracts          Json     @default("[]")
+  stateMatrix              Json     @default("[]")
+  apiToScreenMap           Json     @default("[]")
+  componentContracts       Json     @default("[]")
+  permissionMatrix         Json     @default("[]")
+  analyticsEvents          Json     @default("[]")
+  doNotBuild               Json     @default("[]")
+  validationRules          Json     @default("[]")
+  // Build Readiness Score — SEPARATE from opportunity/confidence/venture scale.
+  buildReadinessScore      Float    @default(0)
+  buildReadinessLevel      String   @default("low")
+  buildReadinessBreakdown  Json     @default("[]")
+  warnings                 Json     @default("[]")
+  version                  Int      @default(1)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([packId])
+  @@index([nicheId])
+}
+
 model DocumentVersion {
-  id            String   @id @default(cuid())
-  documentId    String
-  version       Int
-  body          String
-  changeSummary String   @default("")
-  authorId      String?
-  generatedBy   String   @default("llm")
-  createdAt     DateTime @default(now())
+  id                     String   @id @default(cuid())
+  documentId             String
+  packId                 String?
+  workspaceId            String?
+  version                Int
+  body                   String
+  changeSummary          String   @default("")
+  authorId               String?
+  generatedBy            String   @default("human")
+  linkedResearchUpdateId String?
+  affectedClaimIds       Json     @default("[]")
+  affectedAssumptionIds  Json     @default("[]")
+  createdAt              DateTime @default(now())
 
   document ProductPackDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@index([documentId])
+  @@index([packId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Document Governance  (feature module: Session 11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ResearchUpdate {
+  id                  String   @id @default(cuid())
+  packId              String
+  workspaceId         String
+  projectId           String?
+  title               String
+  type                String   @default("internal_team_note")
+  content             String   @default("")
+  language            String   @default("en")
+  marketContext       String?
+  sourceRefs          Json     @default("[]")
+  linkedDocumentIds   Json     @default("[]")
+  linkedClaimIds      Json     @default("[]")
+  linkedAssumptionIds Json     @default("[]")
+  linkedQuestionIds   Json     @default("[]")
+  confidenceImpact    String?
+  createdById         String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([packId])
+  @@index([workspaceId])
+}
+
+model DocumentComment {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  projectId    String?
+  packId       String
+  documentId   String?
+  claimId      String?
+  assumptionId String?
+  authorId     String
+  body         String
+  status       String    @default("open")
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedBy   String?
+
+  @@index([packId])
   @@index([documentId])
 }
 

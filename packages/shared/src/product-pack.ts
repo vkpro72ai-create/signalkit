@@ -39,8 +39,20 @@ export type VerticalTemplate =
   | 'creator_economy_tool'
   | 'internal_enterprise_tool';
 
-/** The 27 canonical document types in a full pack. */
+/**
+ * Document types in a pack.
+ *
+ * The first 27 are the canonical REQUIRED set (Sessions 1–13). Session 14 adds
+ * optional Breakout/Build-Blueprint document types which are NOT part of the
+ * required 27 — they are appended to build-oriented depths so existing packs,
+ * quality gates and exports remain backwards-compatible.
+ */
 export type DocumentType =
+  | CanonicalDocumentType
+  | BlueprintDocumentType;
+
+/** The 27 canonical document types (the required spine). */
+export type CanonicalDocumentType =
   | 'product_vision'
   | 'market_context'
   | 'target_audience_icp'
@@ -69,8 +81,25 @@ export type DocumentType =
   | 'evidence_map'
   | 'source_appendix';
 
-/** Ordered list of all required document types in a full pack. */
-export const REQUIRED_DOCUMENT_TYPES: readonly DocumentType[] = [
+/**
+ * Session 14 Breakout / Build-Blueprint document types. Optional and additive:
+ * appended to build-oriented depths, never part of the required 27.
+ */
+export type BlueprintDocumentType =
+  | 'venture_thesis'
+  | 'breakout_opportunity_memo'
+  | 'build_blueprint'
+  | 'do_not_build';
+
+export const BLUEPRINT_DOCUMENT_TYPES: readonly BlueprintDocumentType[] = [
+  'venture_thesis',
+  'breakout_opportunity_memo',
+  'build_blueprint',
+  'do_not_build',
+] as const;
+
+/** Ordered list of all required (canonical) document types in a full pack. */
+export const REQUIRED_DOCUMENT_TYPES: readonly CanonicalDocumentType[] = [
   'product_vision',
   'market_context',
   'target_audience_icp',
