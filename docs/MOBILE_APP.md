@@ -274,40 +274,91 @@ eas credentials    # configure Android keystore + iOS certs
 
 ## Android APK Build
 
-### Development APK (local/emulator)
+Two independent build paths exist. EAS is **not required** for a working APK.
+
+---
+
+### Path A — Local build (no EAS, no cloud credentials)
+
+**Prerequisites:** JDK 17+, Android SDK with `ANDROID_HOME` set.
+
+#### One-command shortcut
 
 ```bash
-# Expo Go (fastest):
-pnpm --filter @signalkit/mobile android
+# From repo root:
+pnpm --filter @signalkit/mobile apk:debug
 
-# Local APK build (requires Android SDK):
+# Or directly from apps/mobile:
 cd apps/mobile
-eas build --platform android --profile development --local
+node scripts/apk-debug.js
 ```
 
-### Preview APK (EAS cloud, shareable)
+This runs `expo prebuild --platform android` then `gradlew assembleDebug` in one step.
+
+#### Step-by-step
 
 ```bash
+# 1. Generate native android/ project from Expo config
+cd apps/mobile
+pnpm exec expo prebuild --platform android
+
+# 2a. Windows — build debug APK
+cd android
+.\gradlew.bat assembleDebug
+
+# 2b. macOS/Linux — build debug APK
+cd android
+./gradlew assembleDebug
+```
+
+#### Output
+
+```
+apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install on a device or emulator:
+
+```bash
+adb install apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+#### Notes
+
+- `android/` is gitignored (generated artifact, managed workflow). Regenerate with `expo prebuild`.
+- First Gradle run downloads NDK + Maven deps (~10–20 min); subsequent runs are fast (incremental).
+- To force a clean regeneration: `pnpm exec expo prebuild --platform android --clean`
+- React Native new architecture (`newArchEnabled: true`) is on by default. Disable in `app.config.ts` if compatibility issues arise.
+- **Kotlin version patch** — `expo prebuild` generates `android/build.gradle` without a pinned version for `kotlin-gradle-plugin`. RN's transitive deps resolve 1.9.24, but `expo-modules-core` Compose Compiler needs 1.9.25. The `apk-debug.js` script patches this automatically after every prebuild. If building via raw `gradlew` after a manual prebuild, edit `android/build.gradle` line containing `classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')` and add `:${kotlinVersion}` to pin it.
+
+---
+
+### Path B — EAS cloud build (CI/store builds, no local SDK required)
+
+```bash
+# Preview APK (shareable, no store signing):
 cd apps/mobile
 eas build --platform android --profile preview
-# Download from: https://expo.dev → Your project → Builds
-```
 
-### Production AAB (Google Play)
-
-```bash
-cd apps/mobile
+# Production AAB (Google Play):
 eas build --platform android --profile production
-# Output: .aab file suitable for Google Play
 ```
 
-### Required for Android production build
+Download output from the Expo dashboard after the build completes.
 
-- EAS account + project linked (`EAS_PROJECT_ID`)
-- Android keystore (EAS manages this, or provide your own)
-- `EXPO_TOKEN` set as environment variable or GitHub secret
+#### Required credentials for EAS
+
+- `EXPO_TOKEN` (EAS authentication — set as env var or GitHub secret)
+- `EAS_PROJECT_ID` = `092735b2-7500-4929-9160-e72a33d03bb4` (already in `app.config.ts`)
+- Android keystore (EAS manages this automatically on first run)
 - `EXPO_PUBLIC_API_URL` pointing to production API
 - `EXPO_PUBLIC_MOCK_BILLING=false`
+
+#### GitHub Actions (CI)
+
+`.github/workflows/mobile-apk.yml` runs on push to `apps/mobile/**`. It uses `EXPO_TOKEN` from repo secrets and produces a preview APK via EAS. See [Secrets setup](#secrets--environment-variables) below.
+
+---
 
 ---
 

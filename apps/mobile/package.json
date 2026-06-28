@@ -7,15 +7,17 @@
   "scripts": {
     "start": "expo start",
     "dev": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "build:android:preview": "eas build --platform android --profile preview",
     "build:android:prod": "eas build --platform android --profile production",
     "build:ios:preview": "eas build --platform ios --profile preview",
     "build:ios:prod": "eas build --platform ios --profile production",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
-    "lint": "eslint . --ext .ts,.tsx --max-warnings 0"
+    "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
+    "apk:debug": "node scripts/apk-debug.js",
+    "prebuild:android": "expo prebuild --platform android"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.1.2",

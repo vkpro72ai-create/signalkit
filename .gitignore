@@ -35,6 +35,9 @@ coverage/
 # Expo / mobile
 apps/mobile/.expo/
 apps/mobile/.expo-shared/
+# Generated native projects — rebuilt by `expo prebuild`; not committed (managed workflow)
+apps/mobile/android/
+apps/mobile/ios/
 *.apk
 *.aab
 
