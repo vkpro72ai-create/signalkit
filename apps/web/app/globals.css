@@ -1,0 +1,25 @@
+/* Flat 2D base. No gradients, no glassmorphism. */
+:root {
+  color-scheme: light;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: #fbfcfd;
+  color: #1b1f24;
+  -webkit-font-smoothing: antialiased;
+}
+a {
+  color: inherit;
+}
+/* Logical properties so RTL (Arabic) mirrors correctly. */
+[dir='rtl'] {
+  text-align: right;
+}

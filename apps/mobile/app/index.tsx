@@ -1,25 +1,33 @@
-import { View, Text, StyleSheet } from 'react-native';
-import { REQUIRED_DOCUMENT_TYPES } from '@signalkit/shared';
-import { DEFAULT_LOCALE } from '@signalkit/i18n';
+import { View } from 'react-native';
+import { Link } from 'expo-router';
+import { Screen, ScreenTitle, Card, EmptyState, Button } from '../components/ui';
+import { useT } from '../lib/i18n';
 
-/**
- * Session 1 placeholder home. Proves the mobile app boots and consumes the
- * shared contracts. The real companion-app screens (read/review/approve/export)
- * arrive in Session 3 / Session 14.
- */
-export default function HomeScreen() {
+export default function ProjectsScreen() {
+  const t = useT();
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>SignalKit</Text>
-      <Text style={styles.subtitle}>Companion app · locale {DEFAULT_LOCALE}</Text>
-      <Text style={styles.body}>Documents per full pack: {REQUIRED_DOCUMENT_TYPES.length}</Text>
-    </View>
+    <Screen>
+      <ScreenTitle title={t('nav.projects')} subtitle={t('app.tagline')} />
+      <Card>
+        <EmptyState title={t('state.empty.title')} body={t('state.empty.body')} />
+      </Card>
+      <View style={{ gap: 8 }}>
+        <Link href="/market" asChild>
+          <Button label={t('action.newProject')} />
+        </Link>
+        <Link href="/niches" asChild>
+          <Button label={t('nav.niches')} variant="secondary" />
+        </Link>
+        <Link href="/pack" asChild>
+          <Button label={t('nav.pack')} variant="secondary" />
+        </Link>
+        <Link href="/exports" asChild>
+          <Button label={t('nav.exports')} variant="secondary" />
+        </Link>
+        <Link href="/settings" asChild>
+          <Button label={t('nav.settings')} variant="secondary" />
+        </Link>
+      </View>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, gap: 8, backgroundColor: '#FBFCFD' },
-  title: { fontSize: 32, fontWeight: '700', color: '#1B1F24' },
-  subtitle: { fontSize: 14, color: '#5A626E' },
-  body: { fontSize: 16, color: '#1B1F24', marginTop: 16 },
-});

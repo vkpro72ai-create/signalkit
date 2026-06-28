@@ -1,0 +1,134 @@
+# SignalKit — Production Docker Compose
+#
+# Services:
+#   web    — Next.js (port 3000, internal only)
+#   api    — NestJS  (port 4000, internal only)
+#   redis  — Redis 7 for BullMQ queues (internal only)
+#   caddy  — Reverse proxy + automatic HTTPS (ports 80/443 public)
+#
+# Only Caddy is exposed publicly. API and web are only reachable via Caddy.
+#
+# Usage:
+#   cp .env.production.example .env.production
+#   # fill in real values in .env.production
+#   docker compose -f docker-compose.production.yml --env-file .env.production up -d
+#
+# Run migrations before first start (or after schema changes):
+#   docker compose -f docker-compose.production.yml --env-file .env.production \
+#     run --rm api sh /app/scripts/migrate.sh
+#
+# See docs/DEPLOYMENT_HETZNER.md for full setup guide.
+
+version: "3.9"
+
+networks:
+  signalkit:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  exports_data:
+    driver: local
+
+services:
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - signalkit
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── API (NestJS) ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: ${DATABASE_URL}
+      DIRECT_URL: ${DIRECT_URL}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      ENCRYPTION_KEY_FOR_LLM_KEYS: ${ENCRYPTION_KEY_FOR_LLM_KEYS}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      EXPORT_STORAGE_PATH: /var/lib/signalkit/exports
+      EXPORT_RETENTION_DAYS: ${EXPORT_RETENTION_DAYS:-7}
+    volumes:
+      - exports_data:/var/lib/signalkit/exports
+    networks:
+      - signalkit
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # ── Web (Next.js) ────────────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-en}
+    networks:
+      - signalkit
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Caddy (reverse proxy + automatic HTTPS) ──────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      WEB_DOMAIN: ${WEB_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+    networks:
+      - signalkit
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
