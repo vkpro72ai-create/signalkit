@@ -1,0 +1,77 @@
+# SignalKit — Android Preview APK build via EAS
+#
+# Required GitHub Secrets:
+#   EAS_TOKEN        — Expo access token (expo.dev → Account → Access tokens)
+#   EAS_PROJECT_ID   — from app.config.ts extra.eas.projectId
+#
+# Usage:
+#   Trigger manually from Actions tab → mobile-apk → Run workflow
+#   APK artifact is uploaded and available for 7 days.
+#
+# Android APK output format: .apk (preview profile)
+# For production AAB: change `profile: preview` to `profile: production`
+# For iOS: use eas build --platform ios --profile preview-ios
+#   (requires Apple credentials — see docs/MOBILE_APP.md)
+
+name: Mobile APK Build (Preview)
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS build profile'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - production
+
+jobs:
+  build-android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Expo EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Build Android APK
+        working-directory: apps/mobile
+        run: |
+          eas build \
+            --platform android \
+            --profile ${{ github.event.inputs.profile }} \
+            --non-interactive \
+            --no-wait
+        env:
+          EXPO_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
+
+      # Note: --no-wait means build runs on EAS servers.
+      # To download the artifact: eas build:list → copy download URL.
+      # For self-hosted APK artifact, remove --no-wait and add:
+      # - run: eas build:download --output ./signalkit-preview.apk
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: signalkit-android-preview
+      #     path: signalkit-preview.apk
+      #     retention-days: 7

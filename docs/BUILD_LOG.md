@@ -727,3 +727,115 @@ Trend/niche discovery alone can produce narrow, weak "trend niche" ideas. Signal
 - `apps/api/src/packs/blueprint.test.ts` — screen contract per screen with empty/loading/error; API-to-screen mapping; DO_NOT_BUILD present; build readiness; gates fail on missing screen states and on unflagged unicorn claims.
 - `apps/api/src/exports/exports.test.ts` — Markdown ZIP + AI-Agent bundle include the blueprint files; agent rules present.
 - All suites green: **31 shared tests, 113 API tests** (incl. updated pack/niche/export mocks).
+
+---
+
+## Session 15 — Premium Mobile App / Onboarding / Paywall / Android APK
+
+**Status:** ✅ Complete
+
+### Why
+
+`apps/mobile` was a thin read-only shell. Session 15 turns it into a full premium standalone mobile product: polished onboarding, real auth, production-grade paywall architecture, comprehensive navigation, premium brand system, and complete build configuration for Android APK and iOS TestFlight.
+
+### Done
+
+**Architecture / Foundation**
+- `lib/api.ts` — typed API client (base URL from env, auth token injection, normalized errors, network unavailable handling, no direct LLM calls)
+- `lib/auth.ts` — `AuthProvider` + `useAuth()` hook with JWT token storage, auto-restore, 401 handling, logout
+- `lib/entitlements.ts` — `EntitlementProvider` + `useEntitlements()` with capability flags; mock mode (`EXPO_PUBLIC_MOCK_BILLING=true`); adapter-ready for RevenueCat (Session 16)
+- `lib/storage.ts` — `SecureKV` / `KV` storage abstraction (memory fallback until `expo-secure-store` + `@react-native-async-storage` are installed)
+- `lib/haptics.ts` — haptic feedback wrapper (no-op until `expo-haptics` installed)
+- `lib/onboarding.ts` — `OnboardingProvider` + `useOnboarding()` with completion persistence
+
+**Design System** (`components/brand.tsx`)
+- Full token set: colors (brand forest green `#1B4332`, warm canvas `#F4F3EF`, semantic), spacing, radius, typography scale, shadow presets
+- Premium flat 2D components: `Surface` (matte overlay), `Screen`, `Card`, `HeroCard`, `Button` (4 variants), `IconButton`, `Badge`, `ScoreRing`, `ScoreBar`, `ScoreGrid`, `Chip`, `SectionHeader`, `ListRow`, `Skeleton`, `EmptyState`, `ErrorState`, `Divider`, `Avatar`, `StatusDot`, `PaywallGate`, `PlanBadge`, `DocumentStatusPill`
+- Design law enforced: no gradients, no neon, controlled matte/frosted surfaces via opacity
+
+**Navigation** (`app/_layout.tsx` + group routes)
+- Auth guard with onboarding → auth → tabs redirect logic
+- Clean Expo Router v4 group structure: `(tabs)/`, `opportunity/[id]`, `pack/[id]`, `blueprint/[id]`
+- Old flat routes replaced
+
+**Onboarding** (`app/onboarding.tsx`)
+- 7-step wizard: 4 value-prop slides + role selection + target selection + market mode
+- Progress indicator, skip, back, haptic feedback
+- No fake claims, no "guaranteed unicorn"
+
+**Auth** (`app/login.tsx`, `app/register.tsx`)
+- Email/password login and registration
+- Error display with API error messages
+- Dev mode API URL display
+- Terms/privacy placeholders
+
+**Paywall** (`app/paywall.tsx`)
+- 3 plan cards: Free / Pro / Team
+- Monthly/Annual period toggle (20% savings)
+- Capability bullets, "MOST POPULAR" tag
+- Restore purchases CTA
+- Terms/privacy links
+- Mock billing mode for development
+- RevenueCat integration adapter documented
+
+**Home Dashboard** (`app/(tabs)/index.tsx`)
+- Premium greeting with workspace context and avatar
+- Evidence-backed workspace chip
+- Hero opportunity card with 4-score ScoreGrid
+- Venture Thesis preview (4 tappable rows)
+- Product Pack status (doc count, approved, in review, changes)
+- Build Blueprint preview with readiness bar
+- Recent exports with status dots
+- Upgrade banner for free plan users
+- Pull-to-refresh, loading skeletons, empty/error states
+
+**Tab Screens**
+- `opportunities.tsx` — list with ScoreGrid, ConfidenceBadge, search filter
+- `packs.tsx` — packs with depth/status/document counts, paywall gate for premium depths
+- `exports.tsx` — jobs with StatusDot, type, metadata, polling for active jobs, paywall gate
+- `settings.tsx` — account + avatar, workspace, subscription (plan badge), language selector, dev info, sign out
+
+**Detail Screens**
+- `opportunity/[id].tsx` — full Venture Thesis with all 12 thesis sections, ScoreBars, evidence confidence note
+- `pack/[id].tsx` — pack metadata + document list with inline content preview
+- `blueprint/[id].tsx` — Build Readiness Score, screen contract table (empty/loading/error state coverage), DO_NOT_BUILD, API-to-screen map, warnings; paywalled for free plan
+
+**Build Config**
+- `app.config.ts` — production Expo config (replaces `app.json`): bundle IDs, runtimeVersion, EAS project ID, permissions, plugin list
+- `eas.json` — 4 build profiles: development (APK + iOS sim), preview (APK shareable), preview-ios (IPA), production (AAB + IPA App Store)
+- `.github/workflows/mobile-apk.yml` — manual `workflow_dispatch` GitHub Actions workflow for EAS Android APK build with `EAS_TOKEN` secret
+
+**Docs**
+- `docs/MOBILE_APP.md` — full mobile product doc: strategy, onboarding, paywall, brand system, auth, API, navigation, EAS setup, Android APK commands, iOS TestFlight steps, GitHub Actions, required secrets, local dev, known limitations
+
+### Tests
+
+- All existing tests pass: `pnpm test` and `pnpm typecheck` (shared 31, API 113)
+- Mobile typecheck: `pnpm --filter @signalkit/mobile typecheck` — PASS
+
+### Known limitations (tracked in `docs/MOBILE_APP.md`)
+
+1. Token/onboarding persistence is in-memory until `expo-secure-store` / `@react-native-async-storage` installed (no network at build time)
+2. No native haptics/blur until `expo-haptics` / `expo-blur` installed
+3. No score reveal animations (react-native-reanimated not configured yet)
+4. Real billing requires Session 16 (RevenueCat integration)
+5. Export downloads are web-only; mobile share sheet is Session 16
+6. iOS build requires Apple Developer account; documented in `MOBILE_APP.md`
+
+### How to verify
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm --filter @signalkit/mobile typecheck
+pnpm --filter @signalkit/api typecheck
+pnpm --filter @signalkit/web typecheck
+
+# Android APK (requires EAS account):
+cd apps/mobile && eas build --platform android --profile preview
+
+# Local dev:
+cp apps/mobile/.env.example apps/mobile/.env
+# Set EXPO_PUBLIC_MOCK_BILLING=true for dev
+pnpm --filter @signalkit/mobile dev
+```
