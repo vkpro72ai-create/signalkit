@@ -3,12 +3,13 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../lib/auth';
-import { packApi, ApiException, api } from '../../lib/api';
+import { packApi, ApiException } from '../../lib/api';
 import { impact } from '../../lib/haptics';
+import type { DocumentStatus } from '@signalkit/shared';
 import {
-  tk, Card, Badge, SectionHeader, SkeletonCard, EmptyState, ErrorState, Divider, Spacer, DocumentStatusPill,
+  tk, Card, SectionHeader, SkeletonCard, EmptyState, ErrorState, Divider, DocumentStatusPill,
 } from '../../components/brand';
 
 type Document = {
@@ -38,7 +39,6 @@ type Pack = {
 export default function PackDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
-  const router = useRouter();
   const wsId = user?.workspaces?.[0]?.id;
 
   const [pack, setPack] = useState<Pack | null>(null);
@@ -89,7 +89,7 @@ export default function PackDetail() {
                     {pack.depth.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                   </Text>
                 </View>
-                <DocumentStatusPill status={pack.status as any} />
+                <DocumentStatusPill status={pack.status as DocumentStatus} />
               </View>
 
               <Divider style={{ marginVertical: 0 }} />
@@ -159,7 +159,7 @@ export default function PackDetail() {
                               ) : null}
                             </View>
                           </View>
-                          <DocumentStatusPill status={doc.status as any} />
+                          <DocumentStatusPill status={doc.status as DocumentStatus} />
                         </View>
 
                         {selected?.id === doc.id && doc.content && (

@@ -65,7 +65,7 @@ const PLANS = [
 
 export default function Paywall() {
   const router = useRouter();
-  const { plan, upgrade, restore, isLoading } = useEntitlements();
+  const { plan, upgrade, restore } = useEntitlements();
   const [period, setPeriod] = useState<BillingPeriod>('annual');
   const [selected, setSelected] = useState<string>('pro');
   const [purchasing, setPurchasing] = useState(false);

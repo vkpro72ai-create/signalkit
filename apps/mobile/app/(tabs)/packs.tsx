@@ -2,14 +2,15 @@
  * Packs tab — list Product Document Packs across projects.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
 import { useEntitlements } from '../../lib/entitlements';
 import { workspaceApi, packApi, ApiException } from '../../lib/api';
 import { impact } from '../../lib/haptics';
+import type { SemanticColor } from '@signalkit/ui';
 import {
-  tk, Card, Badge, SectionHeader, SkeletonCard, EmptyState, ErrorState, Divider, Spacer, PaywallGate,
+  tk, Card, Badge, SkeletonCard, EmptyState, ErrorState, Divider, PaywallGate,
 } from '../../components/brand';
 
 type PackWithNiche = {
@@ -56,7 +57,7 @@ export default function Packs() {
     setRefreshing(false);
   }, [load]);
 
-  function statusVariant(status: string) {
+  function statusVariant(status: string): SemanticColor {
     if (status === 'ready') return 'ready';
     if (status === 'generating') return 'evidence';
     if (status === 'failed') return 'failed';
@@ -90,7 +91,7 @@ export default function Packs() {
           />
         )}
 
-        {!loading && packs.map(({ pack, nicheId, nicheName }) => {
+        {!loading && packs.map(({ pack, nicheName }) => {
           const isPremium = pack.depth !== 'quick_opportunity' && !canFullPack;
           return (
             <Pressable
@@ -114,7 +115,7 @@ export default function Packs() {
                           {pack.depth.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} Pack
                         </Text>
                       </View>
-                      <Badge variant={statusVariant(pack.status) as any} size="sm">
+                      <Badge variant={statusVariant(pack.status)} size="sm">
                         {pack.status}
                       </Badge>
                     </View>

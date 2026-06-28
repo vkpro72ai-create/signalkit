@@ -4,13 +4,11 @@
  * Persists completion via OnboardingProvider.
  */
 import { useState } from 'react';
-import { View, Text, Pressable, ScrollView, Dimensions } from 'react-native';
+import { View, Text, Pressable, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useOnboarding } from '../lib/onboarding';
 import { impact } from '../lib/haptics';
-import { tk, Button, Chip, Spacer } from '../components/brand';
-
-const SCREEN_W = Dimensions.get('window').width;
+import { tk, Button, Chip } from '../components/brand';
 
 type Role = 'founder' | 'pm' | 'agency' | 'investor' | 'developer';
 type Target = 'startup' | 'validate' | 'build_docs' | 'ai_handoff' | 'research';

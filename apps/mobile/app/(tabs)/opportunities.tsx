@@ -8,8 +8,8 @@ import { useAuth } from '../../lib/auth';
 import { workspaceApi, ApiException } from '../../lib/api';
 import { impact } from '../../lib/haptics';
 import {
-  tk, Card, Badge, ScoreGrid, SectionHeader, SkeletonCard,
-  EmptyState, ErrorState, Divider, Spacer, ScoreBar,
+  tk, Card, Badge, ScoreGrid, SkeletonCard,
+  EmptyState, ErrorState, Divider,
 } from '../../components/brand';
 import { confidenceVariant } from '@signalkit/ui';
 
@@ -120,7 +120,7 @@ export default function Opportunities() {
                   {niche.name}
                 </Text>
                 <Badge
-                  variant={confidenceVariant(niche.confidence.level as any)}
+                  variant={confidenceVariant(niche.confidence.level as Parameters<typeof confidenceVariant>[0])}
                   size="sm"
                 >
                   {niche.confidence.level.replace(/_/g, ' ')}

@@ -56,7 +56,7 @@ async function request<T>(
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-  } catch (err) {
+  } catch {
     throw new ApiException(0, 'Network unavailable. Check your connection.');
   }
 

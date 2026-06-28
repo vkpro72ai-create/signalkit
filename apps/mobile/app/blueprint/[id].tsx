@@ -2,15 +2,14 @@
  * Build Blueprint mobile view — coverage summary, DO_NOT_BUILD, API-to-screen map.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
 import { useEntitlements } from '../../lib/entitlements';
 import { api, ApiException } from '../../lib/api';
-import { impact } from '../../lib/haptics';
 import {
   tk, Card, HeroCard, Badge, SectionHeader, ScoreBar, SkeletonCard,
-  EmptyState, ErrorState, Divider, Spacer, PaywallGate,
+  EmptyState, ErrorState, PaywallGate,
 } from '../../components/brand';
 
 type ScreenContract = {

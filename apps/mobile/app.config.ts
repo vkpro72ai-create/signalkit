@@ -26,7 +26,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000',
     mockBilling: process.env.EXPO_PUBLIC_MOCK_BILLING ?? 'false',
     eas: {
-      projectId: process.env.EAS_PROJECT_ID ?? '',
+      projectId: process.env.EAS_PROJECT_ID ?? '092735b2-7500-4929-9160-e72a33d03bb4',
     },
   },
 
@@ -74,7 +74,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
 
   updates: {
-    url: `https://u.expo.dev/${process.env.EAS_PROJECT_ID ?? 'REPLACE_WITH_EAS_PROJECT_ID'}`,
+    url: `https://u.expo.dev/${process.env.EAS_PROJECT_ID ?? '092735b2-7500-4929-9160-e72a33d03bb4'}`,
     fallbackToCacheTimeout: 0,
   },
 });

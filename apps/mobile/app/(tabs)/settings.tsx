@@ -9,7 +9,7 @@ import { useEntitlements } from '../../lib/entitlements';
 import { useI18n } from '../../lib/i18n';
 import { impact } from '../../lib/haptics';
 import {
-  tk, Card, Divider, Spacer, Avatar, PlanBadge, ListRow, SectionHeader,
+  tk, Card, Divider, Avatar, PlanBadge, ListRow, SectionHeader,
 } from '../../components/brand';
 import type { LocaleCode } from '@signalkit/shared';
 
@@ -29,7 +29,7 @@ const LOCALES: Array<{ code: LocaleCode; label: string; native: string }> = [
 export default function Settings() {
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { plan, upgrade } = useEntitlements();
+  const { plan } = useEntitlements();
   const { locale, setLocale } = useI18n();
   const [showLocales, setShowLocales] = useState(false);
 

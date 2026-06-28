@@ -28,7 +28,6 @@ function AuthGuard() {
 
     const inOnboarding = segments[0] === 'onboarding';
     const inAuth = segments[0] === 'login' || segments[0] === 'register';
-    const inApp = segments[0] === '(tabs)';
 
     if (!hasOnboarded && !inOnboarding) {
       router.replace('/onboarding');

@@ -5,11 +5,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
-import { workspaceApi, ApiException, api } from '../../lib/api';
+import { ApiException, api } from '../../lib/api';
 import { impact } from '../../lib/haptics';
 import {
-  tk, Screen, Card, HeroCard, Badge, ScoreGrid, ScoreBar, SectionHeader,
-  SkeletonCard, EmptyState, ErrorState, Divider, Spacer, Body,
+  tk, Card, HeroCard, ScoreGrid, ScoreBar, SectionHeader,
+  SkeletonCard, EmptyState, ErrorState,
 } from '../../components/brand';
 
 type Niche = {

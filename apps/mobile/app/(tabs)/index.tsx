@@ -6,17 +6,17 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, Pressable, RefreshControl, ActivityIndicator
+  View, Text, ScrollView, Pressable, RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
 import { useEntitlements } from '../../lib/entitlements';
-import { api, ApiException, workspaceApi, packApi } from '../../lib/api';
+import { ApiException, workspaceApi, packApi } from '../../lib/api';
 import { impact } from '../../lib/haptics';
 import {
-  tk, Screen, Card, HeroCard, Badge, ScoreGrid, SectionHeader,
+  tk, Card, HeroCard, Badge, ScoreGrid, SectionHeader,
   SkeletonCard, EmptyState, ErrorState, Divider, Spacer, Avatar,
-  PlanBadge, StatusDot, ScoreBar,
+  StatusDot, ScoreBar,
 } from '../../components/brand';
 
 function greeting(name?: string | null) {
@@ -44,7 +44,7 @@ type ExportJob = {
 export default function Home() {
   const router = useRouter();
   const { user } = useAuth();
-  const { plan, canFullPack, upgrade } = useEntitlements();
+  const { plan, upgrade } = useEntitlements();
 
   const wsId = user?.workspaces?.[0]?.id;
   const wsName = user?.workspaces?.[0]?.name;
@@ -319,7 +319,7 @@ export default function Home() {
                           </Text>
                         </View>
                         <Badge
-                          variant={job.status === 'ready' ? 'ready' as any : job.status === 'failed' ? 'failed' as any : 'muted' as any}
+                          variant={job.status === 'ready' ? 'ready' : job.status === 'failed' ? 'failed' : 'muted'}
                           size="sm"
                         >
                           {job.status}

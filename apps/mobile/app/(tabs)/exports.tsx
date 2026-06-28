@@ -9,8 +9,9 @@ import { useAuth } from '../../lib/auth';
 import { useEntitlements } from '../../lib/entitlements';
 import { workspaceApi, packApi, ApiException } from '../../lib/api';
 import { impact } from '../../lib/haptics';
+import type { SemanticColor } from '@signalkit/ui';
 import {
-  tk, Card, Badge, SectionHeader, SkeletonCard, EmptyState, ErrorState, Divider, Spacer, StatusDot, PaywallGate,
+  tk, Card, Badge, SkeletonCard, EmptyState, ErrorState, StatusDot, PaywallGate,
 } from '../../components/brand';
 
 type ExportJob = {
@@ -36,7 +37,7 @@ function formatType(type: string) {
   return type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function statusVariant(status: string): any {
+function statusVariant(status: string): SemanticColor {
   if (status === 'ready') return 'ready';
   if (status === 'processing' || status === 'queued') return 'evidence';
   if (status === 'failed') return 'failed';
@@ -53,7 +54,7 @@ export default function Exports() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [packId, setPackId] = useState<string | null>(null);
+  const [_packId, setPackId] = useState<string | null>(null);
 
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
