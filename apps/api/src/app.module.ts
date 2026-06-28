@@ -6,10 +6,18 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsModule } from './permissions/permissions.module';
 import { PermissionsGuard } from './permissions/guards/permissions.guard';
 import { AuditModule } from './audit/audit.module';
+import { CryptoModule } from './crypto/crypto.module';
 import { UsersModule } from './users/users.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { SettingsModule } from './settings/settings.module';
 import { ProjectsModule } from './projects/projects.module';
+import { GeoModule } from './geo/geo.module';
+import { LlmModule } from './llm/llm.module';
+import { SourcesModule } from './sources/sources.module';
+import { EvidenceModule } from './evidence/evidence.module';
+import { NichesModule } from './niches/niches.module';
+import { PacksModule } from './packs/packs.module';
+import { ExportsModule } from './exports/exports.module';
 import { HealthController } from './health/health.controller';
 
 /**
@@ -22,11 +30,19 @@ import { HealthController } from './health/health.controller';
     PrismaModule,
     PermissionsModule,
     AuditModule,
+    CryptoModule,
     AuthModule,
     UsersModule,
     WorkspacesModule,
     SettingsModule,
     ProjectsModule,
+    GeoModule,
+    LlmModule,
+    SourcesModule,
+    EvidenceModule,
+    NichesModule,
+    PacksModule,
+    ExportsModule,
   ],
   controllers: [HealthController],
   providers: [

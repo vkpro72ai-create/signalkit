@@ -103,3 +103,123 @@ export interface Region {
   countryCode: CountryCode;
   names: Partial<Record<LocaleCode, string>>;
 }
+
+/** All market scopes, in the order shown in the New Project market step. */
+export const MARKET_SCOPES: readonly MarketScope[] = [
+  'current_location',
+  'country_of_residence',
+  'manual_country',
+  'manual_region',
+  'multi_country',
+  'global',
+] as const;
+
+/** Only the current-location scope needs geolocation consent. */
+export function marketScopeRequiresConsent(scope: MarketScope): boolean {
+  return scope === 'current_location';
+}
+
+/** Does this scope require a country to be known/selected? */
+export function marketScopeNeedsCountry(scope: MarketScope): boolean {
+  return (
+    scope === 'current_location' ||
+    scope === 'country_of_residence' ||
+    scope === 'manual_country' ||
+    scope === 'manual_region'
+  );
+}
+
+/** The geo facts a resolution needs (a subset of UserSettings). */
+export interface GeoFacts {
+  consentStatus: GeoConsentStatus;
+  locationUsageMode: LocationUsageMode;
+  detectedCountry: CountryCode | null;
+  detectedRegion: RegionCode | null;
+  countryOfResidence: CountryCode | null;
+}
+
+export interface MarketResolutionInput {
+  scope: MarketScope;
+  geo: GeoFacts;
+  country?: CountryCode | null;
+  region?: RegionCode | null;
+  countries?: CountryCode[];
+  regions?: RegionCode[];
+  marketLanguage: LocaleCode;
+  regulatorySensitivity?: 'low' | 'medium' | 'high';
+}
+
+export type MarketResolutionFailure =
+  | 'location_consent_required'
+  | 'country_required'
+  | 'region_required'
+  | 'residence_required';
+
+export type MarketResolution =
+  | { ok: true; market: MarketProfile }
+  | { ok: false; reason: MarketResolutionFailure };
+
+/**
+ * Resolve a concrete MarketProfile from a requested scope — the single place
+ * consent gating lives. `current_location` is refused unless consent is granted,
+ * location usage is enabled, and a country was detected. Never reads or requires
+ * precise coordinates: it works entirely at country/region granularity.
+ */
+export function resolveMarketProfile(input: MarketResolutionInput): MarketResolution {
+  const { scope, geo, marketLanguage } = input;
+  const sensitivity = input.regulatorySensitivity ?? 'medium';
+
+  const single = (
+    country: CountryCode | null,
+    region: RegionCode | null,
+  ): MarketResolution => ({
+    ok: true,
+    market: {
+      scope,
+      targetCountry: country,
+      targetRegion: region,
+      targetCountries: country ? [country] : [],
+      targetRegions: region ? [region] : [],
+      marketLanguage,
+      regulatorySensitivity: sensitivity,
+    },
+  });
+
+  switch (scope) {
+    case 'current_location': {
+      const allowed = geo.consentStatus === 'granted' && geo.locationUsageMode !== 'off';
+      if (!allowed || !geo.detectedCountry) {
+        return { ok: false, reason: 'location_consent_required' };
+      }
+      const region = geo.locationUsageMode === 'region_only' ? geo.detectedRegion : null;
+      return single(geo.detectedCountry, region);
+    }
+    case 'country_of_residence':
+      if (!geo.countryOfResidence) return { ok: false, reason: 'residence_required' };
+      return single(geo.countryOfResidence, null);
+    case 'manual_country':
+      if (!input.country) return { ok: false, reason: 'country_required' };
+      return single(input.country, null);
+    case 'manual_region':
+      if (!input.region) return { ok: false, reason: 'region_required' };
+      return single(input.country ?? null, input.region);
+    case 'multi_country': {
+      const countries = input.countries ?? [];
+      if (countries.length === 0) return { ok: false, reason: 'country_required' };
+      return {
+        ok: true,
+        market: {
+          scope,
+          targetCountry: null,
+          targetRegion: null,
+          targetCountries: countries,
+          targetRegions: input.regions ?? [],
+          marketLanguage,
+          regulatorySensitivity: sensitivity,
+        },
+      };
+    }
+    case 'global':
+      return single(null, null);
+  }
+}

@@ -88,6 +88,9 @@ export interface NormalizedSourceItem extends Timestamps {
   relevance: number;
 }
 
+/** Coarse risk level used on niches and elsewhere. */
+export type RiskLevel = 'low' | 'medium' | 'high';
+
 /** A discovered niche / opportunity. */
 export interface Niche extends Timestamps, WorkspaceOwned {
   id: Id;
@@ -102,7 +105,7 @@ export interface Niche extends Timestamps, WorkspaceOwned {
   mvpConcept: string;
   monetization: string;
   recommendedProductFormat: string;
-  riskLevel: 'low' | 'medium' | 'high';
+  riskLevel: RiskLevel;
   market: MarketProfile;
   language: LocaleCode;
   /** Links into evidence/claims/assumptions live in the evidence module. */

@@ -1,0 +1,110 @@
+# SignalKit — Caddyfile (production)
+#
+# Replace {$WEB_DOMAIN} / {$API_DOMAIN} with your real domains, or set them
+# via the WEB_DOMAIN / API_DOMAIN environment variables passed to the Caddy
+# container (see docker-compose.production.yml).
+#
+# Examples:
+#   WEB_DOMAIN=app.example.com
+#   API_DOMAIN=api.example.com
+#
+# Caddy automatically obtains and renews TLS certificates via Let's Encrypt.
+# No manual certificate management required.
+#
+# Upload / export body limit: 50 MB. Adjust if you support very large packs.
+
+# ── Global options ────────────────────────────────────────────────────────────
+{
+    # Email for Let's Encrypt notifications (set to your ops email)
+    email {$CADDY_ACME_EMAIL:ops@example.com}
+
+    # Disable admin API in production (it binds to 127.0.0.1:2019 by default;
+    # remove this line only if you need remote Caddy admin access)
+    admin off
+}
+
+# ── Web (Next.js) ─────────────────────────────────────────────────────────────
+{$WEB_DOMAIN:app.example.com} {
+    encode gzip zstd
+
+    # Security headers
+    header {
+        X-Content-Type-Options       "nosniff"
+        X-Frame-Options              "SAMEORIGIN"
+        Referrer-Policy              "strict-origin-when-cross-origin"
+        Permissions-Policy           "camera=(), microphone=(), geolocation=()"
+        X-XSS-Protection             "1; mode=block"
+        Strict-Transport-Security    "max-age=63072000; includeSubDomains; preload"
+        # Remove server identity
+        -Server
+    }
+
+    # Cap upload / export download body size
+    request_body {
+        max_size 50MB
+    }
+
+    reverse_proxy web:3000 {
+        # Health-based fail-fast
+        health_uri      /
+        health_interval 30s
+        health_timeout  5s
+    }
+
+    log {
+        output file /var/log/caddy/web.access.log {
+            roll_size    100mb
+            roll_keep    5
+            roll_keep_for 168h
+        }
+        format json
+        level  INFO
+    }
+}
+
+# ── API (NestJS) ──────────────────────────────────────────────────────────────
+{$API_DOMAIN:api.example.com} {
+    encode gzip zstd
+
+    # Security headers (API — no frame embedding needed)
+    header {
+        X-Content-Type-Options    "nosniff"
+        X-Frame-Options           "DENY"
+        Referrer-Policy           "no-referrer"
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        -Server
+    }
+
+    # Larger body limit for export file uploads / large pack generation payloads
+    request_body {
+        max_size 50MB
+    }
+
+    # Rate-limit Swagger UI in production (not a security measure, just hygiene)
+    @swagger path /docs /docs/*
+    handle @swagger {
+        header Cache-Control "no-store"
+        reverse_proxy api:4000
+    }
+
+    reverse_proxy api:4000 {
+        health_uri      /health
+        health_interval 30s
+        health_timeout  5s
+
+        # Forward real client IP for audit logs
+        header_up X-Real-IP        {remote_host}
+        header_up X-Forwarded-For  {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    log {
+        output file /var/log/caddy/api.access.log {
+            roll_size    100mb
+            roll_keep    5
+            roll_keep_for 168h
+        }
+        format json
+        level  INFO
+    }
+}

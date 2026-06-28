@@ -1,5 +1,8 @@
+import './globals.css';
 import type { ReactNode } from 'react';
-import { DEFAULT_LOCALE, isRtl } from '@signalkit/i18n';
+import { cookies } from 'next/headers';
+import { isRtl } from '@signalkit/i18n';
+import { I18nProvider, readLocaleFromCookie } from '../lib/i18n';
 
 export const metadata = {
   title: 'SignalKit',
@@ -7,20 +10,15 @@ export const metadata = {
     'Evidence-backed market opportunity discovery and build-ready Product Document Packs.',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
-  const locale = DEFAULT_LOCALE;
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Server-side: read the persisted locale so the first paint has correct lang/dir.
+  const cookieStore = await cookies();
+  const locale = readLocaleFromCookie(cookieStore.toString());
+
   return (
     <html lang={locale} dir={isRtl(locale) ? 'rtl' : 'ltr'}>
-      <body
-        style={{
-          margin: 0,
-          fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-          // Flat 2D: solid background, no gradients.
-          background: '#FBFCFD',
-          color: '#1B1F24',
-        }}
-      >
-        {children}
+      <body>
+        <I18nProvider initialLocale={locale}>{children}</I18nProvider>
       </body>
     </html>
   );

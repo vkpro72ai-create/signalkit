@@ -12,6 +12,6 @@
     "noEmit": true,
     "allowJs": true
   },
-  "include": ["app/**/*", "*.ts", "*.tsx"],
+  "include": ["app/**/*", "lib/**/*", "components/**/*", "*.ts", "*.tsx"],
   "exclude": ["node_modules"]
 }
