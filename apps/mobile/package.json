@@ -20,11 +20,13 @@
     "prebuild:android": "expo prebuild --platform android"
   },
   "dependencies": {
+    "@babel/runtime": "7.29.7",
     "@react-native-async-storage/async-storage": "^2.1.2",
     "@signalkit/i18n": "workspace:*",
     "@signalkit/shared": "workspace:*",
     "@signalkit/ui": "workspace:*",
     "expo": "~52.0.0",
+    "expo-asset": "~11.0.5",
     "expo-blur": "~14.0.3",
     "expo-haptics": "~14.0.1",
     "expo-router": "~4.0.0",

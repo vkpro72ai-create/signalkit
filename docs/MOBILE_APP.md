@@ -329,7 +329,8 @@ adb install apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 - First Gradle run downloads NDK + Maven deps (~10–20 min); subsequent runs are fast (incremental).
 - To force a clean regeneration: `pnpm exec expo prebuild --platform android --clean`
 - React Native new architecture (`newArchEnabled: true`) is on by default. Disable in `app.config.ts` if compatibility issues arise.
-- **Kotlin version patch** — `expo prebuild` generates `android/build.gradle` without a pinned version for `kotlin-gradle-plugin`. RN's transitive deps resolve 1.9.24, but `expo-modules-core` Compose Compiler needs 1.9.25. The `apk-debug.js` script patches this automatically after every prebuild. If building via raw `gradlew` after a manual prebuild, edit `android/build.gradle` line containing `classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')` and add `:${kotlinVersion}` to pin it.
+- **Kotlin version patch** — `expo prebuild` generates `android/build.gradle` without a pinned version for `kotlin-gradle-plugin`. RN's transitive deps resolve 1.9.24, but `expo-modules-core` Compose Compiler needs 1.9.25. The `apk-debug.js` script patches this automatically. If building via raw `gradlew` after a manual prebuild, edit `android/build.gradle` line `classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')` and add `:${kotlinVersion}` to pin it.
+- **JS bundle in debug APKs** — the RN Gradle plugin 0.76+ skips the JS bundle step for all variants in `debuggableVariants` (default: `["debug"]`). This means debug APKs ship without `assets/index.android.bundle` and show "Unable to load script" when launched without Metro. The legacy `bundleInDebug=true` property from `react.gradle` is **not honored** by the new plugin. The `apk-debug.js` script sets `debuggableVariants = []` in `android/app/build.gradle` so all variants embed the JS bundle. Without this patch, standalone debug APKs are broken.
 
 ---
 
