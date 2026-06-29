@@ -1,78 +1,108 @@
 #!/usr/bin/env node
 /**
- * Local debug APK build — no EAS / Expo cloud required.
+ * Local debug APK build for the Expo app.
  *
  * Steps:
- *  1. expo prebuild --platform android   (generate android/ native project)
- *  2. Ensure metro.config.js exists      (pnpm monorepo watchFolders + nodeModulesPaths)
- *  3. Patch android/build.gradle         (pin Kotlin 1.9.25 for Compose Compiler)
- *  4. Patch android/app/build.gradle     (debuggableVariants = [] → bundle JS into APK)
- *  5. Pre-generate autolinking.json      (patch expo.core → expo.modules)
- *  6. gradlew clean assembleDebug        (full clean build with embedded JS)
- *  7. Verify APK contains assets/index.android.bundle and print full report
- *
- * Output: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
- *
- * Prerequisites: JDK 17+, Android SDK with ANDROID_HOME set.
- *
- * Patches applied automatically after every expo prebuild:
- *
- *  [1] metro.config.js — expo prebuild does not create this file. Metro needs it
- *      in a pnpm monorepo to watch the workspace root (node_modules/.pnpm virtual
- *      store) and resolve packages not symlinked directly in apps/mobile/node_modules.
- *      Without it Metro throws "Unable to resolve module ... entry.js".
- *
- *  [2] Kotlin pin — expo-modules-core Compose Compiler 1.5.15 requires 1.9.25.
- *      Generated android/build.gradle has unversioned kotlin-gradle-plugin; RN's
- *      transitive deps resolve 1.9.24. Fix: pin via the ext.kotlinVersion variable.
- *
- *  [3] debuggableVariants = [] — the RN Gradle plugin (0.76+) skips the JS bundle
- *      step for all variants listed in debuggableVariants (default: ["debug"]).
- *      Skipped means no index.android.bundle in APK → "Unable to load script".
- *      bundleInDebug=true is a legacy react.gradle property — NOT honored by 0.76+.
- *      Fix: override debuggableVariants to [] so ALL variants embed the JS bundle.
- *
- *  [3b] extraPackagerArgs <dir> — expo CLI's findWorkspaceRoot() finds
- *       pnpm-workspace.yaml at the repo root (C:\SignalKit) and sets it as Metro's
- *       project root. This means metro.config.js in apps/mobile is never found and
- *       module resolution breaks ("Unable to resolve expo-router/entry.js"). Fix:
- *       add extraPackagerArgs = ["<apps/mobile-path>"] to the react {} block so
- *       expo export:embed receives apps/mobile as its positional <dir> argument,
- *       overriding the CWD-based project root detection.
- *
- *  [4] autolinking.json patch — expo-modules-autolinking@2.0.8 falls back to
- *      expo/android/build.gradle namespace "expo.core", producing the wrong class
- *      expo.core.ExpoModulesPackage (correct: expo.modules.ExpoModulesPackage).
- *      Fix: pre-generate, patch, and write package.json.sha so Gradle's cache
- *      check skips regeneration.
+ *  1. Detect dev machine LAN IP and write apps/mobile/.env.local
+ *     (EXPO_PUBLIC_API_URL, EXPO_PUBLIC_GIT_COMMIT, EXPO_PUBLIC_BUILD_TIMESTAMP,
+ *      EXPO_PUBLIC_ENV — baked into the JS bundle by Metro at build time)
+ *  2. Delete the previous APK so the build is unambiguous
+ *  3. expo prebuild --platform android --clean
+ *  4. Ensure metro.config.js has the pnpm monorepo fix
+ *  5. Patch Android Gradle files where the workspace still needs it
+ *  6. Verify Expo autolinking sees expo-linking
+ *  7. gradlew clean assembleDebug
+ *  8. Verify the APK embeds assets/index.android.bundle
+ *  9. Print full artifact report: path, size, LastWriteTime, SHA256
  */
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 const crypto = require('crypto');
-const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const androidDir = path.join(root, 'android');
+const workspaceRoot = path.resolve(root, '../..');
 
-function run(cmd, opts = {}) {
-  console.log(`\n> ${cmd}`);
-  execSync(cmd, { stdio: 'inherit', ...opts });
+// ─── LAN IP detection ────────────────────────────────────────────────────────
+
+function detectLanIp() {
+  const nets = os.networkInterfaces();
+  const candidates = [];
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) {
+        // Prefer 192.168.x.x and 10.x.x.x (home/office LANs)
+        if (net.address.startsWith('192.168.') || net.address.startsWith('10.')) {
+          candidates.unshift(net.address); // prefer these
+        } else {
+          candidates.push(net.address);
+        }
+      }
+    }
+  }
+  return candidates[0] ?? null;
 }
 
-console.log('=== SignalKit local APK build ===\n');
+// ─── .env.local ──────────────────────────────────────────────────────────────
 
-// ── Step 1: expo prebuild ──────────────────────────────────────────────────
-run('expo prebuild --platform android', { cwd: root });
+function writeEnvLocal() {
+  const lanIp = detectLanIp();
+  const apiUrl = lanIp ? `http://${lanIp}:4000` : 'http://10.0.2.2:4000';
 
-// ── Step 2: ensure metro.config.js exists for pnpm monorepo ──────────────
-// Metro must watch the workspace root (node_modules/.pnpm virtual store) to
-// resolve packages not directly linked in apps/mobile/node_modules.
-// expo prebuild does not generate this file; we ensure it exists here.
-const metroConfigPath = path.join(root, 'metro.config.js');
-const workspaceRoot = path.resolve(root, '../..');
+  let gitCommit = 'unknown';
+  try {
+    gitCommit = execSync('git rev-parse --short HEAD', {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    }).trim();
+  } catch {
+    // git not available or not in a repo — keep 'unknown'
+  }
+
+  const buildTimestamp = new Date().toISOString();
+
+  const lines = [
+    `# Auto-generated by apk-debug.js — do not edit manually`,
+    `EXPO_PUBLIC_API_URL=${apiUrl}`,
+    `EXPO_PUBLIC_ENV=development`,
+    `EXPO_PUBLIC_GIT_COMMIT=${gitCommit}`,
+    `EXPO_PUBLIC_BUILD_TIMESTAMP=${buildTimestamp}`,
+  ];
+  fs.writeFileSync(path.join(root, '.env.local'), lines.join('\n') + '\n', 'utf8');
+
+  console.log(`\n✓ .env.local written:`);
+  console.log(`  API URL   : ${apiUrl}`);
+  if (!lanIp) {
+    console.log(`  ⚠ No LAN IP detected — using Android emulator default 10.0.2.2`);
+    console.log(`    For a physical device, set EXPO_PUBLIC_API_URL=http://<your-ip>:4000`);
+    console.log(`    in apps/mobile/.env.local before building.`);
+  } else {
+    console.log(`  LAN IP    : ${lanIp} (physical device should reach this)`);
+  }
+  console.log(`  Git commit: ${gitCommit}`);
+  console.log(`  Timestamp : ${buildTimestamp}`);
+
+  return { apiUrl, gitCommit, buildTimestamp };
+}
+
+// ─── Delete old APK ──────────────────────────────────────────────────────────
+
+function deleteOldApk() {
+  const apkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+  if (fs.existsSync(apkPath)) {
+    fs.unlinkSync(apkPath);
+    console.log(`\n✓ Deleted old APK: ${apkPath}`);
+  } else {
+    console.log('\n✓ No previous APK to delete');
+  }
+}
+
+// ─── Metro config ────────────────────────────────────────────────────────────
+
 const METRO_CONFIG_CONTENT = `const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
-const fs = require('fs');
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, '../..');
@@ -81,11 +111,10 @@ const config = getDefaultConfig(projectRoot);
 
 config.projectRoot = projectRoot;
 
-// @expo/metro-config sets config.server.unstable_serverRoot = getMetroServerRoot()
-// which finds pnpm-workspace.yaml at C:\\\\\\\\SignalKit and returns workspace root.
-// MetroBundlerDevServer.resolveRelativePathAsync uses relativeTo:"server" from
-// unstable_serverRoot, so "./index.js" resolves from C:\\\\\\\\SignalKit (wrong).
-// Override to apps/mobile so "./index.js" → apps/mobile/index.js (correct).
+// @expo/metro-config discovers the pnpm workspace root and uses it as the
+// Metro server root, which makes "./index.js" resolve from the monorepo root.
+// Force the server root back to apps/mobile so embedded debug bundles resolve
+// the Expo Router entry correctly.
 config.server = {
   ...config.server,
   unstable_serverRoot: projectRoot,
@@ -97,205 +126,243 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-// react-native-screens@4.x ships TypeScript source via "react-native" package.json field.
-// Fabric spec files use CodegenTypes (RN 0.78+ API) which fails under RN 0.76.
-// Redirect to compiled lib/commonjs output to avoid the codegen parse error.
-const pnpmStoreDir = path.join(workspaceRoot, 'node_modules/.pnpm');
-const screensStoreEntry = fs.readdirSync(pnpmStoreDir)
-  .filter(d => d.startsWith('react-native-screens@'))
-  .sort().pop();
-const screensCompiledIndex = screensStoreEntry
-  ? path.join(pnpmStoreDir, screensStoreEntry, 'node_modules/react-native-screens/lib/commonjs/index.js')
-  : null;
-if (screensCompiledIndex && fs.existsSync(screensCompiledIndex)) {
-  config.resolver.resolveRequest = (context, moduleName, platform) => {
-    if (moduleName === 'react-native-screens') {
-      return { filePath: screensCompiledIndex, type: 'sourceFile' };
-    }
-    return context.resolveRequest(context, moduleName, platform);
-  };
-}
-
 module.exports = config;
 `;
 
-if (!fs.existsSync(metroConfigPath)) {
-  fs.writeFileSync(metroConfigPath, METRO_CONFIG_CONTENT, 'utf-8');
-  console.log('\n✓ Created metro.config.js (pnpm monorepo + unstable_serverRoot fix)');
-} else {
-  // Ensure unstable_serverRoot override is present (may be missing from older prebuild runs)
-  const existing = fs.readFileSync(metroConfigPath, 'utf-8');
-  if (!existing.includes('unstable_serverRoot') || !existing.includes('resolveRequest')) {
-    fs.writeFileSync(metroConfigPath, METRO_CONFIG_CONTENT, 'utf-8');
-    console.log('\n✓ Updated metro.config.js: added unstable_serverRoot + resolveRequest fixes');
+function ensureMetroConfig() {
+  const metroConfigPath = path.join(root, 'metro.config.js');
+  const current = fs.existsSync(metroConfigPath)
+    ? fs.readFileSync(metroConfigPath, 'utf8')
+    : null;
+
+  if (current !== METRO_CONFIG_CONTENT) {
+    fs.writeFileSync(metroConfigPath, METRO_CONFIG_CONTENT, 'utf8');
+    console.log('✓ Synced metro.config.js for pnpm monorepo bundling');
   } else {
-    console.log('\n✓ metro.config.js exists with all required fixes');
+    console.log('✓ metro.config.js already matches the required pnpm setup');
   }
 }
 
-// ── Step 3: pin Kotlin 1.9.25 in android/build.gradle ─────────────────────
-const buildGradlePath = path.join(androidDir, 'build.gradle');
-let buildGradle = fs.readFileSync(buildGradlePath, 'utf-8');
-const unversioned = "classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')";
-const versioned   = "classpath(\"org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlinVersion}\")";
-if (buildGradle.includes(unversioned)) {
-  buildGradle = buildGradle.replace(unversioned, versioned);
-  fs.writeFileSync(buildGradlePath, buildGradle, 'utf-8');
-  console.log('\n✓ [Patch 1] android/build.gradle: kotlin-gradle-plugin pinned to ${kotlinVersion} (1.9.25)');
-}
+// ─── Gradle patches ──────────────────────────────────────────────────────────
 
-// ── Step 4: patch android/app/build.gradle ────────────────────────────────
-// 4a. debuggableVariants = [] — RN Gradle plugin 0.76+ skips JS bundle for all
-//     variants in debuggableVariants (default ["debug"]). Must be [] so debug
-//     APKs embed the bundle and work standalone without Metro.
-//
-// 4b. entryFile = ../index.js — resolveAppEntry returns a path inside the pnpm
-//     virtual store. export:embed converts it to a path relative to projectRoot,
-//     which Metro then resolves from the workspace serverRoot (C:\SignalKit),
-//     producing C:\SignalKit\../../... (doesn't exist). Using a local index.js
-//     that imports expo-router/entry keeps the entry file within apps/mobile
-//     where Metro resolves it correctly via the expo-router symlink.
+function patchAndroidGradleFiles() {
+  // 1. Kotlin version pin — unversioned classpath fails Gradle resolution
+  const rootBuildGradlePath = path.join(androidDir, 'build.gradle');
+  const rootBuildGradle = fs.readFileSync(rootBuildGradlePath, 'utf8');
+  const kotlinUnversioned = "classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')";
+  const kotlinVersioned = 'classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlinVersion}")';
+  if (rootBuildGradle.includes(kotlinUnversioned)) {
+    fs.writeFileSync(
+      rootBuildGradlePath,
+      rootBuildGradle.replace(kotlinUnversioned, kotlinVersioned),
+      'utf8',
+    );
+    console.log('✓ Pinned Kotlin Gradle plugin to ${kotlinVersion} (1.9.25)');
+  } else {
+    console.log('✓ Kotlin Gradle plugin already pinned');
+  }
 
-// Create index.js if missing (expo prebuild doesn't generate it)
-const indexJsPath = path.join(root, 'index.js');
-if (!fs.existsSync(indexJsPath)) {
-  fs.writeFileSync(indexJsPath, "import 'expo-router/entry';\n", 'utf-8');
-  console.log('\n✓ Created apps/mobile/index.js (expo-router/entry wrapper)');
-}
+  // 2. Gradle properties — daemon, JVM heap, metaspace
+  const gradlePropertiesPath = path.join(androidDir, 'gradle.properties');
+  let gradleProperties = fs.readFileSync(gradlePropertiesPath, 'utf8');
+  let gradlePropsChanged = false;
 
-const appBuildGradlePath = path.join(androidDir, 'app', 'build.gradle');
-let appBuildGradle = fs.readFileSync(appBuildGradlePath, 'utf-8');
-let appBuildGradleChanged = false;
+  if (!gradleProperties.includes('org.gradle.daemon=false')) {
+    gradleProperties = `${gradleProperties.trimEnd()}\norg.gradle.daemon=false\n`;
+    gradlePropsChanged = true;
+    console.log('✓ Disabled Gradle daemon for local builds');
+  }
 
-if (!appBuildGradle.includes('debuggableVariants = []')) {
-  appBuildGradle = appBuildGradle.replace(/^(react \{)/m, '$1\n    debuggableVariants = []');
-  appBuildGradleChanged = true;
-}
+  // On machines with ≤8 GB RAM, G1GC compressed-oops mode places the Java heap
+  // in the first 4 GB of virtual address space, blocking native heap growth and
+  // causing an OOM crash during heavy Kotlin/Java compilation. Fix by:
+  //   • Reducing Xmx (1536m is enough for Expo SDK 52 + New Arch compilation)
+  //   • Setting HeapBaseMinAddress above 4 GB so native heap can grow freely
+  //   • Reducing MaxMetaspaceSize to 256m (512m is excessive for this project)
+  if (gradleProperties.includes('org.gradle.jvmargs=')) {
+    const fixedJvmArgs = 'org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=256m -XX:HeapBaseMinAddress=0x100000000';
+    const current = gradleProperties.match(/org\.gradle\.jvmargs=.*/)?.[0] ?? '';
+    if (current !== fixedJvmArgs) {
+      gradleProperties = gradleProperties.replace(/org\.gradle\.jvmargs=.*/, fixedJvmArgs);
+      gradlePropsChanged = true;
+      console.log('✓ Fixed JVM args: Xmx1536m + HeapBaseMinAddress above 4 GB (prevents G1GC OOM on 7-8 GB machines)');
+    }
+  }
 
-// entryFile: android/app/../../index.js = apps/mobile/index.js
-// (Gradle file() resolves relative to the android/app/ project directory)
-if (!appBuildGradle.includes('entryFile = file("../../index.js")')) {
-  appBuildGradle = appBuildGradle.replace(
-    /entryFile\s*=\s*file\([^)]+\)/,
-    'entryFile = file("../../index.js")'
-  );
-  appBuildGradleChanged = true;
-}
+  if (gradlePropsChanged) {
+    fs.writeFileSync(gradlePropertiesPath, gradleProperties, 'utf8');
+  }
 
-// 4c. Inline Gradle task to patch PackageList.java before Java compilation.
-//     expo-modules-autolinking@2.0.8 reads namespace "expo.core" from expo/android/build.gradle
-//     and generates "import expo.core.ExpoModulesPackage" — wrong, the class is in expo.modules.
-//     Patching autolinking.json doesn't survive because Gradle regenerates it. Instead, patch
-//     PackageList.java itself via a JavaCompile.doFirst hook in app/build.gradle.
-const patchTask = `
-// expo-modules-autolinking@2.0.8 generates "import expo.core.ExpoModulesPackage" because
-// expo/android/build.gradle has namespace "expo.core", but the class is in expo.modules.
-// Patch PackageList.java before each Java compilation to fix the wrong namespace.
+  // 3. app/build.gradle patches
+  const appBuildGradlePath = path.join(androidDir, 'app', 'build.gradle');
+  let appBuildGradle = fs.readFileSync(appBuildGradlePath, 'utf8');
+  let changed = false;
+
+  // debuggableVariants = [] — forces JS bundle embedding even in debug variant.
+  // Without this the debug APK launches but shows a blank screen (no bundle).
+  if (!appBuildGradle.includes('debuggableVariants = []')) {
+    appBuildGradle = appBuildGradle.replace(
+      '    bundleCommand = "export:embed"',
+      '    bundleCommand = "export:embed"\n    debuggableVariants = []',
+    );
+    changed = true;
+    console.log('✓ Added debuggableVariants = [] to force JS bundle in debug APK');
+  }
+
+  // PackageList namespace patch — expo-modules-autolinking 2.0.8 writes
+  // expo.core.ExpoModulesPackage but the class lives in expo.modules. Patch
+  // the generated Java file before javac runs. This is a build-time workaround
+  // for a known autolinking bug in Expo SDK 52 + this pnpm workspace layout.
+  const packageListPatch = `
+
+// Expo SDK 52 autolinking still emits expo.core.ExpoModulesPackage in this workspace.
+// Patch the generated PackageList right before compilation so Expo modules stay registered.
 tasks.withType(JavaCompile).configureEach {
     it.doFirst {
-        def pkgList = new File("\${buildDir}/generated/autolinking/src/main/java/com/facebook/react/PackageList.java")
-        if (pkgList.exists() && pkgList.text.contains('expo.core.ExpoModulesPackage')) {
-            pkgList.text = pkgList.text.replace('expo.core.ExpoModulesPackage', 'expo.modules.ExpoModulesPackage')
+        def packageList = new File("\${buildDir}/generated/autolinking/src/main/java/com/facebook/react/PackageList.java")
+        if (packageList.exists() && packageList.text.contains('expo.core.ExpoModulesPackage')) {
+            packageList.text = packageList.text.replace('expo.core.ExpoModulesPackage', 'expo.modules.ExpoModulesPackage')
             println '[SignalKit] Patched PackageList.java: expo.core -> expo.modules'
         }
     }
-}`;
-if (!appBuildGradle.includes('expo.core.ExpoModulesPackage') || !appBuildGradle.includes('tasks.withType(JavaCompile)')) {
-  if (!appBuildGradle.includes('tasks.withType(JavaCompile)')) {
-    appBuildGradle += patchTask;
-    appBuildGradleChanged = true;
+}
+`;
+
+  if (!appBuildGradle.includes('tasks.withType(JavaCompile).configureEach')) {
+    appBuildGradle += packageListPatch;
+    changed = true;
+    console.log('✓ Added PackageList.java namespace patch (expo.core → expo.modules)');
+  }
+
+  if (changed) {
+    fs.writeFileSync(appBuildGradlePath, appBuildGradle, 'utf8');
+  } else {
+    console.log('✓ android/app/build.gradle already patched');
   }
 }
 
-if (appBuildGradleChanged) {
-  fs.writeFileSync(appBuildGradlePath, appBuildGradle, 'utf-8');
-  console.log('✓ [Patch 2] android/app/build.gradle: debuggableVariants=[], entryFile=../../index.js, PackageList patch task');
+// ─── Expo autolinking verification ───────────────────────────────────────────
+
+function verifyExpoAutolinking() {
+  const autolinkingBin = require.resolve(
+    'expo-modules-autolinking/bin/expo-modules-autolinking.js',
+    { paths: [require.resolve('expo/package.json', { paths: [root] })] },
+  );
+
+  const searchOutput = execFileSync(
+    process.execPath,
+    [autolinkingBin, 'search', '--platform', 'android', '--project-root', root],
+    { encoding: 'utf8' },
+  );
+
+  if (!searchOutput.includes('expo-linking') || !searchOutput.includes('ExpoLinkingModule')) {
+    console.error('\n✗ Expo autolinking does not include expo-linking / ExpoLinkingModule.');
+    process.exit(1);
+  }
+  console.log('✓ Expo autolinking includes expo-linking / ExpoLinkingModule');
+
+  const packageListTarget = path.join(
+    androidDir, 'build', 'generated', 'autolinking', 'ExpoModulesPackageList.java',
+  );
+  fs.mkdirSync(path.dirname(packageListTarget), { recursive: true });
+
+  execFileSync(
+    process.execPath,
+    [
+      autolinkingBin,
+      'generate-package-list',
+      '--platform', 'android',
+      '--project-root', root,
+      '--target', packageListTarget,
+      '--namespace', 'expo.modules',
+    ],
+    { stdio: 'inherit' },
+  );
+
+  const packageList = fs.readFileSync(packageListTarget, 'utf8');
+  if (!packageList.includes('expo.modules.linking.ExpoLinkingModule.class')) {
+    console.error('\n✗ Generated ExpoModulesPackageList.java is missing ExpoLinkingModule.');
+    process.exit(1);
+  }
+  console.log('✓ Generated ExpoModulesPackageList.java includes ExpoLinkingModule');
 }
 
-// ── Step 4: pre-generate and patch autolinking.json ───────────────────────
-const autolinkBuildDir = path.join(androidDir, 'build', 'generated', 'autolinking');
-const autolinkingJsonPath = path.join(autolinkBuildDir, 'autolinking.json');
-const packageJsonPath = path.join(root, 'package.json');
+// ─── APK verification ────────────────────────────────────────────────────────
 
-console.log('\n> [Patch 3] Generating autolinking.json...');
-const autolinkCmd = [
-  'node', '--no-warnings', '--eval',
-  '"require(require.resolve(\'expo-modules-autolinking\', { paths: [require.resolve(\'expo/package.json\')] }))(process.argv.slice(1))"',
-  'react-native-config', '--json', '--platform', 'android',
-].join(' ');
+function verifyApk(apkPath, buildMeta) {
+  if (!fs.existsSync(apkPath)) {
+    console.error(`\n✗ APK not found at ${apkPath}`);
+    process.exit(1);
+  }
 
-const rawJson = execSync(autolinkCmd, { cwd: root, encoding: 'utf-8' });
-const patchedJson = rawJson.replace(/expo\.core\.ExpoModulesPackage/g, 'expo.modules.ExpoModulesPackage');
+  const apkContents = execSync(`tar -tf "${apkPath}"`, { encoding: 'utf8' });
+  if (!apkContents.includes('assets/index.android.bundle')) {
+    console.error('\n✗ APK is missing assets/index.android.bundle — JS bundle was not embedded.');
+    process.exit(1);
+  }
 
-fs.mkdirSync(autolinkBuildDir, { recursive: true });
-fs.writeFileSync(autolinkingJsonPath, patchedJson, 'utf-8');
+  const stat = fs.statSync(apkPath);
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(apkPath)).digest('hex');
 
-const packageJsonSha = crypto
-  .createHash('sha256')
-  .update(fs.readFileSync(packageJsonPath))
-  .digest('hex');
-fs.writeFileSync(path.join(autolinkBuildDir, 'package.json.sha'), packageJsonSha, 'utf-8');
+  console.log('\n╔═══════════════════════════════════════════════════╗');
+  console.log('║           NEW APK ARTIFACT REPORT                ║');
+  console.log('╚═══════════════════════════════════════════════════╝');
+  console.log(`  Path        : ${apkPath}`);
+  console.log(`  Size        : ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`  LastWrite   : ${stat.mtime.toISOString()}`);
+  console.log(`  SHA256      : ${sha256}`);
+  console.log(`  Bundle      : assets/index.android.bundle ✓`);
+  console.log(`  API URL     : ${buildMeta.apiUrl}`);
+  console.log(`  Git commit  : ${buildMeta.gitCommit}`);
+  console.log(`  Built at    : ${buildMeta.buildTimestamp}`);
+  console.log('');
+  console.log('  Install command:');
+  console.log(`  adb uninstall com.signalkit.app`);
+  console.log(`  adb install "${apkPath}"`);
+  console.log('');
 
-const hadCoreBug = rawJson.includes('expo.core.ExpoModulesPackage');
-console.log(hadCoreBug
-  ? '✓ autolinking.json patched: expo.core.ExpoModulesPackage → expo.modules.ExpoModulesPackage'
-  : '✓ autolinking.json OK (no expo.core references found)');
+  return { apkPath, size: stat.size, mtime: stat.mtime, sha256 };
+}
 
-// ── Step 5: Gradle clean + assembleDebug ──────────────────────────────────
+// ─── Shell helper ────────────────────────────────────────────────────────────
+
+function run(command, options = {}) {
+  console.log(`\n> ${command}`);
+  execSync(command, { stdio: 'inherit', ...options });
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
+
+console.log('\n╔═══════════════════════════════════════════════════╗');
+console.log('║          SignalKit local APK build                ║');
+console.log('╚═══════════════════════════════════════════════════╝\n');
+
+// Step 1: write .env.local with LAN IP + build metadata
+const buildMeta = writeEnvLocal();
+
+// Step 2: delete previous APK so we know the new one is fresh
+deleteOldApk();
+
+// Step 3: prebuild regenerates android/ (includes plugin registration for
+//         expo-secure-store, expo-haptics now that they're in app.config.ts)
+run('expo prebuild --platform android --clean', { cwd: root });
+
+// Step 4: ensure metro.config.js is correct after prebuild
+ensureMetroConfig();
+
+// Step 5: apply Gradle patches (debuggableVariants, Kotlin pin, PackageList fix)
+patchAndroidGradleFiles();
+
+// Step 6: verify autolinking
+verifyExpoAutolinking();
+
+// Step 7: build
 const gradlew = process.platform === 'win32'
   ? path.join(androidDir, 'gradlew.bat')
   : path.join(androidDir, 'gradlew');
 
-if (!fs.existsSync(gradlew)) {
-  console.error(`\nError: Gradle wrapper not found at ${gradlew}`);
-  process.exit(1);
-}
-if (process.platform !== 'win32') {
-  fs.chmodSync(gradlew, '755');
-}
-
 run(`"${gradlew}" clean assembleDebug`, { cwd: androidDir });
 
-// ── Step 6: Verify APK and print report ───────────────────────────────────
-const apk = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
-
-if (!fs.existsSync(apk)) {
-  console.error('\n✗ APK not found at expected path — check Gradle output above.');
-  process.exit(1);
-}
-
-// APKs are ZIP archives; verify JS bundle is present using tar (available on
-// Windows 10+, macOS, Linux)
-console.log('\n> Verifying APK contents...');
-let apkContents = '';
-try {
-  apkContents = execSync(`tar -tf "${apk}"`, { encoding: 'utf-8' });
-} catch (e) {
-  console.warn('  Warning: tar unavailable, skipping content verification.');
-}
-
-const bundleEntry = apkContents
-  .split('\n')
-  .find(l => l.toLowerCase().includes('index.android.bundle'));
-
-if (apkContents && !bundleEntry) {
-  console.error('\n✗ FATAL: assets/index.android.bundle is NOT inside the APK.');
-  console.error('  The app will show "Unable to load script" on device.');
-  console.error('  Ensure Patch 2 (debuggableVariants = []) was applied correctly.');
-  process.exit(1);
-}
-
-const stat    = fs.statSync(apk);
-const sizeMB  = (stat.size / 1024 / 1024).toFixed(1);
-const sha256  = crypto.createHash('sha256').update(fs.readFileSync(apk)).digest('hex');
-
-console.log('\n✓ APK verified and ready:');
-console.log(`  Path:     ${apk}`);
-console.log(`  Size:     ${sizeMB} MB`);
-console.log(`  Modified: ${stat.mtime.toISOString()}`);
-console.log(`  SHA256:   ${sha256}`);
-if (bundleEntry) {
-  console.log(`  Bundle:   ${bundleEntry.trim()}`);
-}
-console.log('\nInstall on device:');
-console.log(`  adb install -r "${apk}"`);
+// Step 8: verify + report
+const apkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+verifyApk(apkPath, buildMeta);

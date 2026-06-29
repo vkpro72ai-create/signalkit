@@ -2,7 +2,10 @@
  * Register screen — create account via backend /auth/register.
  */
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+  View, Text, TextInput, Pressable,
+  KeyboardAvoidingView, ScrollView,
+} from 'react-native';
 import { useRouter, Link } from 'expo-router';
 import { useAuth } from '../lib/auth';
 import { ApiException } from '../lib/api';
@@ -19,7 +22,7 @@ export default function Register() {
   const [error, setError] = useState<string | null>(null);
 
   async function handleRegister() {
-    if (!email.trim() || !password) return;
+    if (!email.trim() || password.length < 8) return;
     setLoading(true);
     setError(null);
     try {
@@ -39,18 +42,20 @@ export default function Register() {
   const isValid = email.trim().length > 0 && password.length >= 8;
 
   return (
+    // 'padding' on both platforms avoids the Android height-reduction loop that
+    // causes infinite layout re-measurements when combined with flexGrow + center.
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: tk.color.canvas }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior="padding"
     >
       <ScrollView
         contentContainerStyle={{
-          flexGrow: 1,
-          justifyContent: 'center',
           paddingHorizontal: 24,
-          paddingVertical: 48,
+          paddingTop: 80,
+          paddingBottom: 56,
         }}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <View style={{ marginBottom: 40 }}>
           <View style={{
@@ -84,9 +89,7 @@ export default function Register() {
 
         <View style={{ gap: 12 }}>
           <View>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: tk.color.subtle, marginBottom: 6, letterSpacing: 0.3 }}>
-              NAME (optional)
-            </Text>
+            <Text style={labelStyle}>NAME (optional)</Text>
             <TextInput
               style={inputStyle}
               value={name}
@@ -99,9 +102,7 @@ export default function Register() {
           </View>
 
           <View>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: tk.color.subtle, marginBottom: 6, letterSpacing: 0.3 }}>
-              EMAIL
-            </Text>
+            <Text style={labelStyle}>EMAIL</Text>
             <TextInput
               style={inputStyle}
               value={email}
@@ -116,9 +117,7 @@ export default function Register() {
           </View>
 
           <View>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: tk.color.subtle, marginBottom: 6, letterSpacing: 0.3 }}>
-              PASSWORD (min 8 chars)
-            </Text>
+            <Text style={labelStyle}>PASSWORD — min 8 characters</Text>
             <TextInput
               style={inputStyle}
               value={password}
@@ -130,6 +129,11 @@ export default function Register() {
               returnKeyType="done"
               onSubmitEditing={handleRegister}
             />
+            {password.length > 0 && password.length < 8 && (
+              <Text style={{ fontSize: 12, color: tk.color.risk, marginTop: 4 }}>
+                {8 - password.length} more character{8 - password.length !== 1 ? 's' : ''} needed
+              </Text>
+            )}
           </View>
         </View>
 
@@ -162,6 +166,14 @@ export default function Register() {
     </KeyboardAvoidingView>
   );
 }
+
+const labelStyle = {
+  fontSize: 12,
+  fontWeight: '600' as const,
+  color: tk.color.subtle,
+  marginBottom: 6,
+  letterSpacing: 0.3,
+};
 
 const inputStyle = {
   height: 48,

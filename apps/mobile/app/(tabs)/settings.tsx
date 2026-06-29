@@ -13,6 +13,12 @@ import {
 } from '../../components/brand';
 import type { LocaleCode } from '@signalkit/shared';
 
+const IS_DEV = (process.env.EXPO_PUBLIC_ENV ?? 'development') !== 'production';
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000';
+const GIT_COMMIT = process.env.EXPO_PUBLIC_GIT_COMMIT ?? 'unknown';
+const BUILD_TS = process.env.EXPO_PUBLIC_BUILD_TIMESTAMP ?? '';
+const APP_VERSION = '0.2.0';
+
 const LOCALES: Array<{ code: LocaleCode; label: string; native: string }> = [
   { code: 'en', label: 'English', native: 'English' },
   { code: 'ru', label: 'Russian', native: 'Русский' },
@@ -31,7 +37,9 @@ export default function Settings() {
   const { user, logout } = useAuth();
   const { plan } = useEntitlements();
   const { locale, setLocale } = useI18n();
+  const { isDemo, loginDemo } = useAuth();
   const [showLocales, setShowLocales] = useState(false);
+  const [showBuildInfo, setShowBuildInfo] = useState(false);
 
   const ws = user?.workspaces?.[0];
 
@@ -189,20 +197,92 @@ export default function Settings() {
           </Card>
         </View>
 
-        {/* Dev */}
-        {process.env.NODE_ENV === 'development' && (
+        {/* Build Info — always visible so the installed APK is identifiable */}
+        <View>
+          <Pressable
+            onPress={() => setShowBuildInfo((v) => !v)}
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '700', color: tk.color.muted, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+              Build Info
+            </Text>
+            <Text style={{ fontSize: 12, color: tk.color.muted }}>{showBuildInfo ? '▲' : '▼'}</Text>
+          </Pressable>
+          {showBuildInfo && (
+            <Card style={{ gap: 6 }}>
+              <InfoRow label="Version" value={`v${APP_VERSION}`} />
+              <InfoRow label="Commit" value={GIT_COMMIT} mono />
+              <InfoRow
+                label="Built"
+                value={BUILD_TS ? BUILD_TS.slice(0, 16).replace('T', ' ') + ' UTC' : 'unknown'}
+              />
+              <InfoRow label="API URL" value={API_URL} mono />
+              <InfoRow
+                label="Environment"
+                value={process.env.EXPO_PUBLIC_ENV ?? 'development'}
+              />
+              <InfoRow
+                label="Mock billing"
+                value={process.env.EXPO_PUBLIC_MOCK_BILLING ?? 'false'}
+              />
+              {isDemo && (
+                <View style={{
+                  marginTop: 4, paddingVertical: 6, paddingHorizontal: 10,
+                  borderRadius: tk.radius.sm,
+                  backgroundColor: tk.color.warningBg,
+                  borderWidth: 1, borderColor: tk.color.warningBorder,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: tk.color.warning }}>
+                    ⚠ DEMO MODE — no real auth
+                  </Text>
+                </View>
+              )}
+            </Card>
+          )}
+        </View>
+
+        {/* Developer tools — non-production builds only */}
+        {IS_DEV && (
           <View>
             <SectionHeader title="Developer" />
             <Card style={{ gap: 0 }}>
-              <View style={{ paddingVertical: 8 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: tk.color.warning }}>DEV MODE</Text>
-                <Text style={{ fontSize: 12, color: tk.color.subtle, marginTop: 2 }}>
-                  API: {process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'}
-                </Text>
-                <Text style={{ fontSize: 12, color: tk.color.subtle }}>
-                  Mock billing: {process.env.EXPO_PUBLIC_MOCK_BILLING ?? 'false'}
-                </Text>
-              </View>
+              {!isDemo ? (
+                <Pressable
+                  onPress={() => {
+                    Alert.alert(
+                      'Enable Demo Mode',
+                      'Demo mode bypasses authentication and shows the app with an empty workspace. Use this to audit screens without a backend connection.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Enable Demo Mode',
+                          onPress: () => { loginDemo(); router.replace('/'); },
+                        },
+                      ],
+                    );
+                  }}
+                  style={({ pressed }) => ({
+                    paddingVertical: 14, paddingHorizontal: 4,
+                    opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: tk.color.warning }}>
+                    Enable Demo Mode
+                  </Text>
+                  <Text style={{ fontSize: 12, color: tk.color.subtle, marginTop: 2 }}>
+                    Bypass auth — audit UI without backend
+                  </Text>
+                </Pressable>
+              ) : (
+                <View style={{ paddingVertical: 10 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: tk.color.warning }}>
+                    ⚠ Demo Mode active
+                  </Text>
+                  <Text style={{ fontSize: 12, color: tk.color.subtle, marginTop: 2 }}>
+                    Sign out to return to real auth.
+                  </Text>
+                </View>
+              )}
             </Card>
           </View>
         )}
@@ -224,9 +304,30 @@ export default function Settings() {
         </Pressable>
 
         <Text style={{ fontSize: 11, color: tk.color.muted, textAlign: 'center' }}>
-          SignalKit v0.2.0 · Evidence-backed product intelligence
+          SignalKit v{APP_VERSION} · Evidence-backed product intelligence
         </Text>
       </View>
     </ScrollView>
+  );
+}
+
+function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+      <Text style={{ fontSize: 12, color: tk.color.subtle, flexShrink: 0 }}>{label}</Text>
+      <Text
+        style={{
+          fontSize: 12,
+          color: tk.color.ink,
+          fontWeight: '500',
+          fontFamily: mono ? 'monospace' : undefined,
+          flex: 1,
+          textAlign: 'right',
+        }}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
+    </View>
   );
 }

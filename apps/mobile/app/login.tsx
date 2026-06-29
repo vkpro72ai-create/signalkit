@@ -2,15 +2,20 @@
  * Login screen — email/password auth against backend JWT.
  */
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+  View, Text, TextInput, Pressable,
+  KeyboardAvoidingView, ScrollView,
+} from 'react-native';
 import { useRouter, Link } from 'expo-router';
 import { useAuth } from '../lib/auth';
 import { ApiException } from '../lib/api';
 import { tk, Button, Spacer } from '../components/brand';
 
+const IS_DEV = (process.env.EXPO_PUBLIC_ENV ?? 'development') !== 'production';
+
 export default function Login() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, loginDemo } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,19 +40,26 @@ export default function Login() {
     }
   }
 
+  function handleDemo() {
+    loginDemo();
+    router.replace('/');
+  }
+
   return (
+    // 'padding' on both platforms avoids the Android height-reduction loop that
+    // causes infinite layout re-measurements when combined with flexGrow + center.
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: tk.color.canvas }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior="padding"
     >
       <ScrollView
         contentContainerStyle={{
-          flexGrow: 1,
-          justifyContent: 'center',
           paddingHorizontal: 24,
-          paddingVertical: 48,
+          paddingTop: 80,
+          paddingBottom: 56,
         }}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         {/* Logo / Brand */}
         <View style={{ marginBottom: 40 }}>
@@ -84,9 +96,7 @@ export default function Login() {
         {/* Fields */}
         <View style={{ gap: 12 }}>
           <View>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: tk.color.subtle, marginBottom: 6, letterSpacing: 0.3 }}>
-              EMAIL
-            </Text>
+            <Text style={labelStyle}>EMAIL</Text>
             <TextInput
               style={inputStyle}
               value={email}
@@ -101,9 +111,7 @@ export default function Login() {
           </View>
 
           <View>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: tk.color.subtle, marginBottom: 6, letterSpacing: 0.3 }}>
-              PASSWORD
-            </Text>
+            <Text style={labelStyle}>PASSWORD</Text>
             <TextInput
               style={inputStyle}
               value={password}
@@ -139,26 +147,60 @@ export default function Login() {
           </Link>
         </View>
 
-        <Spacer h={32} />
-
-        {/* Dev hint */}
-        {process.env.NODE_ENV === 'development' && (
-          <View style={{
-            borderRadius: tk.radius.md,
-            borderWidth: 1,
-            borderColor: tk.color.warningBorder,
-            backgroundColor: tk.color.warningBg,
-            padding: 12,
-          }}>
-            <Text style={{ fontSize: 12, color: tk.color.warning, fontWeight: '600' }}>
-              DEV MODE — API: {process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'}
-            </Text>
-          </View>
+        {/* Dev diagnostics + demo mode — visible in non-production builds only */}
+        {IS_DEV && (
+          <>
+            <Spacer h={40} />
+            <View style={{
+              borderRadius: tk.radius.md,
+              borderWidth: 1,
+              borderColor: tk.color.warningBorder,
+              backgroundColor: tk.color.warningBg,
+              padding: 12,
+              gap: 4,
+            }}>
+              <Text style={{ fontSize: 12, color: tk.color.warning, fontWeight: '700' }}>
+                DEV BUILD
+              </Text>
+              <Text style={{ fontSize: 11, color: tk.color.warning }}>
+                API: {process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000'}
+              </Text>
+              {process.env.EXPO_PUBLIC_GIT_COMMIT ? (
+                <Text style={{ fontSize: 11, color: tk.color.warning }}>
+                  Commit: {process.env.EXPO_PUBLIC_GIT_COMMIT} · {process.env.EXPO_PUBLIC_BUILD_TIMESTAMP?.slice(0, 16).replace('T', ' ')}
+                </Text>
+              ) : null}
+            </View>
+            <Spacer h={12} />
+            <Pressable
+              onPress={handleDemo}
+              style={({ pressed }) => ({
+                paddingVertical: 12,
+                alignItems: 'center',
+                borderRadius: tk.radius.md,
+                borderWidth: 1,
+                borderColor: tk.color.warningBorder,
+                backgroundColor: pressed ? tk.color.warningBg : 'transparent',
+              })}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '600', color: tk.color.warning }}>
+                ⚠ Demo Mode — bypass auth (dev only)
+              </Text>
+            </Pressable>
+          </>
         )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+const labelStyle = {
+  fontSize: 12,
+  fontWeight: '600' as const,
+  color: tk.color.subtle,
+  marginBottom: 6,
+  letterSpacing: 0.3,
+};
 
 const inputStyle = {
   height: 48,

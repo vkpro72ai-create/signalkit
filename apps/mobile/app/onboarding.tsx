@@ -5,7 +5,7 @@
  */
 import { useState } from 'react';
 import { View, Text, Pressable, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Link } from 'expo-router';
 import { useOnboarding } from '../lib/onboarding';
 import { impact } from '../lib/haptics';
 import { tk, Button, Chip } from '../components/brand';
@@ -80,7 +80,7 @@ export default function Onboarding() {
       setStep((s) => s + 1);
     } else {
       await complete();
-      router.replace('/login');
+      router.replace('/register');
     }
   }
 
@@ -99,7 +99,7 @@ export default function Onboarding() {
 
   async function skip() {
     await complete();
-    router.replace('/login');
+    router.replace('/register');
   }
 
   const canAdvance = isRoleStep
@@ -285,6 +285,17 @@ export default function Onboarding() {
           <Pressable onPress={back} style={{ alignItems: 'center' }}>
             <Text style={{ fontSize: 14, color: tk.color.subtle, fontWeight: '500' }}>Back</Text>
           </Pressable>
+        )}
+        {/* Show sign-in link on the final step so returning users aren't stuck */}
+        {step === TOTAL_STEPS - 1 && (
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 4 }}>
+            <Text style={{ fontSize: 14, color: tk.color.subtle }}>Already have an account?</Text>
+            <Link href="/login" asChild>
+              <Pressable>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: tk.color.brand }}>Sign in</Text>
+              </Pressable>
+            </Link>
+          </View>
         )}
       </View>
     </View>

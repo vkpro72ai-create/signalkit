@@ -1,13 +1,16 @@
 /**
- * Mobile API client. All calls go through the backend NestJS API.
- * Never calls LLM providers directly. Never logs tokens.
+ * Mobile API client. All calls go through the backend NestJS API (port 4000).
  *
- * Base URL: EXPO_PUBLIC_API_URL (set in .env or EAS secrets)
- * For local dev: http://localhost:3000
- * For production: https://api.yourdomain.com
+ * Base URL: EXPO_PUBLIC_API_URL — set by apk-debug.js in .env.local (auto LAN-IP),
+ *           or manually in .env. Default: http://10.0.2.2:4000 (Android emulator).
+ *
+ * For physical device: apk-debug.js detects the host machine LAN IP automatically.
+ * If connecting manually, set EXPO_PUBLIC_API_URL=http://<your-machine-ip>:4000
  */
 
-const BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+const BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
+
+const TIMEOUT_MS = 15_000;
 
 export type ApiError = {
   status: number;
@@ -40,6 +43,7 @@ async function request<T>(
   body?: unknown,
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
+  const url = `${BASE}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -49,15 +53,39 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${_token}`;
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await fetch(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     });
-  } catch {
-    throw new ApiException(0, 'Network unavailable. Check your connection.');
+  } catch (e) {
+    clearTimeout(timer);
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new ApiException(
+        0,
+        `Request timed out after ${TIMEOUT_MS / 1000}s reaching ${BASE}. Is the API server running?`,
+      );
+    }
+    // Distinguish common causes for the developer
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.toLowerCase().includes('cleartext') || msg.toLowerCase().includes('ssl')) {
+      throw new ApiException(
+        0,
+        `Cleartext HTTP blocked by Android. URL: ${BASE}. Enable usesCleartextTraffic in app.config.ts or use HTTPS.`,
+      );
+    }
+    throw new ApiException(
+      0,
+      `Cannot reach API at ${BASE}. Check:\n• Wi-Fi on device\n• API server running (port 4000)\n• Correct LAN IP in EXPO_PUBLIC_API_URL\n\nError: ${msg}`,
+    );
+  } finally {
+    clearTimeout(timer);
   }
 
   if (res.status === 204) return undefined as T;
@@ -66,7 +94,7 @@ async function request<T>(
   try {
     json = await res.json();
   } catch {
-    throw new ApiException(res.status, `Non-JSON response from server (status ${res.status})`);
+    throw new ApiException(res.status, `Non-JSON response from ${url} (HTTP ${res.status})`);
   }
 
   if (!res.ok) {
@@ -95,14 +123,18 @@ export type MeResponse = {
   id: string;
   email: string;
   name?: string;
+  displayName?: string;
   workspaces: Array<{ id: string; name: string; role: string }>;
 };
 
 export const authApi = {
   login: (email: string, password: string) =>
     api.post<AuthTokens>('/auth/login', { email, password }),
-  register: (email: string, password: string, name?: string) =>
-    api.post<AuthTokens>('/auth/register', { email, password, name }),
+
+  // Backend RegisterDto expects { email, password, displayName? }
+  register: (email: string, password: string, displayName?: string) =>
+    api.post<AuthTokens>('/auth/register', { email, password, displayName }),
+
   me: () => api.get<MeResponse>('/me'),
 };
 

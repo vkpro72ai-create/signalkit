@@ -1,49 +1,67 @@
 /**
- * Storage abstraction. Production should use expo-secure-store for tokens
- * (install: expo install expo-secure-store) and @react-native-async-storage
- * for non-sensitive state. Until then, in-memory fallback is used — state
- * resets on app restart, which is safe for development.
+ * Storage abstraction.
  *
- * TODO(session-16): replace MemoryStore with SecureStore + AsyncStorage.
- * SecureStore: import * as SecureStore from 'expo-secure-store';
- * AsyncStorage: import AsyncStorage from '@react-native-async-storage/async-storage';
+ * SecureKV  — expo-secure-store on native (hardware-backed on Android API 23+),
+ *             localStorage on web.  Use for auth tokens and sensitive values.
+ *
+ * KV        — @react-native-async-storage/async-storage on native,
+ *             localStorage on web. Use for preferences and onboarding flags.
+ *
+ * Both adapters persist across app restarts.
  */
 
-interface StorageAdapter {
-  getItem(key: string): Promise<string | null>;
-  setItem(key: string, value: string): Promise<void>;
-  removeItem(key: string): Promise<void>;
-}
+import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-class MemoryStore implements StorageAdapter {
-  private store = new Map<string, string>();
-
-  async getItem(key: string) {
-    return this.store.get(key) ?? null;
-  }
-
-  async setItem(key: string, value: string) {
-    this.store.set(key, value);
-  }
-
-  async removeItem(key: string) {
-    this.store.delete(key);
-  }
-}
-
-const secureStore: StorageAdapter = new MemoryStore();
-const regularStore: StorageAdapter = new MemoryStore();
-
-/** For auth tokens and other sensitive values. */
+/** Sensitive values (auth tokens). Backed by hardware Keystore on Android. */
 export const SecureKV = {
-  get: (key: string) => secureStore.getItem(key),
-  set: (key: string, value: string) => secureStore.setItem(key, value),
-  remove: (key: string) => secureStore.removeItem(key),
+  get: (key: string): Promise<string | null> => {
+    if (Platform.OS === 'web') {
+      return Promise.resolve(globalThis.localStorage?.getItem(key) ?? null);
+    }
+    return SecureStore.getItemAsync(key);
+  },
+
+  set: (key: string, value: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.setItem(key, value);
+      return Promise.resolve();
+    }
+    return SecureStore.setItemAsync(key, value);
+  },
+
+  remove: (key: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.removeItem(key);
+      return Promise.resolve();
+    }
+    return SecureStore.deleteItemAsync(key);
+  },
 };
 
-/** For preferences, onboarding flags and other non-sensitive state. */
+/** Non-sensitive preferences (onboarding flags, locale, etc.). */
 export const KV = {
-  get: (key: string) => regularStore.getItem(key),
-  set: (key: string, value: string) => regularStore.setItem(key, value),
-  remove: (key: string) => regularStore.removeItem(key),
+  get: (key: string): Promise<string | null> => {
+    if (Platform.OS === 'web') {
+      return Promise.resolve(globalThis.localStorage?.getItem(key) ?? null);
+    }
+    return AsyncStorage.getItem(key);
+  },
+
+  set: (key: string, value: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.setItem(key, value);
+      return Promise.resolve();
+    }
+    return AsyncStorage.setItem(key, value);
+  },
+
+  remove: (key: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.removeItem(key);
+      return Promise.resolve();
+    }
+    return AsyncStorage.removeItem(key);
+  },
 };
