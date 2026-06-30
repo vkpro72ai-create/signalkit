@@ -110,11 +110,21 @@ function writeEnvLocal() {
 
 function deleteOldApk() {
   const apkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
-  if (fs.existsSync(apkPath)) {
+  if (!fs.existsSync(apkPath)) {
+    console.log('\n✓ No previous APK to delete');
+    return;
+  }
+  try {
     fs.unlinkSync(apkPath);
     console.log(`\n✓ Deleted old APK: ${apkPath}`);
-  } else {
-    console.log('\n✓ No previous APK to delete');
+  } catch (e) {
+    if (e.code === 'EBUSY') {
+      // Windows Defender or another process may be scanning the file.
+      // Gradle will overwrite it, so it's safe to continue.
+      console.log(`\n⚠ Old APK is busy (likely AV scan) — Gradle will overwrite it`);
+    } else {
+      throw e;
+    }
   }
 }
 
