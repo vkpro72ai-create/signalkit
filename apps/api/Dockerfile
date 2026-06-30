@@ -77,6 +77,10 @@ RUN pnpm --filter @signalkit/api deploy --prod --legacy /deploy/api
 # Copy Prisma schema + migrations into the deploy dir (needed for migrate deploy)
 RUN cp -r apps/api/prisma /deploy/api/prisma
 
+# pnpm deploy does not carry the generated Prisma client (.prisma/client/);
+# copy it explicitly so the runner can resolve @prisma/client/default.
+RUN cp -r node_modules/.prisma /deploy/api/node_modules/.prisma
+
 # ── runner ────────────────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-alpine AS runner
 WORKDIR /app
