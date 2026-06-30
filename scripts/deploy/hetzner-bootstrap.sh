@@ -21,7 +21,7 @@
 set -euo pipefail
 
 DEPLOY_USER=signalkit
-REPO_URL=${REPO_URL:-"https://github.com/YOUR_ORG/signalkit.git"}
+REPO_URL=${REPO_URL:-"https://github.com/vkpro72ai-create/signalkit.git"}
 APP_DIR="/home/${DEPLOY_USER}/signalkit"
 
 echo "==> Updating system packages"
