@@ -364,7 +364,9 @@ deleteOldApk();
 
 // Step 3: prebuild regenerates android/ (includes plugin registration for
 //         expo-secure-store, expo-haptics now that they're in app.config.ts)
-run('expo prebuild --platform android --clean', { cwd: root });
+// Use local expo binary — global `expo` is not guaranteed in PATH on all machines
+const expoBin = path.join(root, 'node_modules', '.bin', 'expo');
+run(`"${expoBin}" prebuild --platform android --clean`, { cwd: root });
 
 // Step 4: ensure metro.config.js is correct after prebuild
 ensureMetroConfig();
