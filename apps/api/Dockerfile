@@ -46,6 +46,9 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 WORKDIR /app
 
+# Root tsconfig files referenced by all packages via "extends": "../../tsconfig.base.json"
+COPY tsconfig.base.json tsconfig.json ./
+
 # Copy source for API and all workspace packages it depends on
 COPY apps/api/                apps/api/
 COPY packages/config/         packages/config/

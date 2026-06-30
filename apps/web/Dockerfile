@@ -39,6 +39,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 WORKDIR /app
 
+COPY tsconfig.base.json tsconfig.json ./
 COPY apps/web/     apps/web/
 COPY packages/     packages/
 
