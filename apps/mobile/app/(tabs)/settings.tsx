@@ -35,7 +35,7 @@ const LOCALES: Array<{ code: LocaleCode; label: string; native: string }> = [
 export default function Settings() {
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { plan } = useEntitlements();
+  const { plan, backendPlan: plan_debug } = useEntitlements();
   const { locale, setLocale } = useI18n();
   const { isDemo, loginDemo } = useAuth();
   const [showLocales, setShowLocales] = useState(false);
@@ -221,6 +221,10 @@ export default function Settings() {
                 label="Environment"
                 value={process.env.EXPO_PUBLIC_ENV ?? 'development'}
               />
+              <InfoRow label="Email" value={user?.email ?? '—'} />
+              <InfoRow label="Role" value={ws?.role ?? '—'} />
+              <InfoRow label="Backend plan" value={plan_debug} mono />
+              <InfoRow label="Mobile plan" value={plan} />
               <InfoRow
                 label="Mock billing"
                 value={process.env.EXPO_PUBLIC_MOCK_BILLING ?? 'false'}

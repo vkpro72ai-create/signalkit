@@ -124,7 +124,19 @@ export type MeResponse = {
   email: string;
   name?: string;
   displayName?: string;
-  workspaces: Array<{ id: string; name: string; role: string }>;
+  /** Backend billingPlan from first workspace (free | founder_pro | agency | studio | enterprise). */
+  billingPlan: string;
+  workspaces: Array<{ id: string; name: string; role: string; billingPlan: string }>;
+};
+
+/** Raw shape returned by GET /me on the NestJS backend. */
+type MeRaw = {
+  user: { id: string; email: string; displayName?: string | null };
+  memberships: Array<{
+    workspace: { id: string; name: string };
+    role: string;
+    billingPlan: string;
+  }>;
 };
 
 export const authApi = {
@@ -135,7 +147,23 @@ export const authApi = {
   register: (email: string, password: string, displayName?: string) =>
     api.post<AuthTokens>('/auth/register', { email, password, displayName }),
 
-  me: () => api.get<MeResponse>('/me'),
+  me: async (): Promise<MeResponse> => {
+    const raw = await api.get<MeRaw>('/me');
+    const workspaces = (raw.memberships ?? []).map((m) => ({
+      id: m.workspace.id,
+      name: m.workspace.name,
+      role: m.role,
+      billingPlan: m.billingPlan ?? 'free',
+    }));
+    return {
+      id: raw.user.id,
+      email: raw.user.email,
+      name: raw.user.displayName ?? raw.user.email,
+      displayName: raw.user.displayName ?? undefined,
+      billingPlan: workspaces[0]?.billingPlan ?? 'free',
+      workspaces,
+    };
+  },
 };
 
 export type WorkspaceProjects = Array<{ id: string; name: string; createdAt: string }>;

@@ -34,6 +34,17 @@ export function I18nProvider({
 }) {
   const [locale, setLocaleState] = useState<LocaleCode>(initialLocale);
 
+  // Hydrate from cookie on first mount (covers static-export / GitHub Pages builds
+  // where server-side cookies() is not available and the HTML defaults to 'en').
+  useEffect(() => {
+    const cookieLocale = readLocaleFromCookie(
+      typeof document !== 'undefined' ? document.cookie : undefined,
+    );
+    if (cookieLocale !== locale) {
+      setLocaleState(cookieLocale);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setLocale = useCallback((next: LocaleCode) => {
     setLocaleState(next);
     if (typeof document !== 'undefined') {

@@ -13,7 +13,11 @@ export class UsersService {
         settings: true,
         memberships: {
           where: { status: 'active' },
-          include: { workspace: true },
+          include: {
+            workspace: {
+              include: { settings: true },
+            },
+          },
         },
       },
     });
@@ -25,7 +29,11 @@ export class UsersService {
     return {
       user: safeUser,
       settings: user.settings,
-      memberships: user.memberships.map((m) => ({ workspace: m.workspace, role: m.role })),
+      memberships: user.memberships.map((m) => ({
+        workspace: m.workspace,
+        role: m.role,
+        billingPlan: m.workspace.settings?.billingPlan ?? 'free',
+      })),
     };
   }
 }

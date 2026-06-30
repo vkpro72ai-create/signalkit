@@ -1,12 +1,17 @@
 /** @type {import('next').NextConfig} */
+
+const mode = process.env.NEXT_BUILD_MODE; // 'standalone' | 'export' | undefined
+
 const nextConfig = {
   reactStrictMode: true,
   // Workspace packages are TypeScript source — let Next transpile them.
   transpilePackages: ['@signalkit/shared', '@signalkit/ui', '@signalkit/i18n'],
-  // Standalone output bundles everything needed for a minimal Docker image.
-  // Set NEXT_BUILD_MODE=standalone when building inside Docker (Linux).
-  // Local Windows builds omit it to avoid EPERM symlink errors.
-  output: process.env.NEXT_BUILD_MODE === 'standalone' ? 'standalone' : undefined,
+  // standalone → Docker image; export → GitHub Pages static site; undefined → local dev
+  output: mode === 'standalone' ? 'standalone' : mode === 'export' ? 'export' : undefined,
+  // GitHub Pages serves from /signalkit sub-path
+  basePath: mode === 'export' ? '/signalkit' : undefined,
+  assetPrefix: mode === 'export' ? '/signalkit/' : undefined,
+  trailingSlash: mode === 'export' ? true : undefined,
   experimental: {
     typedRoutes: true,
   },
