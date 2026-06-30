@@ -28,7 +28,7 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.signalkit.app",
+        "EXPO_PUBLIC_API_URL": "https://api.178-105-237-128.sslip.io",
         "EXPO_PUBLIC_MOCK_BILLING": "false"
       },
       "channel": "preview"
@@ -41,7 +41,7 @@
         "buildConfiguration": "Release"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.signalkit.app",
+        "EXPO_PUBLIC_API_URL": "https://api.178-105-237-128.sslip.io",
         "EXPO_PUBLIC_MOCK_BILLING": "false"
       },
       "channel": "preview"
@@ -57,7 +57,7 @@
         "buildConfiguration": "Release"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.signalkit.app",
+        "EXPO_PUBLIC_API_URL": "https://api.178-105-237-128.sslip.io",
         "EXPO_PUBLIC_MOCK_BILLING": "false"
       },
       "channel": "production"
