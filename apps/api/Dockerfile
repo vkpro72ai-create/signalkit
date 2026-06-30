@@ -71,8 +71,8 @@ RUN pnpm --filter @signalkit/config   build && \
 RUN pnpm --filter @signalkit/api exec prisma generate
 RUN pnpm --filter @signalkit/api build
 
-# pnpm deploy creates a self-contained production dir with resolved workspace deps
-RUN pnpm --filter @signalkit/api deploy --prod /deploy/api
+# pnpm v10 requires --legacy for non-injected workspace deploys
+RUN pnpm --filter @signalkit/api deploy --prod --legacy /deploy/api
 
 # Copy Prisma schema + migrations into the deploy dir (needed for migrate deploy)
 RUN cp -r apps/api/prisma /deploy/api/prisma
