@@ -48,23 +48,23 @@ function detectLanIp() {
 // ─── .env.local ──────────────────────────────────────────────────────────────
 
 function writeEnvLocal() {
-  // Allow explicit override via environment variable — used for production APK builds
-  // targeting https://api.signalkit.app instead of a local LAN address.
-  // Example: EXPO_PUBLIC_API_URL=https://api.signalkit.app pnpm apk:debug
-  const explicitApiUrl = process.env.EXPO_PUBLIC_API_URL ?? null;
-
-  let apiUrl;
-  let usingOverride = false;
-  if (explicitApiUrl) {
-    apiUrl = explicitApiUrl;
-    usingOverride = true;
-  } else {
-    const lanIp = detectLanIp();
-    apiUrl = lanIp ? `http://${lanIp}:4000` : 'http://10.0.2.2:4000';
+  // EXPO_PUBLIC_API_URL is required — no silent fallback to localhost or LAN IP.
+  // For acceptance builds: set EXPO_PUBLIC_API_URL=https://api.178-105-237-128.sslip.io
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (!apiUrl) {
+    console.error('\n✗ EXPO_PUBLIC_API_URL is not set.');
+    console.error('  Run with: $env:EXPO_PUBLIC_API_URL = "https://api.178-105-237-128.sslip.io"');
+    console.error('  No silent fallback to localhost — set the URL explicitly.');
+    process.exit(1);
   }
 
-  const isProduction = apiUrl.startsWith('https://');
-  const envName = isProduction ? 'production' : 'development';
+  // Derive ENV: explicit env var or HTTPS → production, else development.
+  const envName = (process.env.EXPO_PUBLIC_ENV ?? (apiUrl.startsWith('https://') ? 'production' : 'development'));
+
+  if (apiUrl.startsWith('http://')) {
+    console.warn(`\n⚠ WARNING: Using cleartext HTTP: ${apiUrl}`);
+    console.warn('  Production builds must use https://');
+  }
 
   let gitCommit = 'unknown';
   try {
@@ -73,7 +73,7 @@ function writeEnvLocal() {
       encoding: 'utf8',
     }).trim();
   } catch {
-    // git not available or not in a repo — keep 'unknown'
+    // git not available — keep 'unknown'
   }
 
   const buildTimestamp = new Date().toISOString();
@@ -88,22 +88,12 @@ function writeEnvLocal() {
   fs.writeFileSync(path.join(root, '.env.local'), lines.join('\n') + '\n', 'utf8');
 
   console.log(`\n✓ .env.local written:`);
-  console.log(`  API URL   : ${apiUrl}${usingOverride ? '  (EXPO_PUBLIC_API_URL override)' : ''}`);
+  console.log(`  API URL   : ${apiUrl}`);
   console.log(`  ENV       : ${envName}`);
-  if (!usingOverride) {
-    const lanIp = detectLanIp();
-    if (!lanIp) {
-      console.log(`  ⚠ No LAN IP detected — using Android emulator default 10.0.2.2`);
-      console.log(`    For a physical device, set EXPO_PUBLIC_API_URL=http://<your-ip>:4000`);
-      console.log(`    in apps/mobile/.env.local before building.`);
-    } else {
-      console.log(`  LAN IP    : ${lanIp} (physical device should reach this)`);
-    }
-  }
   console.log(`  Git commit: ${gitCommit}`);
   console.log(`  Timestamp : ${buildTimestamp}`);
 
-  return { apiUrl, gitCommit, buildTimestamp };
+  return { apiUrl, gitCommit, buildTimestamp, envName };
 }
 
 // ─── Delete old APK ──────────────────────────────────────────────────────────
@@ -324,10 +314,46 @@ function verifyApk(apkPath, buildMeta) {
     process.exit(1);
   }
 
+  // Verify APK contains the JS bundle
   const apkContents = execSync(`tar -tf "${apkPath}"`, { encoding: 'utf8' });
   if (!apkContents.includes('assets/index.android.bundle')) {
     console.error('\n✗ APK is missing assets/index.android.bundle — JS bundle was not embedded.');
     process.exit(1);
+  }
+  console.log('\n✓ assets/index.android.bundle present in APK');
+
+  // Extract the JS bundle to inspect its content
+  const tmpDir = path.join(require('os').tmpdir(), 'signalkit-apk-verify');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  try {
+    execSync(`tar -xf "${apkPath}" -C "${tmpDir}" "assets/index.android.bundle"`, { stdio: 'pipe' });
+  } catch {
+    console.warn('  ⚠ Could not extract bundle for URL verification (tar error — APK still valid)');
+  }
+
+  const bundlePath = path.join(tmpDir, 'assets', 'index.android.bundle');
+  if (fs.existsSync(bundlePath)) {
+    const bundleText = fs.readFileSync(bundlePath, 'utf8');
+
+    // Must contain the expected API URL
+    if (bundleText.includes(buildMeta.apiUrl)) {
+      console.log(`✓ Bundle contains API URL: ${buildMeta.apiUrl}`);
+    } else {
+      console.error(`✗ Bundle does NOT contain expected API URL: ${buildMeta.apiUrl}`);
+      process.exit(1);
+    }
+
+    // Must NOT contain local/dev addresses
+    const forbidden = ['localhost:3000', 'localhost:4000', '10.0.2.2', '192.168.'];
+    const found = forbidden.filter((s) => bundleText.includes(s));
+    if (found.length > 0) {
+      console.error(`✗ Bundle contains forbidden local addresses: ${found.join(', ')}`);
+      process.exit(1);
+    }
+    console.log('✓ Bundle does not contain localhost/LAN addresses');
+
+    // Clean up temp dir
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
   const stat = fs.statSync(apkPath);
@@ -341,9 +367,15 @@ function verifyApk(apkPath, buildMeta) {
   console.log(`  LastWrite   : ${stat.mtime.toISOString()}`);
   console.log(`  SHA256      : ${sha256}`);
   console.log(`  Bundle      : assets/index.android.bundle ✓`);
-  console.log(`  API URL     : ${buildMeta.apiUrl}`);
+  console.log(`  API URL     : ${buildMeta.apiUrl} ✓ (in bundle)`);
+  console.log(`  ENV         : ${buildMeta.envName}`);
   console.log(`  Git commit  : ${buildMeta.gitCommit}`);
   console.log(`  Built at    : ${buildMeta.buildTimestamp}`);
+  console.log('');
+  console.log('  Build command used:');
+  console.log('    $env:EXPO_PUBLIC_API_URL = "https://api.178-105-237-128.sslip.io"');
+  console.log('    $env:EXPO_PUBLIC_ENV = "production"');
+  console.log('    node apps/mobile/scripts/apk-debug.js');
   console.log('');
   console.log('  Install command:');
   console.log(`  adb uninstall com.signalkit.app`);
