@@ -89,6 +89,12 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # NEXT_PUBLIC_* vars must be present at build time (baked into the
+      # client bundle) — the `environment:` block below only affects the
+      # running container's server process, which is too late for these.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_DEFAULT_LOCALE: ${NEXT_PUBLIC_DEFAULT_LOCALE:-en}
     restart: unless-stopped
     depends_on:
       api:

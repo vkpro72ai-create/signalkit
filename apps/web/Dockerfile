@@ -54,6 +54,16 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Enable standalone output inside Docker (Linux — no EPERM symlink issue).
 # Local Windows builds use NEXT_BUILD_MODE unset → no standalone output.
 ENV NEXT_BUILD_MODE=standalone
+
+# NEXT_PUBLIC_* vars are inlined into the client bundle at build time, not
+# read at container runtime — they MUST be passed as build args here, not
+# just as `environment:` on the runner service (that only affects the
+# server process, not the already-compiled browser JS).
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_DEFAULT_LOCALE=en
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_DEFAULT_LOCALE=${NEXT_PUBLIC_DEFAULT_LOCALE}
+
 RUN pnpm --filter @signalkit/web build
 
 # ── runner ────────────────────────────────────────────────────────────────────
