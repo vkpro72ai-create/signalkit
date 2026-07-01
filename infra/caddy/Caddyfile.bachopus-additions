@@ -21,7 +21,10 @@ signalkit.sys.bachopus.com {
     }
 
     reverse_proxy 127.0.0.1:3000 {
-        health_uri      /
+        # "/" 307-redirects to "/projects" (i18n/default-route redirect);
+        # Caddy's active health check only accepts 2xx by default, so probe
+        # a path that resolves without a redirect.
+        health_uri      /projects
         health_interval 30s
         health_timeout  5s
     }
