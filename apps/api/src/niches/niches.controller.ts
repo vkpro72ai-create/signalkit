@@ -23,6 +23,13 @@ export class NichesController {
     return this.niches.list(ws, pid);
   }
 
+  @Get('niches')
+  @RequirePermissions('niche:read')
+  @ApiOperation({ summary: 'List all niches in the workspace (across all projects) — mobile feed' })
+  listAll(@Param('workspaceId') ws: string) {
+    return this.niches.listAll(ws);
+  }
+
   @Get('niches/:nicheId')
   @RequirePermissions('niche:read')
   @ApiOperation({ summary: 'Get a niche with its latest score' })

@@ -261,6 +261,34 @@ export class NichesService {
     });
   }
 
+  /** All niches across every project in the workspace — used by mobile home feed. */
+  async listAll(workspaceId: string) {
+    const niches = await this.prisma.niche.findMany({
+      where: { workspaceId },
+      include: {
+        scores: { orderBy: { createdAt: 'desc' }, take: 1 },
+        ventureTheses: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return niches.map((n) => {
+      const score = n.scores[0];
+      const vt = n.ventureTheses?.[0];
+      return {
+        id: n.id,
+        name: n.title,
+        projectId: n.projectId,
+        opportunityScore: score?.totalScore ?? 0,
+        confidence: {
+          level: score?.confidenceLevel ?? 'low',
+          value: score?.confidenceValue ?? 0,
+        },
+        ventureScaleScore: vt?.ventureScaleScore ?? null,
+        buildReadinessScore: null as number | null,
+      };
+    });
+  }
+
   async get(workspaceId: string, nicheId: string) {
     const niche = await this.prisma.niche.findFirst({
       where: { id: nicheId, workspaceId },
