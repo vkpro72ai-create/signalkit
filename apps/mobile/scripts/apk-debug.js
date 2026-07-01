@@ -47,24 +47,25 @@ function detectLanIp() {
 
 // ─── .env.local ──────────────────────────────────────────────────────────────
 
+// Default backend for all acceptance builds — no manual env vars required.
+// Override only for local dev: EXPO_PUBLIC_API_URL=http://<lan-ip>:4000
+const PRODUCTION_API = 'https://api.178-105-237-128.sslip.io';
+
 function writeEnvLocal() {
-  // EXPO_PUBLIC_API_URL is required — no silent fallback to localhost or LAN IP.
-  // For acceptance builds: set EXPO_PUBLIC_API_URL=https://api.178-105-237-128.sslip.io
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (!apiUrl) {
-    console.error('\n✗ EXPO_PUBLIC_API_URL is not set.');
-    console.error('  Run with: $env:EXPO_PUBLIC_API_URL = "https://api.178-105-237-128.sslip.io"');
-    console.error('  No silent fallback to localhost — set the URL explicitly.');
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? PRODUCTION_API;
+
+  // Refuse to build with local/dev addresses unless EXPO_PUBLIC_API_URL is
+  // explicitly set (dev override). Default path always uses PRODUCTION_API.
+  const FORBIDDEN = ['localhost', '10.0.2.2', '192.168.'];
+  const isDefaultBuild = !process.env.EXPO_PUBLIC_API_URL;
+  if (!isDefaultBuild && FORBIDDEN.some((f) => apiUrl.includes(f))) {
+    console.error(`\n✗ Refusing to build with local URL: ${apiUrl}`);
+    console.error('  Unset EXPO_PUBLIC_API_URL to use the production backend.');
     process.exit(1);
   }
 
-  // Derive ENV: explicit env var or HTTPS → production, else development.
-  const envName = (process.env.EXPO_PUBLIC_ENV ?? (apiUrl.startsWith('https://') ? 'production' : 'development'));
-
-  if (apiUrl.startsWith('http://')) {
-    console.warn(`\n⚠ WARNING: Using cleartext HTTP: ${apiUrl}`);
-    console.warn('  Production builds must use https://');
-  }
+  // ENV: explicit or derived from protocol
+  const envName = process.env.EXPO_PUBLIC_ENV ?? (apiUrl.startsWith('https://') ? 'production' : 'development');
 
   let gitCommit = 'unknown';
   try {

@@ -11,7 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
 import { useEntitlements } from '../../lib/entitlements';
-import { ApiException, workspaceApi, packApi } from '../../lib/api';
+import { ApiException, workspaceApi, packApi, type WorkspaceProjects } from '../../lib/api';
 import { impact } from '../../lib/haptics';
 import {
   tk, Card, HeroCard, Badge, ScoreGrid, SectionHeader,
@@ -156,22 +156,56 @@ export default function Home() {
         {/* ── Error ── */}
         {!loading && error && <ErrorState message={error} onRetry={load} />}
 
-        {/* ── No workspace ── */}
+        {/* ── No workspace — one-tap create ── */}
         {!loading && !wsId && !error && (
-          <EmptyState
-            icon="🏗️"
-            title="No workspace yet"
-            body="Create a workspace on the web app to get started. Mobile gives you full read access and smart summaries."
-          />
+          <View style={{ borderRadius: tk.radius.lg, borderWidth: 1.5, borderColor: tk.color.brand + '40', backgroundColor: tk.color.brandBg, padding: tk.space.lg }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: tk.color.ink, marginBottom: 8, letterSpacing: -0.3 }}>
+              Create your product lab
+            </Text>
+            <Text style={{ fontSize: 14, color: tk.color.subtle, lineHeight: 20, marginBottom: 20 }}>
+              A workspace to discover opportunities, generate product packs and build blueprints.
+            </Text>
+            <Pressable
+              onPress={async () => {
+                impact();
+                try {
+                  await workspaceApi.create('My Product Lab');
+                  load();
+                } catch {
+                  // Workspace may already exist — reload to pick it up
+                  load();
+                }
+              }}
+              style={({ pressed }) => ({
+                backgroundColor: tk.color.brand, borderRadius: tk.radius.md,
+                paddingVertical: 14, alignItems: 'center', opacity: pressed ? 0.88 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#fff' }}>Start</Text>
+            </Pressable>
+          </View>
         )}
 
-        {/* ── No project / niche ── */}
+        {/* ── Has workspace, no opportunities — discovery CTA ── */}
         {!loading && wsId && !niche && !error && (
-          <EmptyState
-            icon="🎯"
-            title="Find your first opportunity"
-            body="Use the web app to run a niche analysis. Your top opportunity will appear here."
-          />
+          <View style={{ borderRadius: tk.radius.lg, borderWidth: 1, borderColor: tk.color.border, backgroundColor: tk.color.surface, padding: tk.space.lg }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: tk.color.ink, marginBottom: 8, letterSpacing: -0.3 }}>
+              Run your first opportunity discovery
+            </Text>
+            <Text style={{ fontSize: 14, color: tk.color.subtle, lineHeight: 20, marginBottom: 20 }}>
+              SignalKit scans markets for high-signal opportunities and scores them on evidence.
+              No hype, no fake TAM.
+            </Text>
+            <Pressable
+              onPress={() => { impact(); router.push('/opportunities'); }}
+              style={({ pressed }) => ({
+                backgroundColor: tk.color.brand, borderRadius: tk.radius.md,
+                paddingVertical: 14, alignItems: 'center', opacity: pressed ? 0.88 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#fff' }}>Find opportunities</Text>
+            </Pressable>
+          </View>
         )}
 
         {/* ── Hero Opportunity Card ── */}

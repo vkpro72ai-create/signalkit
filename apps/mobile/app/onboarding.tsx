@@ -1,301 +1,352 @@
 /**
- * Onboarding — multi-step wizard.
- * Steps: Welcome → Value props → Role → Target → Market mode → Account CTA
- * Persists completion via OnboardingProvider.
+ * Onboarding — discovery-first setup wizard.
+ * Steps: Welcome → Role → Goal → Market → Verticals → Language → Account
+ * No emoji icons. Explicit market selection. No location inference.
  */
 import { useState } from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
-import { useRouter, Link } from 'expo-router';
+import { View, Text, Pressable, ScrollView, StatusBar } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useOnboarding } from '../lib/onboarding';
+import { useAuth } from '../lib/auth';
 import { impact } from '../lib/haptics';
-import { tk, Button, Chip } from '../components/brand';
+import { tk } from '../components/brand';
 
-type Role = 'founder' | 'pm' | 'agency' | 'investor' | 'developer';
-type Target = 'startup' | 'validate' | 'build_docs' | 'ai_handoff' | 'research';
-type MarketMode = 'global' | 'country' | 'multi';
+// ─── Data ────────────────────────────────────────────────────────────────────
 
-const ROLES: Array<{ id: Role; label: string; icon: string; desc: string }> = [
-  { id: 'founder', label: 'Founder', icon: '🚀', desc: 'Building a new startup' },
-  { id: 'pm', label: 'Product Manager', icon: '📋', desc: 'Owning the roadmap' },
-  { id: 'agency', label: 'Agency / Studio', icon: '🏢', desc: 'Shipping for clients' },
-  { id: 'investor', label: 'Investor / Scout', icon: '🔍', desc: 'Evaluating deals' },
-  { id: 'developer', label: 'Developer', icon: '💻', desc: 'Building the product' },
+type Role = 'founder' | 'operator' | 'agency' | 'investor' | 'builder';
+type Goal =
+  | 'find_opportunities' | 'track_niches' | 'validate_idea'
+  | 'generate_docs' | 'ai_build_pack' | 'analyze_market';
+type Vertical = string;
+type Lang = string;
+
+const ROLES: Array<{ id: Role; label: string; desc: string }> = [
+  { id: 'founder', label: 'Founder', desc: 'Building a new product from scratch' },
+  { id: 'operator', label: 'Product Operator', desc: 'Owning roadmap, metrics and growth' },
+  { id: 'agency', label: 'Agency / Studio', desc: 'Shipping products for clients' },
+  { id: 'investor', label: 'Investor / Scout', desc: 'Evaluating deals and market opportunities' },
+  { id: 'builder', label: 'Builder', desc: 'Writing code and shipping features' },
 ];
 
-const TARGETS: Array<{ id: Target; label: string; icon: string }> = [
-  { id: 'startup', label: 'Find startup ideas', icon: '💡' },
-  { id: 'validate', label: 'Validate an idea', icon: '✅' },
-  { id: 'build_docs', label: 'Build product docs', icon: '📄' },
-  { id: 'ai_handoff', label: 'AI agent handoff', icon: '🤖' },
-  { id: 'research', label: 'Research a market', icon: '🌍' },
+const GOALS: Array<{ id: Goal; label: string }> = [
+  { id: 'find_opportunities', label: 'Find new product opportunities' },
+  { id: 'track_niches', label: 'Track fast-growing niches' },
+  { id: 'validate_idea', label: 'Validate an existing idea' },
+  { id: 'generate_docs', label: 'Generate product documentation' },
+  { id: 'ai_build_pack', label: 'Prepare AI-agent build pack' },
+  { id: 'analyze_market', label: 'Analyze a specific market' },
 ];
 
-const MARKET_MODES: Array<{ id: MarketMode; label: string; icon: string; desc: string }> = [
-  { id: 'global', label: 'Global', icon: '🌐', desc: 'Worldwide opportunity intelligence' },
-  { id: 'country', label: 'My country', icon: '📍', desc: 'Focus on my home market' },
-  { id: 'multi', label: 'Multi-market', icon: '🗺️', desc: 'Compare across regions' },
+const MARKETS = [
+  { id: 'us', label: 'United States' },
+  { id: 'global_en', label: 'Global English-speaking' },
+  { id: 'uk', label: 'United Kingdom' },
+  { id: 'ca', label: 'Canada' },
+  { id: 'au_nz', label: 'Australia / New Zealand' },
+  { id: 'eu', label: 'EU (multiple markets)' },
+  { id: 'de', label: 'Germany' },
+  { id: 'fr', label: 'France' },
+  { id: 'es', label: 'Spain' },
+  { id: 'nordics', label: 'Nordics' },
+  { id: 'uae', label: 'UAE / Gulf' },
+  { id: 'sg', label: 'Singapore' },
+  { id: 'in', label: 'India' },
+  { id: 'br', label: 'Brazil' },
+  { id: 'custom', label: 'Other / Custom' },
 ];
 
-const SLIDES = [
-  {
-    icon: '🎯',
-    headline: 'Find breakout\nproduct opportunities',
-    body: 'SignalKit surfaces high-signal market niches before they become obvious. Evidence-backed, not hype-driven.',
-  },
-  {
-    icon: '📊',
-    headline: 'From signals to\nventure thesis',
-    body: 'Every opportunity comes with a Venture Scale Score, Confidence rating and full reasoning — no fake TAM numbers.',
-  },
-  {
-    icon: '📦',
-    headline: 'Build-ready\nProduct Packs',
-    body: '27 product documents generated from real market evidence. Ready for founders, PMs, agencies and AI coding agents.',
-  },
-  {
-    icon: '🗺️',
-    headline: 'Blueprints for every\nbuild role',
-    body: 'Screen contracts, API maps, component specs and DO_NOT_BUILD warnings — everything a team needs to build confidently.',
-  },
+const VERTICALS = [
+  { id: 'ai', label: 'AI & Automation' },
+  { id: 'health', label: 'Health & Wellness' },
+  { id: 'fintech', label: 'Fintech' },
+  { id: 'b2b_saas', label: 'B2B SaaS' },
+  { id: 'consumer', label: 'Consumer' },
+  { id: 'real_estate', label: 'Real Estate' },
+  { id: 'womens_health', label: "Women's Health" },
+  { id: 'productivity', label: 'Productivity' },
+  { id: 'founder_tools', label: 'Founder Tools' },
+  { id: 'education', label: 'Education' },
+  { id: 'climate', label: 'Climate & Sustainability' },
+  { id: 'custom', label: 'Other / Custom' },
 ];
+
+const LANGUAGES = [
+  { id: 'en', label: 'English' },
+  { id: 'ru', label: 'Русский' },
+  { id: 'de', label: 'Deutsch' },
+  { id: 'es', label: 'Español' },
+  { id: 'fr', label: 'Français' },
+  { id: 'pt', label: 'Português' },
+  { id: 'ar', label: 'العربية' },
+  { id: 'hi', label: 'हिन्दी' },
+  { id: 'id', label: 'Bahasa Indonesia' },
+  { id: 'tr', label: 'Türkçe' },
+];
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function RoleCard({ label, desc, selected, onPress }: { label: string; desc: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        paddingVertical: 16, paddingHorizontal: 18,
+        borderRadius: tk.radius.md, borderWidth: 1.5,
+        borderColor: selected ? tk.color.brand : tk.color.border,
+        backgroundColor: selected ? tk.color.brandBg : tk.color.surface,
+        opacity: pressed ? 0.8 : 1,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      })}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 16, fontWeight: '700', color: selected ? tk.color.brand : tk.color.ink, marginBottom: 2 }}>{label}</Text>
+        <Text style={{ fontSize: 13, color: tk.color.subtle, lineHeight: 18 }}>{desc}</Text>
+      </View>
+      {selected && (
+        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: tk.color.brand, alignItems: 'center', justifyContent: 'center', marginLeft: 12 }}>
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>✓</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+function OptionChip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        paddingVertical: 11, paddingHorizontal: 16,
+        borderRadius: tk.radius.sm, borderWidth: 1.5,
+        borderColor: selected ? tk.color.brand : tk.color.border,
+        backgroundColor: selected ? tk.color.brandBg : tk.color.surface,
+        opacity: pressed ? 0.8 : 1,
+      })}
+    >
+      <Text style={{ fontSize: 14, fontWeight: selected ? '700' : '500', color: selected ? tk.color.brand : tk.color.ink }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+type Step = 'welcome' | 'role' | 'goal' | 'market' | 'verticals' | 'language' | 'account';
+const STEPS: Step[] = ['welcome', 'role', 'goal', 'market', 'verticals', 'language', 'account'];
 
 export default function Onboarding() {
   const router = useRouter();
   const { complete } = useOnboarding();
+  const { isAuthenticated } = useAuth();
 
-  const [step, setStep] = useState(0);
+  const [stepIdx, setStepIdx] = useState(0);
   const [role, setRole] = useState<Role | null>(null);
-  const [targets, setTargets] = useState<Set<Target>>(new Set());
-  const [marketMode, setMarketMode] = useState<MarketMode | null>(null);
+  const [goals, setGoals] = useState<Set<Goal>>(new Set(['find_opportunities']));
+  const [market, setMarket] = useState<string | null>(null);
+  const [verticals, setVerticals] = useState<Set<string>>(new Set());
+  const [language, setLanguage] = useState<Lang>('en');
 
-  const TOTAL_STEPS = SLIDES.length + 3; // slides + role + target + market
-  const currentSlide = step < SLIDES.length ? SLIDES[step] : null;
-  const isRoleStep = step === SLIDES.length;
-  const isTargetStep = step === SLIDES.length + 1;
-  const isMarketStep = step === SLIDES.length + 2;
+  const step = STEPS[stepIdx];
 
-  async function advance() {
+  function next() { impact(); setStepIdx((i) => Math.min(i + 1, STEPS.length - 1)); }
+  function back() { if (stepIdx > 0) setStepIdx((i) => i - 1); }
+
+  function toggleGoal(id: Goal) {
+    setGoals((prev) => { const n = new Set(prev); n.has(id) ? (n.size > 1 && n.delete(id)) : n.add(id); return n; });
+  }
+  function toggleVertical(id: string) {
+    setVerticals((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  async function finish() {
     await impact();
-    if (step < TOTAL_STEPS - 1) {
-      setStep((s) => s + 1);
-    } else {
-      await complete();
-      router.replace('/register');
-    }
-  }
-
-  function back() {
-    if (step > 0) setStep((s) => s - 1);
-  }
-
-  function toggleTarget(id: Target) {
-    setTargets((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function skip() {
     await complete();
-    router.replace('/register');
+    router.replace(isAuthenticated ? '/' : '/register');
   }
 
-  const canAdvance = isRoleStep
-    ? !!role
-    : isTargetStep
-      ? targets.size > 0
-      : isMarketStep
-        ? !!marketMode
-        : true;
+  const canAdvance =
+    step === 'welcome' ? true :
+    step === 'role' ? !!role :
+    step === 'market' ? !!market :
+    true;
 
   return (
     <View style={{ flex: 1, backgroundColor: tk.color.canvas }}>
+      <StatusBar barStyle="dark-content" />
+
       {/* Progress */}
-      <View style={{ paddingTop: 60, paddingHorizontal: 24, flexDirection: 'row', gap: 4 }}>
-        {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-          <View
-            key={i}
-            style={{
-              flex: 1,
-              height: 3,
-              borderRadius: 2,
-              backgroundColor: i <= step ? tk.color.brand : tk.color.line,
-            }}
-          />
-        ))}
+      <View style={{ height: 3, backgroundColor: tk.color.border, marginTop: 52 }}>
+        <View style={{ height: 3, width: `${((stepIdx + 1) / STEPS.length) * 100}%`, backgroundColor: tk.color.brand }} />
       </View>
 
-      {/* Skip */}
-      <View style={{ position: 'absolute', top: 54, right: 24 }}>
-        <Pressable onPress={skip}>
-          <Text style={{ fontSize: 14, fontWeight: '600', color: tk.color.subtle }}>Skip</Text>
-        </Pressable>
+      {/* Nav row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: tk.space.base, paddingVertical: 14 }}>
+        {stepIdx > 0
+          ? <Pressable onPress={back} hitSlop={12}><Text style={{ fontSize: 15, color: tk.color.subtle, fontWeight: '500' }}>← Back</Text></Pressable>
+          : <View />
+        }
+        <View style={{ flexDirection: 'row', gap: 5 }}>
+          {STEPS.map((_, i) => (
+            <View key={i} style={{ width: i === stepIdx ? 18 : 5, height: 5, borderRadius: 2.5, backgroundColor: i === stepIdx ? tk.color.brand : tk.color.border }} />
+          ))}
+        </View>
+        <Pressable onPress={finish} hitSlop={12}><Text style={{ fontSize: 14, color: tk.color.muted }}>Skip</Text></Pressable>
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24, paddingTop: 40, paddingBottom: 40 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Slide content */}
-        {currentSlide && (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'flex-start', gap: 16 }}>
-            <Text style={{ fontSize: 56 }}>{currentSlide.icon}</Text>
-            <Text
-              style={{
-                fontSize: 32,
-                fontWeight: '800',
-                color: tk.color.ink,
-                letterSpacing: -0.8,
-                lineHeight: 40,
-              }}
-            >
-              {currentSlide.headline}
+      <ScrollView contentContainerStyle={{ paddingHorizontal: tk.space.base, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+
+        {/* WELCOME */}
+        {step === 'welcome' && (
+          <View style={{ paddingTop: 16 }}>
+            <View style={{ width: 52, height: 52, borderRadius: 14, backgroundColor: tk.color.brandBg, borderWidth: 1.5, borderColor: tk.color.brand + '40', alignItems: 'center', justifyContent: 'center', marginBottom: 28 }}>
+              <Text style={{ fontSize: 24, fontWeight: '900', color: tk.color.brand }}>SK</Text>
+            </View>
+            <Text style={{ fontSize: 34, fontWeight: '900', color: tk.color.ink, letterSpacing: -1, lineHeight: 40, marginBottom: 16 }}>
+              Find product{'\n'}opportunities{'\n'}worth building.
             </Text>
-            <Text style={{ fontSize: 16, color: tk.color.subtle, lineHeight: 24, fontWeight: '400' }}>
-              {currentSlide.body}
+            <Text style={{ fontSize: 16, color: tk.color.subtle, lineHeight: 26, marginBottom: 32 }}>
+              Evidence-backed market intelligence for founders, operators and product teams.
+              No hype, no fake TAM — real signals with reasoning.
             </Text>
+            {[
+              'Opportunity discovery with scoring and evidence',
+              'Venture Thesis generated per opportunity',
+              'Product Pack — 14 build-ready engineering documents',
+              'Build Blueprint with screen contracts and API maps',
+            ].map((item) => (
+              <View key={item} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 12 }}>
+                <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: tk.color.brand, marginTop: 9 }} />
+                <Text style={{ fontSize: 15, color: tk.color.ink, flex: 1, lineHeight: 22 }}>{item}</Text>
+              </View>
+            ))}
           </View>
         )}
 
-        {/* Role step */}
-        {isRoleStep && (
-          <View style={{ gap: 16 }}>
-            <Text style={{ fontSize: 26, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5 }}>
-              I am a...
+        {/* ROLE */}
+        {step === 'role' && (
+          <View style={{ paddingTop: 16 }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5, marginBottom: 8 }}>What's your role?</Text>
+            <Text style={{ fontSize: 15, color: tk.color.subtle, marginBottom: 28, lineHeight: 22 }}>
+              We'll surface the most relevant opportunities and documents for you.
             </Text>
-            <Text style={{ fontSize: 15, color: tk.color.subtle }}>
-              This personalises your experience.
-            </Text>
-            <View style={{ gap: 10, marginTop: 8 }}>
+            <View style={{ gap: 10 }}>
               {ROLES.map((r) => (
-                <Pressable
-                  key={r.id}
-                  onPress={() => { setRole(r.id); impact(); }}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 14,
-                    padding: 16,
-                    borderRadius: tk.radius.lg,
-                    borderWidth: 1.5,
-                    backgroundColor: role === r.id ? tk.color.brandFaint : tk.color.surface,
-                    borderColor: role === r.id ? tk.color.brand : tk.color.line,
-                    opacity: pressed ? 0.85 : 1,
-                  })}
-                >
-                  <Text style={{ fontSize: 24 }}>{r.icon}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 15, fontWeight: '700', color: tk.color.ink }}>{r.label}</Text>
-                    <Text style={{ fontSize: 13, color: tk.color.subtle, marginTop: 1 }}>{r.desc}</Text>
-                  </View>
-                  {role === r.id && (
-                    <View style={{
-                      width: 20, height: 20, borderRadius: 10,
-                      backgroundColor: tk.color.brand,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>✓</Text>
-                    </View>
-                  )}
+                <RoleCard key={r.id} label={r.label} desc={r.desc} selected={role === r.id} onPress={() => { impact(); setRole(r.id); }} />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* GOAL */}
+        {step === 'goal' && (
+          <View style={{ paddingTop: 16 }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5, marginBottom: 8 }}>What are you trying to do?</Text>
+            <Text style={{ fontSize: 15, color: tk.color.subtle, marginBottom: 28, lineHeight: 22 }}>Select all that apply.</Text>
+            <View style={{ gap: 10 }}>
+              {GOALS.map((g) => (
+                <OptionChip key={g.id} label={g.label} selected={goals.has(g.id)} onPress={() => toggleGoal(g.id)} />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* MARKET */}
+        {step === 'market' && (
+          <View style={{ paddingTop: 16 }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5, marginBottom: 8 }}>Which market matters most?</Text>
+            <Text style={{ fontSize: 15, color: tk.color.subtle, marginBottom: 4, lineHeight: 22 }}>
+              We do not infer market from your device location.
+            </Text>
+            <Text style={{ fontSize: 13, color: tk.color.muted, marginBottom: 24 }}>
+              Select your primary opportunity discovery context.
+            </Text>
+            <View style={{ gap: 8 }}>
+              {MARKETS.map((m) => (
+                <OptionChip key={m.id} label={m.label} selected={market === m.id} onPress={() => { impact(); setMarket(m.id); }} />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* VERTICALS */}
+        {step === 'verticals' && (
+          <View style={{ paddingTop: 16 }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5, marginBottom: 8 }}>Which verticals interest you?</Text>
+            <Text style={{ fontSize: 15, color: tk.color.subtle, marginBottom: 28, lineHeight: 22 }}>Select any. We'll prioritize these in discovery.</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {VERTICALS.map((v) => (
+                <Pressable key={v.id} onPress={() => { impact(); toggleVertical(v.id); }} style={({ pressed }) => ({
+                  paddingVertical: 10, paddingHorizontal: 14, borderRadius: tk.radius.sm, borderWidth: 1.5,
+                  borderColor: verticals.has(v.id) ? tk.color.brand : tk.color.border,
+                  backgroundColor: verticals.has(v.id) ? tk.color.brandBg : tk.color.surface,
+                  opacity: pressed ? 0.8 : 1,
+                })}>
+                  <Text style={{ fontSize: 14, fontWeight: verticals.has(v.id) ? '700' : '500', color: verticals.has(v.id) ? tk.color.brand : tk.color.ink }}>
+                    {v.label}
+                  </Text>
                 </Pressable>
               ))}
             </View>
           </View>
         )}
 
-        {/* Target step */}
-        {isTargetStep && (
-          <View style={{ gap: 16 }}>
-            <Text style={{ fontSize: 26, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5 }}>
-              What brings you here?
+        {/* LANGUAGE */}
+        {step === 'language' && (
+          <View style={{ paddingTop: 16 }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5, marginBottom: 8 }}>Preferred language?</Text>
+            <Text style={{ fontSize: 15, color: tk.color.subtle, marginBottom: 28, lineHeight: 22 }}>
+              Generated Venture Thesis, Product Packs, and Build Blueprints will use this language.
             </Text>
-            <Text style={{ fontSize: 15, color: tk.color.subtle }}>Select all that apply.</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
-              {TARGETS.map((t) => (
-                <Chip
-                  key={t.id}
-                  label={`${t.icon}  ${t.label}`}
-                  selected={targets.has(t.id)}
-                  onPress={() => { toggleTarget(t.id); impact(); }}
-                />
+            <View style={{ gap: 8 }}>
+              {LANGUAGES.map((l) => (
+                <OptionChip key={l.id} label={l.label} selected={language === l.id} onPress={() => { impact(); setLanguage(l.id); }} />
               ))}
             </View>
           </View>
         )}
 
-        {/* Market step */}
-        {isMarketStep && (
-          <View style={{ gap: 16 }}>
-            <Text style={{ fontSize: 26, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5 }}>
-              Choose your market focus
+        {/* ACCOUNT */}
+        {step === 'account' && (
+          <View style={{ paddingTop: 16 }}>
+            <Text style={{ fontSize: 28, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.5, marginBottom: 8 }}>Your product lab is ready.</Text>
+            <Text style={{ fontSize: 15, color: tk.color.subtle, marginBottom: 32, lineHeight: 22 }}>
+              Create an account to save your setup and start discovering opportunities.
+              Your preferences sync across mobile and web.
             </Text>
-            <Text style={{ fontSize: 15, color: tk.color.subtle }}>
-              You can change this anytime per project.
-            </Text>
-            <View style={{ gap: 10, marginTop: 8 }}>
-              {MARKET_MODES.map((m) => (
-                <Pressable
-                  key={m.id}
-                  onPress={() => { setMarketMode(m.id); impact(); }}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 14,
-                    padding: 16,
-                    borderRadius: tk.radius.lg,
-                    borderWidth: 1.5,
-                    backgroundColor: marketMode === m.id ? tk.color.brandFaint : tk.color.surface,
-                    borderColor: marketMode === m.id ? tk.color.brand : tk.color.line,
-                    opacity: pressed ? 0.85 : 1,
-                  })}
-                >
-                  <Text style={{ fontSize: 28 }}>{m.icon}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 15, fontWeight: '700', color: tk.color.ink }}>{m.label}</Text>
-                    <Text style={{ fontSize: 13, color: tk.color.subtle, marginTop: 1 }}>{m.desc}</Text>
-                  </View>
-                  {marketMode === m.id && (
-                    <View style={{
-                      width: 20, height: 20, borderRadius: 10,
-                      backgroundColor: tk.color.brand,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '700' }}>✓</Text>
-                    </View>
-                  )}
-                </Pressable>
-              ))}
-            </View>
+            {[
+              { label: 'Role', value: ROLES.find((r) => r.id === role)?.label ?? 'Not selected' },
+              { label: 'Market', value: MARKETS.find((m) => m.id === market)?.label ?? 'Not selected' },
+              { label: 'Language', value: LANGUAGES.find((l) => l.id === language)?.label ?? 'English' },
+              { label: 'Verticals', value: verticals.size > 0 ? `${verticals.size} selected` : 'None' },
+            ].map((row) => (
+              <View key={row.label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: tk.color.border }}>
+                <Text style={{ fontSize: 14, color: tk.color.subtle }}>{row.label}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: tk.color.ink }}>{row.value}</Text>
+              </View>
+            ))}
           </View>
         )}
       </ScrollView>
 
       {/* Bottom CTA */}
-      <View style={{ paddingHorizontal: 24, paddingBottom: 48, paddingTop: 16, gap: 12 }}>
-        <Button
-          label={step < TOTAL_STEPS - 1 ? 'Continue' : 'Create account'}
-          onPress={canAdvance ? advance : undefined}
-          disabled={!canAdvance}
-          size="lg"
-        />
-        {step > 0 && (
-          <Pressable onPress={back} style={{ alignItems: 'center' }}>
-            <Text style={{ fontSize: 14, color: tk.color.subtle, fontWeight: '500' }}>Back</Text>
-          </Pressable>
-        )}
-        {/* Show sign-in link on the final step so returning users aren't stuck */}
-        {step === TOTAL_STEPS - 1 && (
-          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 4 }}>
-            <Text style={{ fontSize: 14, color: tk.color.subtle }}>Already have an account?</Text>
-            <Link href="/login" asChild>
-              <Pressable>
-                <Text style={{ fontSize: 14, fontWeight: '700', color: tk.color.brand }}>Sign in</Text>
-              </Pressable>
-            </Link>
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: tk.space.base, paddingBottom: 40, paddingTop: 16, backgroundColor: tk.color.canvas, borderTopWidth: 1, borderTopColor: tk.color.border }}>
+        {step === 'account' ? (
+          <View style={{ gap: 10 }}>
+            <Pressable onPress={() => { impact(); router.push('/register'); }} style={({ pressed }) => ({ backgroundColor: tk.color.brand, borderRadius: tk.radius.md, paddingVertical: 16, alignItems: 'center', opacity: pressed ? 0.88 : 1 })}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#fff' }}>Create account</Text>
+            </Pressable>
+            <Pressable onPress={() => { impact(); router.push('/login'); }} style={({ pressed }) => ({ paddingVertical: 14, alignItems: 'center', opacity: pressed ? 0.7 : 1 })}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: tk.color.subtle }}>Already have an account? Sign in</Text>
+            </Pressable>
           </View>
+        ) : (
+          <Pressable
+            onPress={canAdvance ? next : undefined}
+            style={({ pressed }) => ({ backgroundColor: canAdvance ? tk.color.brand : tk.color.border, borderRadius: tk.radius.md, paddingVertical: 16, alignItems: 'center', opacity: pressed ? 0.88 : 1 })}
+          >
+            <Text style={{ fontSize: 16, fontWeight: '800', color: canAdvance ? '#fff' : tk.color.muted }}>
+              {step === 'welcome' ? 'Get started' : 'Continue'}
+            </Text>
+          </Pressable>
         )}
       </View>
     </View>

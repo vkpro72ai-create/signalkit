@@ -169,6 +169,9 @@ export const authApi = {
 export type WorkspaceProjects = Array<{ id: string; name: string; createdAt: string }>;
 
 export const workspaceApi = {
+  list: () => api.get<Array<{ id: string; name: string; role: string }>>('/workspaces'),
+  create: (name: string) =>
+    api.post<{ id: string; name: string }>('/workspaces', { name, slug: name.toLowerCase().replace(/\s+/g, '-') }),
   projects: (wsId: string) => api.get<WorkspaceProjects>(`/workspaces/${wsId}/projects`),
   niches: (wsId: string) =>
     api.get<Array<{

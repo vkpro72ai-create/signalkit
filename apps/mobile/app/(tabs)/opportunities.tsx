@@ -97,15 +97,30 @@ export default function Opportunities() {
         {!loading && error && <ErrorState message={error} onRetry={load} />}
 
         {!loading && !wsId && !error && (
-          <EmptyState icon="◎" title="No workspace" body="Connect to a workspace on the web app first." />
+          <View style={{ borderRadius: 12, borderWidth: 1.5, borderColor: '#2D6A4F40', backgroundColor: '#F0F7F4', padding: 20 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#1a1a1a', marginBottom: 6 }}>Create your product lab</Text>
+            <Text style={{ fontSize: 14, color: '#5a5a5a', lineHeight: 20 }}>A workspace auto-creates on registration. Try signing out and back in.</Text>
+          </View>
         )}
 
-        {!loading && wsId && filtered.length === 0 && !error && (
-          <EmptyState
-            icon="◎"
-            title={search ? 'No matches' : 'No opportunities yet'}
-            body={search ? 'Try a different search term.' : 'Run a niche analysis on the web to populate this list.'}
-          />
+        {!loading && wsId && filtered.length === 0 && !search && !error && (
+          <View style={{ borderRadius: 12, borderWidth: 1, borderColor: '#e8e8e8', backgroundColor: '#fafafa', padding: 20 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#1a1a1a', marginBottom: 6 }}>Find product opportunities</Text>
+            <Text style={{ fontSize: 14, color: '#5a5a5a', lineHeight: 20, marginBottom: 18 }}>
+              SignalKit scans markets for evidence-backed opportunities and scores them.
+              No hype, no fake TAM numbers.
+            </Text>
+            <Pressable
+              onPress={() => router.push('/discovery' as '/')}
+              style={({ pressed }) => ({ backgroundColor: '#2D6A4F', borderRadius: 10, paddingVertical: 13, alignItems: 'center', opacity: pressed ? 0.88 : 1 })}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#fff' }}>Find opportunities</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {!loading && wsId && filtered.length === 0 && !!search && !error && (
+          <EmptyState icon="◎" title="No matches" body="Try a different search term." />
         )}
 
         {!loading && filtered.map((niche) => (
