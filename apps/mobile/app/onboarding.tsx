@@ -19,21 +19,21 @@ type Goal =
   | 'generate_docs' | 'ai_build_pack' | 'analyze_market';
 type Lang = string;
 
-const ROLES: Array<{ id: Role; label: string; symbol: string; desc: string }> = [
-  { id: 'founder',  symbol: '↗', label: 'Founder',           desc: 'Building a new product from scratch' },
-  { id: 'operator', symbol: '◎', label: 'Product Operator',  desc: 'Owning roadmap, metrics and growth' },
-  { id: 'agency',   symbol: '⊞', label: 'Agency / Studio',   desc: 'Shipping products for clients' },
-  { id: 'investor', symbol: '◈', label: 'Investor / Scout',  desc: 'Evaluating deals and market opportunities' },
-  { id: 'builder',  symbol: '⬡', label: 'Builder',           desc: 'Writing code and shipping features' },
+const ROLES: Array<{ id: Role; label: string; desc: string }> = [
+  { id: 'founder',  label: 'Founder',           desc: 'Building a new product from scratch' },
+  { id: 'operator', label: 'Product Operator',  desc: 'Owning roadmap, metrics and growth' },
+  { id: 'agency',   label: 'Agency / Studio',   desc: 'Shipping products for clients' },
+  { id: 'investor', label: 'Investor / Scout',  desc: 'Evaluating deals and market opportunities' },
+  { id: 'builder',  label: 'Builder',           desc: 'Writing code and shipping features' },
 ];
 
-const GOALS: Array<{ id: Goal; label: string; symbol: string }> = [
-  { id: 'find_opportunities', symbol: '◎', label: 'Find new product opportunities' },
-  { id: 'track_niches',       symbol: '↗', label: 'Track fast-growing niches' },
-  { id: 'validate_idea',      symbol: '◈', label: 'Validate an existing idea' },
-  { id: 'generate_docs',      symbol: '⊟', label: 'Generate product documentation' },
-  { id: 'ai_build_pack',      symbol: '⬡', label: 'Prepare AI-agent build pack' },
-  { id: 'analyze_market',     symbol: '⊞', label: 'Analyze a specific market' },
+const GOALS: Array<{ id: Goal; label: string }> = [
+  { id: 'find_opportunities', label: 'Find new product opportunities' },
+  { id: 'track_niches',       label: 'Track fast-growing niches' },
+  { id: 'validate_idea',      label: 'Validate an existing idea' },
+  { id: 'generate_docs',      label: 'Generate product documentation' },
+  { id: 'ai_build_pack',      label: 'Prepare AI-agent build pack' },
+  { id: 'analyze_market',     label: 'Analyze a specific market' },
 ];
 
 const MARKETS = [
@@ -164,77 +164,61 @@ function HeroVisual() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function RoleCard({
-  symbol, label, desc, selected, onPress,
-}: { symbol: string; label: string; desc: string; selected: boolean; onPress: () => void }) {
+function RoleCard({ label, desc, selected, onPress }: { label: string; desc: string; selected: boolean; onPress: () => void }) {
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => ({
-        paddingVertical: 14, paddingHorizontal: 16,
+        paddingVertical: 16, paddingHorizontal: 18,
         borderRadius: tk.radius.md, borderWidth: 1.5,
         borderColor: selected ? tk.color.brand : tk.color.border,
         backgroundColor: selected ? tk.color.brandBg : tk.color.surface,
         opacity: pressed ? 0.8 : 1,
-        flexDirection: 'row', alignItems: 'center', gap: 14,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
       })}
     >
+      <View style={{ flex: 1, marginRight: 12 }}>
+        <Text style={{ fontSize: 16, fontWeight: '700', color: selected ? tk.color.brand : tk.color.ink, marginBottom: 2 }}>{label}</Text>
+        <Text style={{ fontSize: 13, color: tk.color.subtle, lineHeight: 18 }}>{desc}</Text>
+      </View>
       <View style={{
-        width: 40, height: 40, borderRadius: 10,
-        backgroundColor: selected ? tk.color.brand : tk.color.border,
+        width: 22, height: 22, borderRadius: 11,
+        borderWidth: 1.5,
+        borderColor: selected ? tk.color.brand : tk.color.border,
+        backgroundColor: selected ? tk.color.brand : 'transparent',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <Text style={{ fontSize: 18, color: selected ? '#fff' : tk.color.muted }}>{symbol}</Text>
+        {selected && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>✓</Text>}
       </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 15, fontWeight: '700', color: selected ? tk.color.brand : tk.color.ink, marginBottom: 1 }}>{label}</Text>
-        <Text style={{ fontSize: 12, color: tk.color.subtle, lineHeight: 17 }}>{desc}</Text>
-      </View>
-      {selected && (
-        <View style={{
-          width: 20, height: 20, borderRadius: 10,
-          backgroundColor: tk.color.brand, alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>✓</Text>
-        </View>
-      )}
     </Pressable>
   );
 }
 
-function GoalCard({
-  symbol, label, selected, onPress,
-}: { symbol: string; label: string; selected: boolean; onPress: () => void }) {
+function SelectCard({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => ({
-        flexDirection: 'row', alignItems: 'center', gap: 12,
-        paddingVertical: 13, paddingHorizontal: 16,
+        paddingVertical: 14, paddingHorizontal: 18,
         borderRadius: tk.radius.md, borderWidth: 1.5,
         borderColor: selected ? tk.color.brand : tk.color.border,
         backgroundColor: selected ? tk.color.brandBg : tk.color.surface,
         opacity: pressed ? 0.8 : 1,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
       })}
     >
-      <View style={{
-        width: 32, height: 32, borderRadius: 8,
-        backgroundColor: selected ? tk.color.brand : '#f0f0f0',
-        alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Text style={{ fontSize: 14, color: selected ? '#fff' : tk.color.muted }}>{symbol}</Text>
-      </View>
-      <Text style={{
-        flex: 1, fontSize: 14, fontWeight: selected ? '700' : '500',
-        color: selected ? tk.color.brand : tk.color.ink,
-      }}>
+      <Text style={{ flex: 1, fontSize: 15, fontWeight: selected ? '700' : '500', color: selected ? tk.color.brand : tk.color.ink }}>
         {label}
       </Text>
-      {selected && (
-        <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: tk.color.brand, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>✓</Text>
-        </View>
-      )}
+      <View style={{
+        width: 22, height: 22, borderRadius: 11,
+        borderWidth: 1.5,
+        borderColor: selected ? tk.color.brand : tk.color.border,
+        backgroundColor: selected ? tk.color.brand : 'transparent',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        {selected && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>✓</Text>}
+      </View>
     </Pressable>
   );
 }
@@ -251,10 +235,7 @@ function OptionChip({ label, selected, onPress }: { label: string; selected: boo
         opacity: pressed ? 0.8 : 1,
       })}
     >
-      <Text style={{
-        fontSize: 14, fontWeight: selected ? '700' : '500',
-        color: selected ? tk.color.brand : tk.color.ink,
-      }}>
+      <Text style={{ fontSize: 14, fontWeight: selected ? '700' : '500', color: selected ? tk.color.brand : tk.color.ink }}>
         {label}
       </Text>
     </Pressable>
@@ -391,7 +372,6 @@ export default function Onboarding() {
               {ROLES.map((r) => (
                 <RoleCard
                   key={r.id}
-                  symbol={r.symbol}
                   label={r.label}
                   desc={r.desc}
                   selected={role === r.id}
@@ -413,12 +393,11 @@ export default function Onboarding() {
             </Text>
             <View style={{ gap: 10 }}>
               {GOALS.map((g) => (
-                <GoalCard
+                <SelectCard
                   key={g.id}
-                  symbol={g.symbol}
                   label={g.label}
                   selected={goals.has(g.id)}
-                  onPress={() => toggleGoal(g.id)}
+                  onPress={() => { impact(); toggleGoal(g.id); }}
                 />
               ))}
             </View>
@@ -439,7 +418,7 @@ export default function Onboarding() {
             </Text>
             <View style={{ gap: 8 }}>
               {MARKETS.map((m) => (
-                <OptionChip
+                <SelectCard
                   key={m.id}
                   label={m.label}
                   selected={market === m.id}
@@ -496,7 +475,7 @@ export default function Onboarding() {
             </Text>
             <View style={{ gap: 8 }}>
               {LANGUAGES.map((l) => (
-                <OptionChip
+                <SelectCard
                   key={l.id}
                   label={l.label}
                   selected={language === l.id}
