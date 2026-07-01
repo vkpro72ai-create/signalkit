@@ -6,8 +6,9 @@
  * primary surface — the pipeline is.
  */
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { Route } from 'next';
+import { useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { spacing, radius, border, typography } from '@signalkit/ui';
 import { SUPPORTED_LOCALES, type LocaleCode } from '@signalkit/i18n';
@@ -152,6 +153,17 @@ function TopBar() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const router = useRouter();
+
+  // No token stored for THIS origin (localStorage is origin-scoped — a token
+  // saved while testing another domain/port does not carry over) → every
+  // fetch in every product page would 401 and show a generic error. Send the
+  // user to sign in immediately instead of rendering a broken dashboard.
+  useEffect(() => {
+    const token = window.localStorage.getItem('signalkit_token');
+    if (!token) router.replace('/login');
+  }, [router]);
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: palette.canvas }}>
       <Sidebar />

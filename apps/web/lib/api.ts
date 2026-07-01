@@ -10,8 +10,23 @@ function authHeaders(): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * No token, or the API rejected it (expired/invalid) — every page's fetch
+ * would otherwise show a generic "something went wrong". Send the user to
+ * sign in instead, once per navigation.
+ */
+function redirectToLogin() {
+  if (typeof window === 'undefined') return;
+  if (window.location.pathname === '/login') return;
+  window.location.href = '/login';
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`, { headers: authHeaders() });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error('http_401');
+  }
   if (!res.ok) throw new Error(`http_${res.status}`);
   return (await res.json()) as T;
 }
@@ -22,6 +37,10 @@ async function apiSend<T>(method: string, path: string, body?: unknown): Promise
     headers: { 'content-type': 'application/json', ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error('http_401');
+  }
   if (!res.ok) {
     let code = `http_${res.status}`;
     try {
