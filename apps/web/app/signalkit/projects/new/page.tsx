@@ -52,7 +52,7 @@ export default function NewProjectPage() {
         targetCountry: country || undefined,
         targetCountries: scope === 'multi_country' ? countries : undefined,
       });
-      router.push(`/niches?project=${project.id}`);
+      router.push(`/signalkit/opportunities?project=${project.id}`);
     } catch (err) {
       const code = err instanceof Error ? err.message : 'error';
       // The geo resolver returns location_consent_required / residence_required etc.
@@ -126,7 +126,7 @@ export default function NewProjectPage() {
 
         <div style={{ display: 'flex', gap: spacing.sm }}>
           <Button type="submit" disabled={busy}>{t('action.create')}</Button>
-          <Button variant="ghost" onClick={() => router.push('/projects')}>{t('action.cancel')}</Button>
+          <Button variant="ghost" onClick={() => router.push('/signalkit/projects')}>{t('action.cancel')}</Button>
         </div>
       </form>
     </div>

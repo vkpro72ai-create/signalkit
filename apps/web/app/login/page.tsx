@@ -32,7 +32,7 @@ export default function LoginPage() {
       if (typeof window !== 'undefined') {
         window.localStorage.setItem('signalkit_token', data.accessToken);
       }
-      router.push('/projects');
+      router.push('/signalkit');
     } catch {
       setError(t('state.error.body'));
     } finally {

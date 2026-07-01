@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { spacing, typography, radius, border } from '@signalkit/ui';
-import type { DocumentStatus, ProductPackDepth, VerticalTemplate } from '@signalkit/shared';
+import type { DocumentStatus } from '@signalkit/shared';
 import {
   Card,
   PageHeader,
@@ -14,10 +14,10 @@ import {
   LoadingState,
   ErrorState,
   palette,
-} from '../../../components/ui';
-import { Markdown } from '../../../components/markdown';
-import { useT } from '../../../lib/i18n';
-import { apiGet, apiPost, apiPut, firstWorkspaceId } from '../../../lib/api';
+} from '../../../../components/ui';
+import { Markdown } from '../../../../components/markdown';
+import { useT } from '../../../../lib/i18n';
+import { apiGet, apiPost, apiPut, firstWorkspaceId } from '../../../../lib/api';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -105,9 +105,6 @@ interface BlueprintView {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEPTHS: ProductPackDepth[] = ['quick_opportunity', 'build_ready', 'investor_grade', 'agency_client', 'ai_agent_engineering'];
-const VERTICALS: VerticalTemplate[] = ['b2b_saas', 'mobile_consumer_app', 'marketplace', 'ai_agent_product', 'api_product', 'compliance_saas', 'fintech_adjacent_product', 'ecommerce_tool', 'internal_enterprise_tool'];
-
 const STATUS_COLOR: Record<string, string> = {
   draft: palette.subtle,
   in_review: '#B45309',
@@ -128,18 +125,16 @@ const VALIDATION_COLOR: Record<string, string> = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ProductPackWorkspace() {
+export default function ProductPackReader({ params }: { params: Promise<{ id: string }> }) {
+  const { id: packId } = use(params);
   const t = useT();
   const router = useRouter();
 
   // Core state
-  const [state, setState] = useState<'loading' | 'error' | 'ready' | 'no_niche'>('loading');
+  const [state, setState] = useState<'loading' | 'error' | 'ready' | 'not_found'>('loading');
   const [ws, setWs] = useState<string | null>(null);
-  const [nicheId, setNicheId] = useState<string | null>(null);
   const [pack, setPack] = useState<Pack | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [depth, setDepth] = useState<ProductPackDepth>('build_ready');
-  const [vertical, setVertical] = useState<VerticalTemplate>('b2b_saas');
   const [busy, setBusy] = useState(false);
 
   // Editor state
@@ -190,31 +185,23 @@ export default function ProductPackWorkspace() {
     try {
       const workspaceId = await firstWorkspaceId();
       setWs(workspaceId);
-      if (!workspaceId) return setState('no_niche');
-      const projects = await apiGet<{ id: string }[]>(`/workspaces/${workspaceId}/projects`);
-      const pid = projects[0]?.id;
-      if (!pid) return setState('no_niche');
-      const niches = await apiGet<{ id: string }[]>(`/workspaces/${workspaceId}/projects/${pid}/niches`);
-      const nid = niches[0]?.id ?? null;
-      setNicheId(nid);
-      if (!nid) return setState('no_niche');
-      const packs = await apiGet<{ id: string }[]>(`/workspaces/${workspaceId}/niches/${nid}/packs`);
-      if (packs[0]) await openPack(workspaceId, packs[0].id);
+      if (!workspaceId) return setState('not_found');
+      await openPack(workspaceId, packId);
       setState('ready');
     } catch {
-      setState('error');
+      setState('not_found');
     }
   }
 
-  async function openPack(workspaceId: string, packId: string) {
-    const p = await apiGet<Pack>(`/workspaces/${workspaceId}/packs/${packId}`);
+  async function openPack(workspaceId: string, pid: string) {
+    const p = await apiGet<Pack>(`/workspaces/${workspaceId}/packs/${pid}`);
     setPack(p);
     const firstDoc = p.documents[0];
     if (firstDoc) {
       setSelected(firstDoc.id);
       setEditBody(firstDoc.body);
       originalBodyRef.current = firstDoc.body;
-      await loadSidePanelData(workspaceId, packId, firstDoc.id);
+      await loadSidePanelData(workspaceId, pid, firstDoc.id);
     }
   }
 
@@ -244,17 +231,6 @@ export default function ProductPackWorkspace() {
       originalBodyRef.current = d.body;
     }
     await loadSidePanelData(ws, pack.id, docId);
-  }
-
-  async function generate() {
-    if (!ws || !nicheId) return;
-    setBusy(true);
-    try {
-      const res = await apiPost<{ pack: { id: string } }>(`/workspaces/${ws}/niches/${nicheId}/generate-pack`, { depth, vertical });
-      await openPack(ws, res.pack.id);
-    } finally {
-      setBusy(false);
-    }
   }
 
   useEffect(() => { void load(); }, []);
@@ -416,33 +392,26 @@ export default function ProductPackWorkspace() {
   return (
     <div style={{ maxWidth: 1400 }}>
       <PageHeader
-        title={t('nav.pack')}
-        subtitle={pack ? pack.title : 'Generate a deep, evidence-backed Product Document Pack.'}
+        title={pack ? pack.title : t('nav.packs')}
+        subtitle={pack ? `${pack.depth.replace(/_/g, ' ')} · ${pack.documents.length} documents` : 'Evidence-backed Product Document Pack.'}
         action={
-          <div style={{ display: 'flex', gap: spacing.xs, alignItems: 'center' }}>
-            <select value={depth} onChange={(e) => setDepth(e.target.value as ProductPackDepth)} style={sel}>
-              {DEPTHS.map((d) => <option key={d} value={d}>{d.replace(/_/g, ' ')}</option>)}
-            </select>
-            <select value={vertical} onChange={(e) => setVertical(e.target.value as VerticalTemplate)} style={sel}>
-              {VERTICALS.map((v) => <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>)}
-            </select>
-            {pack && (
-              <Button
-                variant="secondary"
-                onClick={() => router.push(`/exports?packId=${pack.id}`)}
-              >
-                Export pack
-              </Button>
-            )}
-            <Button onClick={() => void generate()} disabled={busy || state !== 'ready'}>{t('action.generate')}</Button>
-          </div>
+          pack ? (
+            <Button variant="secondary" onClick={() => router.push(`/signalkit/exports?packId=${pack.id}`)}>
+              Export pack
+            </Button>
+          ) : undefined
         }
       />
 
       {state === 'loading' && <LoadingState label={t('state.loading')} />}
       {state === 'error' && <ErrorState title={t('state.error.title')} body={t('state.error.body')} action={<Button variant="secondary" onClick={() => void load()}>{t('action.retry')}</Button>} />}
-      {state === 'no_niche' && <EmptyState title="No niche yet" body="Discover a niche first, then generate its Product Document Pack." />}
-      {state === 'ready' && !pack && <EmptyState title="No pack yet" body="Choose a depth and vertical, then Generate." action={<Button variant="secondary" onClick={() => void generate()} disabled={busy}>{t('action.generate')}</Button>} />}
+      {state === 'not_found' && (
+        <EmptyState
+          title="Pack not found"
+          body="Open an opportunity and generate its Product Pack."
+          action={<Button variant="secondary" onClick={() => router.push('/signalkit/opportunities')}>Go to Opportunities</Button>}
+        />
+      )}
 
       {state === 'ready' && pack && (
         <>

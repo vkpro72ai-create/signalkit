@@ -261,23 +261,35 @@ export class NichesService {
     });
   }
 
-  /** All niches across every project in the workspace — used by mobile home feed. */
+  /** All niches across every project in the workspace — used by mobile home feed + web opportunities list. */
   async listAll(workspaceId: string) {
     const niches = await this.prisma.niche.findMany({
       where: { workspaceId },
       include: {
         scores: { orderBy: { createdAt: 'desc' }, take: 1 },
         ventureTheses: { orderBy: { createdAt: 'desc' }, take: 1 },
+        project: { select: { targetCountry: true, marketScope: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
+    const evidenceCounts = await this.prisma.evidenceItem.groupBy({
+      by: ['projectId'],
+      where: { workspaceId },
+      _count: { _all: true },
+    });
+    const evidenceByProject = new Map(evidenceCounts.map((e) => [e.projectId, e._count._all]));
+
     return niches.map((n) => {
       const score = n.scores[0];
       const vt = n.ventureTheses?.[0];
       return {
         id: n.id,
         name: n.title,
+        oneLiner: n.oneLiner,
+        riskLevel: n.riskLevel,
         projectId: n.projectId,
+        targetMarket: n.project?.targetCountry ?? (n.project?.marketScope === 'global' ? 'Global' : null),
+        evidenceCount: evidenceByProject.get(n.projectId) ?? 0,
         opportunityScore: score?.totalScore ?? 0,
         confidence: {
           level: score?.confidenceLevel ?? 'low',

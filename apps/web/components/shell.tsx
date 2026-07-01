@@ -15,14 +15,18 @@ import { useI18n } from '../lib/i18n';
 import { palette } from './ui';
 import type { MessageKey } from '@signalkit/i18n';
 
+/** Primary navigation — product sections only. Design System is an internal
+ * dev route and is intentionally NOT listed here (reachable by direct URL). */
 const NAV: { href: Route; key: MessageKey }[] = [
-  { href: '/projects', key: 'nav.projects' },
-  { href: '/niches', key: 'nav.niches' },
-  { href: '/sources', key: 'nav.sources' },
-  { href: '/pack', key: 'nav.pack' },
-  { href: '/exports', key: 'nav.exports' },
-  { href: '/settings/language', key: 'nav.settings' },
-  { href: '/design-system', key: 'nav.designSystem' },
+  { href: '/signalkit', key: 'nav.home' },
+  { href: '/signalkit/projects', key: 'nav.projects' },
+  { href: '/signalkit/opportunities', key: 'nav.opportunities' },
+  { href: '/signalkit/sources', key: 'nav.sources' },
+  { href: '/signalkit/packs', key: 'nav.packs' },
+  { href: '/signalkit/exports', key: 'nav.exports' },
+  { href: '/signalkit/settings/llm', key: 'nav.aiEngine' },
+  { href: '/signalkit/settings/language', key: 'nav.language' },
+  { href: '/signalkit/settings/account', key: 'nav.account' },
 ];
 
 const LOCALE_LABEL: Record<LocaleCode, string> = {
@@ -100,7 +104,7 @@ function Sidebar() {
         {t('app.name')}
       </div>
       {NAV.map((item) => {
-        const active = pathname.startsWith(item.href);
+        const active = item.href === '/signalkit' ? pathname === '/signalkit' : pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}

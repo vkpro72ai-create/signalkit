@@ -1,6 +1,8 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { spacing, typography, border } from '@signalkit/ui';
 import type { ConfidenceLevel, RiskLevel } from '@signalkit/shared';
 import {
@@ -19,7 +21,7 @@ import {
 } from '../../../../components/ui';
 import { EvidencePanel } from '../../../../components/evidence-panel';
 import { useT } from '../../../../lib/i18n';
-import { apiGet, apiPost, firstWorkspaceId } from '../../../../lib/api';
+import { apiGet, apiPost, firstWorkspaceId, packListApi, type PackListItem } from '../../../../lib/api';
 
 interface Dim { dimension: string; score: number; weight: number; explanation: string; assumptionBased: boolean }
 interface NicheDetail {
@@ -49,13 +51,16 @@ interface MarketCompare {
 export default function NicheDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const t = useT();
+  const router = useRouter();
   const [ws, setWs] = useState<string | null>(null);
   const [niche, setNiche] = useState<NicheDetail | null>(null);
   const [scenarios, setScenarios] = useState<Scenarios | null>(null);
   const [venture, setVenture] = useState<VentureThesisRow | null>(null);
   const [markets, setMarkets] = useState<MarketCompare | null>(null);
+  const [packs, setPacks] = useState<PackListItem[]>([]);
   const [tab, setTab] = useState('overview');
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -66,6 +71,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
         setNiche(await apiGet<NicheDetail>(`/workspaces/${workspaceId}/niches/${id}`));
         setScenarios(await apiGet<Scenarios>(`/workspaces/${workspaceId}/niches/${id}/scenarios`).catch(() => null));
         setVenture(await apiGet<VentureThesisRow>(`/workspaces/${workspaceId}/niches/${id}/venture-thesis`).catch(() => null));
+        setPacks(await packListApi.listForNiche(workspaceId, id).catch(() => []));
         setState('ready');
       } catch {
         setState('error');
@@ -78,6 +84,28 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
     setMarkets(await apiPost<MarketCompare>(`/workspaces/${ws}/niches/${id}/compare-markets`, {}));
   }
 
+  async function generateVentureThesis() {
+    if (!ws) return;
+    setBusy(true);
+    try {
+      setVenture(await apiPost<VentureThesisRow>(`/workspaces/${ws}/niches/${id}/venture-thesis/regenerate`));
+      setTab('venture');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateProductPack() {
+    if (!ws) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<{ pack: { id: string } }>(`/workspaces/${ws}/niches/${id}/generate-pack`, { depth: 'build_ready', vertical: 'b2b_saas' });
+      router.push(`/signalkit/packs/${res.pack.id}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (state === 'loading') return <LoadingState label={t('state.loading')} />;
   if (state === 'error' || !niche) return <ErrorState title={t('state.error.title')} body={t('state.error.body')} />;
   const score = niche.scores[0];
@@ -88,10 +116,22 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
         title={niche.title}
         subtitle={niche.oneLiner}
         action={
-          <div style={{ display: 'flex', gap: spacing.xs, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: spacing.xs, alignItems: 'center', flexWrap: 'wrap' }}>
             {score ? <ScoreBadge score={score.totalScore} label={t('label.score')} /> : null}
             {score ? <ConfidenceBadge level={score.confidenceLevel as ConfidenceLevel} label={t('label.confidence')} /> : null}
             <RiskBadge level={niche.riskLevel} label={t('label.risk')} />
+            <Button variant="secondary" onClick={() => (venture ? setTab('venture') : void generateVentureThesis())} disabled={busy}>
+              {venture ? 'Open Venture Thesis' : 'Generate Venture Thesis'}
+            </Button>
+            {packs[0] ? (
+              <Link href={`/signalkit/packs/${packs[0].id}`} style={{ textDecoration: 'none' }}>
+                <Button>Open Product Pack</Button>
+              </Link>
+            ) : (
+              <Button onClick={() => void generateProductPack()} disabled={busy}>
+                {busy ? 'Generating…' : 'Generate Product Pack'}
+              </Button>
+            )}
           </div>
         }
       />
@@ -104,9 +144,9 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
 
       <Tabs
         tabs={[
-          { key: 'overview', label: t('pipeline.niches') },
+          { key: 'overview', label: 'Founder verdict' },
           { key: 'score', label: t('pipeline.score') },
-          { key: 'venture', label: 'Venture thesis' },
+          { key: 'venture', label: 'Venture Thesis' },
           { key: 'markets', label: t('market.compare') },
           { key: 'evidence', label: t('label.evidence') },
         ]}
@@ -117,11 +157,12 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
       <div style={{ marginTop: spacing.lg }}>
         {tab === 'overview' && (
           <Card>
-            <Field label="Problem" value={niche.problem} />
+            <Field label="User pain" value={niche.problem} />
             <Field label="Target audience" value={niche.targetAudience} />
             <Field label="Why now" value={niche.whyNow} />
+            <Field label="Market wedge" value={venture?.thesis.entryWedge.text ?? '—'} />
+            <Field label="Product wedge" value={niche.mvpConcept} />
             <Field label="Monetization" value={niche.monetization} />
-            <Field label="MVP concept" value={niche.mvpConcept} />
             {niche.competitors.length ? <Field label="Competitors" value={niche.competitors.join('; ')} /> : null}
           </Card>
         )}
@@ -181,24 +222,27 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
               </div>
 
               <Card style={{ marginBottom: spacing.lg }}>
+                <h2 style={{ fontSize: typography.size.lg, marginTop: 0 }}>Founder verdict</h2>
                 <p style={{ margin: 0, fontSize: typography.size.sm }}>{venture.thesis.breakoutThesis}</p>
               </Card>
 
               <Card style={{ marginBottom: spacing.lg }}>
                 <Field label="Why now" value={venture.thesis.whyNow.text} />
-                <SecField label="Entry wedge" s={venture.thesis.entryWedge} />
+                <Field label="User pain economics" value={venture.thesis.painEconomics.text} />
+                <Field label="Target customer" value={venture.thesis.targetCustomer} />
+                <SecField label="Market wedge" s={venture.thesis.entryWedge} />
                 <SecField label="Expansion path" s={venture.thesis.expansionPath} />
-                <SecField label="AI unlock" s={venture.thesis.aiUnlock} />
+                <SecField label="AI unlock (product wedge)" s={venture.thesis.aiUnlock} />
                 <SecField label="Distribution wedge" s={venture.thesis.distributionWedge} />
                 <SecField label="Data / workflow moat" s={venture.thesis.dataWorkflowMoat} />
-                <Field label="Monetization path" value={venture.thesis.monetizationPath} />
+                <Field label="Monetization" value={venture.thesis.monetizationPath} />
                 <Field label="Market constraints" value={venture.thesis.marketConstraints} />
               </Card>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginBottom: spacing.lg }}>
-                <ListCard title="Kill reasons" items={venture.thesis.killReasons} variant="risk" />
+                <ListCard title="Risks" items={venture.thesis.killReasons} variant="risk" />
                 <ListCard title="What must be true" items={venture.whatMustBeTrue.length ? venture.whatMustBeTrue : venture.thesis.whatMustBeTrue} variant="warning" />
-                <ListCard title="First validation experiments" items={venture.thesis.firstValidationExperiments} variant="evidence" />
+                <ListCard title="Validation plan" items={venture.thesis.firstValidationExperiments} variant="evidence" />
                 <ListCard title="Assumptions (not facts)" items={venture.thesis.assumptions} variant="warning" />
               </div>
 

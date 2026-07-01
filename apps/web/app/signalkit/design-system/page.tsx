@@ -41,6 +41,15 @@ export default function DesignSystemPage() {
 
   return (
     <div style={{ maxWidth: 980 }}>
+      <div
+        style={{
+          background: '#FFF7E6', border: '1.5px solid #F0C36D', borderRadius: 8,
+          padding: `${spacing.sm}px ${spacing.md}px`, marginBottom: spacing.lg,
+          fontSize: typography.size.xs, color: '#7A5A12', fontWeight: 600,
+        }}
+      >
+        Internal / Dev only — component reference, not a product page. Not linked from primary navigation.
+      </div>
       <PageHeader title={t('nav.designSystem')} subtitle="Premium flat 2D · no gradients" />
 
       <Section title="Buttons">

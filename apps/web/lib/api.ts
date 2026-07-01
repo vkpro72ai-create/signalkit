@@ -45,11 +45,15 @@ export interface CountryView {
   names: Record<string, string>;
 }
 export interface MeWorkspaces {
-  memberships: { workspace: { id: string; name: string } }[];
+  user: { id: string; email: string; displayName: string | null };
+  memberships: { workspace: { id: string; name: string }; role: string; billingPlan: string }[];
   settings: {
     countryOfResidence: string | null;
     geoConsentStatus: string;
     detectedCountry: string | null;
+    interfaceLocale?: string;
+    defaultDocumentLanguage?: string;
+    fallbackLanguage?: string;
   } | null;
 }
 
@@ -57,6 +61,142 @@ export async function firstWorkspaceId(): Promise<string | null> {
   const me = await apiGet<MeWorkspaces>('/me');
   return me.memberships[0]?.workspace.id ?? null;
 }
+
+// ── Workspace / project bootstrap ────────────────────────────────────────────
+
+export interface ProjectView {
+  id: string;
+  name: string;
+  goal: string;
+  status: string;
+  marketScope: string;
+  targetCountry: string | null;
+  createdAt: string;
+}
+
+export const workspaceApi = {
+  create: (name: string) =>
+    apiPost<{ id: string; name: string }>('/workspaces', {
+      name,
+      slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+    }),
+  listProjects: (workspaceId: string) => apiGet<ProjectView[]>(`/workspaces/${workspaceId}/projects`),
+  createProject: (workspaceId: string, name: string, goal?: string) =>
+    apiPost<ProjectView>(`/workspaces/${workspaceId}/projects`, { name, goal, marketScope: 'global' }),
+};
+
+export interface NicheSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  oneLiner: string;
+  riskLevel: string;
+  scores: { totalScore: number; confidenceLevel: string; confidenceValue: number }[];
+}
+
+/** Opportunity card shape — workspace-wide, evidence-backed, no fabricated fields. */
+export interface OpportunityCard {
+  id: string;
+  name: string;
+  oneLiner: string;
+  riskLevel: string;
+  projectId: string;
+  targetMarket: string | null;
+  evidenceCount: number;
+  opportunityScore: number;
+  confidence: { level: string; value: number };
+  ventureScaleScore: number | null;
+  buildReadinessScore: number | null;
+}
+
+export const opportunityApi = {
+  list: (workspaceId: string, projectId: string) =>
+    apiGet<NicheSummary[]>(`/workspaces/${workspaceId}/projects/${projectId}/niches`),
+  listAll: (workspaceId: string) => apiGet<OpportunityCard[]>(`/workspaces/${workspaceId}/niches`),
+  discover: (workspaceId: string, projectId: string) =>
+    apiPost(`/workspaces/${workspaceId}/projects/${projectId}/discover-niches`, {}),
+};
+
+export interface PackListItem {
+  id: string;
+  title: string;
+  depth: string;
+  status: string;
+  documents: { id: string }[];
+  qualityGate: { status: string } | null;
+}
+
+export const packListApi = {
+  listForNiche: (workspaceId: string, nicheId: string) =>
+    apiGet<PackListItem[]>(`/workspaces/${workspaceId}/niches/${nicheId}/packs`),
+};
+
+// ── LLM connections (AI Engine) ──────────────────────────────────────────────
+
+export interface LlmConnectionView {
+  id: string;
+  workspaceId: string;
+  userId: string | null;
+  provider: string;
+  label: string;
+  maskedKey: string;
+  baseUrl: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface LlmSettingsView {
+  id: string;
+  workspaceId: string;
+  mode: 'byok' | 'platform';
+  defaultModelId: string | null;
+  fallbackModelId: string | null;
+}
+
+export const llmApi = {
+  connections: (workspaceId: string) => apiGet<LlmConnectionView[]>(`/llm/connections?workspaceId=${workspaceId}`),
+  connect: (input: { workspaceId: string; provider: string; apiKey: string; label: string; baseUrl?: string }) =>
+    apiPost<LlmConnectionView>('/llm/providers/connect', input),
+  testStored: (id: string, workspaceId: string) =>
+    apiPost<{ ok: boolean; message?: string }>(`/llm/connections/${id}/test?workspaceId=${workspaceId}`),
+  remove: (id: string, workspaceId: string) => apiDelete(`/llm/connections/${id}?workspaceId=${workspaceId}`),
+  settings: (workspaceId: string) => apiGet<LlmSettingsView>(`/llm/settings?workspaceId=${workspaceId}`),
+  updateSettings: (workspaceId: string, mode: 'byok' | 'platform') =>
+    apiPut<LlmSettingsView>('/llm/settings', { workspaceId, mode }),
+};
+
+// ── Account / entitlements ────────────────────────────────────────────────────
+
+export interface EntitlementsView {
+  plan: string;
+  isPro: boolean;
+  canExportPDF: boolean;
+  canExportBundle: boolean;
+  canExportMarkdown: boolean;
+  canFullPack: boolean;
+  canBuildBlueprint: boolean;
+  canVentureThesis: boolean;
+  canMultiMarket: boolean;
+  canAdvancedBlueprintDetails: boolean;
+  canDiscovery: boolean;
+  canCreateWorkspace: boolean;
+  canCreateProject: boolean;
+}
+
+export const accountApi = {
+  entitlements: () => apiGet<EntitlementsView>('/me/entitlements'),
+};
+
+export const PROVIDER_LABELS: Record<string, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google Gemini',
+  mistral: 'Mistral',
+  deepseek: 'DeepSeek',
+  openrouter: 'OpenRouter',
+  openai_compatible: 'Custom OpenAI-compatible',
+  custom: 'Custom',
+};
 
 /** Catalog model shape returned by GET /llm/models (subset used by the UI). */
 export interface CatalogModelView {
