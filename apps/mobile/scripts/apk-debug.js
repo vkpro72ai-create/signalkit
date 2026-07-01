@@ -374,9 +374,9 @@ function verifyApk(apkPath, buildMeta) {
   console.log(`  Built at    : ${buildMeta.buildTimestamp}`);
   console.log('');
   console.log('  Build command used:');
-  console.log('    $env:EXPO_PUBLIC_API_URL = "https://api.178-105-237-128.sslip.io"');
-  console.log('    $env:EXPO_PUBLIC_ENV = "production"');
   console.log('    node apps/mobile/scripts/apk-debug.js');
+  console.log('    (or: pnpm --filter @signalkit/mobile apk:debug)');
+  console.log('    No manual env vars required — production API is the default.');
   console.log('');
   console.log('  Install command:');
   console.log(`  adb uninstall com.signalkit.app`);
