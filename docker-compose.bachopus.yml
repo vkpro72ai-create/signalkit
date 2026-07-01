@@ -1,0 +1,25 @@
+# SignalKit — bachopus.com sibling deployment
+#
+# Adds web container on 127.0.0.1:3000, keeps API on 127.0.0.1:4000,
+# disables bundled Caddy (host-level Caddy handles TLS).
+#
+# Usage (from /home/signalkit/signalkit):
+#   docker compose \
+#     -f docker-compose.production.yml \
+#     -f docker-compose.bachopus.yml \
+#     --env-file .env.production \
+#     up -d
+
+services:
+  api:
+    ports:
+      - "127.0.0.1:4000:4000"
+
+  web:
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  # Disable bundled Caddy — host Caddy handles all TLS.
+  caddy:
+    profiles:
+      - caddy-disabled
