@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { SemanticColor } from '@signalkit/ui';
 import {
@@ -241,6 +241,14 @@ function ExportHistoryRow({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ExportsPage() {
+  return (
+    <Suspense fallback={<LoadingState label="Loading…" />}>
+      <ExportsPageInner />
+    </Suspense>
+  );
+}
+
+function ExportsPageInner() {
   const t = useT();
   const searchParams = useSearchParams();
   const preselectedPackId = searchParams.get('packId') ?? '';
