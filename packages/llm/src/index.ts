@@ -81,7 +81,7 @@ export interface LLMProviderAdapter {
   /** Perform a generation. Must throw LLMError on failure. */
   complete(request: LLMRequest): Promise<LLMResponse>;
   /** Optionally list models the provider exposes (e.g. OpenRouter catalog). */
-  listModels?(): Promise<{ modelId: string; displayName: string }[]>;
+  listModels?(): Promise<{ modelId: string; displayName: string; contextWindow?: number; maxOutputTokens?: number }[]>;
 }
 
 /** Cost estimator contract — used before expensive actions to warn/confirm. */

@@ -59,6 +59,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   const [testResults, setTestResults] = useState<Record<string, string>>({});
   const [smokeResult, setSmokeResult] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<string | null>(null);
+  const [catalogStatus, setCatalogStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const needsBaseUrl = provider === 'openai_compatible' || provider === 'custom';
@@ -81,6 +82,31 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshCatalog() {
+      setCatalogStatus('Syncing live model catalogs…');
+      try {
+        const result = await llmApi.refreshModels(workspaceId);
+        if (cancelled) return;
+        const modelRows = await llmApi.models();
+        if (cancelled) return;
+        setModels(modelRows);
+        setSelectedModelId((current) => current || modelRows.find((m) => m.provider === 'deepseek')?.modelId || modelRows[0]?.modelId || '');
+        const providerCount = Object.keys(result.byProvider).length;
+        setCatalogStatus(`Live model catalog synced: ${result.refreshed} entries across ${providerCount} provider${providerCount === 1 ? '' : 's'}.`);
+      } catch (e) {
+        if (!cancelled) {
+          setCatalogStatus(e instanceof Error ? e.message : 'Live model catalog sync failed.');
+        }
+      }
+    }
+
+    void refreshCatalog();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   async function setMode(mode: 'byok' | 'platform') {
     setSettings(await llmApi.updateSettings({ workspaceId, mode, defaultModelId: selectedModelId || undefined }));
@@ -235,6 +261,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
             </Badge>
             {settings?.defaultModelId && <Badge variant="confidence">Current saved model: {settings.defaultModelId}</Badge>}
           </div>
+          {catalogStatus && <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: spacing.sm, marginBottom: 0 }}>{catalogStatus}</p>}
           {saveResult && <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: spacing.sm, marginBottom: 0 }}>{saveResult}</p>}
           {smokeResult && <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: spacing.sm, marginBottom: 0 }}>{smokeResult}</p>}
         </Card>

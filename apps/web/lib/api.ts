@@ -245,6 +245,10 @@ export interface UsageSummary {
 export const llmApi = {
   connections: (workspaceId: string) => apiGet<LlmConnectionView[]>(`/llm/connections?workspaceId=${workspaceId}`),
   models: () => apiGet<CatalogModelView[]>('/llm/models'),
+  refreshModels: (workspaceId?: string) =>
+    apiPost<{ refreshed: number; byProvider: Record<string, number>; failures: Record<string, string>; message: string }>(
+      workspaceId ? `/llm/models/refresh?workspaceId=${encodeURIComponent(workspaceId)}` : '/llm/models/refresh',
+    ),
   providers: () => apiGet<ProviderView[]>('/llm/providers'),
   connect: (input: { workspaceId: string; provider: string; apiKey: string; label: string; baseUrl?: string; defaultModelId?: string }) =>
     apiPost<LlmConnectionView>('/llm/providers/connect', input),

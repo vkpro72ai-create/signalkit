@@ -19,6 +19,10 @@ interface AnthropicResponse {
   stop_reason?: string;
 }
 
+interface AnthropicModelListResponse {
+  data?: { id: string; display_name?: string }[];
+}
+
 export class AnthropicAdapter implements LLMProviderAdapter {
   readonly info: LLMAdapterInfo;
   private readonly baseUrl: string;
@@ -96,6 +100,19 @@ export class AnthropicAdapter implements LLMProviderAdapter {
       if (err instanceof LLMError) throw err;
       throw new LLMError('network', err instanceof Error ? err.message : 'network_error', 'anthropic', true);
     }
+  }
+
+  async listModels(): Promise<{ modelId: string; displayName: string }[]> {
+    if (!this.config.apiKey) {
+      return [];
+    }
+    const res = await fetch(`${this.baseUrl}/v1/models`, { headers: this.headers() });
+    if (!res.ok) throw this.httpError(res.status, (await res.text()).slice(0, 500));
+    const data = (await res.json()) as AnthropicModelListResponse;
+    return (data.data ?? []).map((model) => ({
+      modelId: model.id,
+      displayName: model.display_name ?? model.id,
+    }));
   }
 
   private httpError(status: number, body: string): LLMError {

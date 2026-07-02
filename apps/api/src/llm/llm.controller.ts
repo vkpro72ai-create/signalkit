@@ -39,9 +39,10 @@ export class LlmController {
   }
 
   @Post('models/refresh')
+  @RequirePermissions('workspace:read')
   @ApiOperation({ summary: 'Refresh the catalog from OpenRouter' })
-  refreshModels() {
-    return this.models.refresh();
+  refreshModels(@Query('workspaceId') workspaceId?: string) {
+    return this.models.refresh(workspaceId);
   }
 
   @Post('models/:id/benchmark')

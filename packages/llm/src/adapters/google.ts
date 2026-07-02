@@ -17,6 +17,16 @@ interface GoogleResponse {
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
 }
 
+interface GoogleModelListResponse {
+  models?: {
+    name?: string;
+    displayName?: string;
+    inputTokenLimit?: number;
+    outputTokenLimit?: number;
+    supportedGenerationMethods?: string[];
+  }[];
+}
+
 export class GoogleAdapter implements LLMProviderAdapter {
   readonly info: LLMAdapterInfo;
   private readonly baseUrl: string;
@@ -77,6 +87,24 @@ export class GoogleAdapter implements LLMProviderAdapter {
       if (err instanceof LLMError) throw err;
       throw new LLMError('network', err instanceof Error ? err.message : 'network_error', 'google', true);
     }
+  }
+
+  async listModels(): Promise<{ modelId: string; displayName: string; contextWindow?: number; maxOutputTokens?: number }[]> {
+    if (!this.config.apiKey) {
+      return [];
+    }
+    const res = await fetch(`${this.baseUrl}/models?key=${this.config.apiKey}`);
+    if (!res.ok) throw this.httpError(res.status, (await res.text()).slice(0, 500));
+    const data = (await res.json()) as GoogleModelListResponse;
+    return (data.models ?? [])
+      .filter((model) => (model.supportedGenerationMethods ?? []).includes('generateContent'))
+      .map((model) => ({
+        modelId: (model.name ?? '').replace(/^models\//, ''),
+        displayName: model.displayName ?? (model.name ?? '').replace(/^models\//, ''),
+        contextWindow: model.inputTokenLimit,
+        maxOutputTokens: model.outputTokenLimit,
+      }))
+      .filter((model) => model.modelId.length > 0);
   }
 
   private httpError(status: number, body: string): LLMError {
