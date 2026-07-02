@@ -4,7 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.service';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
 import { NichesService } from './niches.service';
-import { CompareMarketsDto, CreateOpportunityFromIdeaDto, DiscoverNichesDto } from './dto/niche.dto';
+import { CompareMarketsDto, DiscoverNichesDto } from './dto/niche.dto';
 
 @ApiTags('niches')
 @Controller('workspaces/:workspaceId')
@@ -91,17 +91,5 @@ export class NichesController {
   @ApiOperation({ summary: 'Recompute the Venture Thesis + Venture Scale Score' })
   regenerateVenture(@Param('workspaceId') ws: string, @Param('nicheId') id: string) {
     return this.niches.regenerateVenture(ws, id);
-  }
-
-  @Post('projects/:projectId/niches/from-idea')
-  @RequirePermissions('niche:discover')
-  @ApiOperation({ summary: 'Create an opportunity from a founder-supplied idea.' })
-  createFromIdea(
-    @Param('workspaceId') ws: string,
-    @Param('projectId') pid: string,
-    @Body() dto: CreateOpportunityFromIdeaDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.niches.createFromIdea(ws, pid, dto, user.sub);
   }
 }
