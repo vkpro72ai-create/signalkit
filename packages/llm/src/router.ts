@@ -116,7 +116,7 @@ export class DefaultLLMRouter {
       outputLanguage: request.contract.outputLanguage,
       maxOutputTokens: rule.maxTokensPerTask ?? undefined,
       jsonMode: rule.jsonRequired || request.jsonMode === true,
-      timeoutMs: rule.timeoutMs,
+      timeoutMs: request.timeoutMs ?? rule.timeoutMs,
     };
 
     // Primary model, then fallback.

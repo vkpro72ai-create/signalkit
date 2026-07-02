@@ -2,7 +2,7 @@
  * Default task → model routing. Used when a workspace has no explicit rule for a
  * task, so every task always resolves to a model. Workspace settings override.
  */
-import type { LLMRoutingRule, LLMTaskType } from '@signalkit/shared';
+import type { LLMProviderType, LLMRoutingRule, LLMTaskType } from '@signalkit/shared';
 
 // Catalog model ids (see catalog.ts).
 const MINI = 'gpt-4o-mini';
@@ -58,6 +58,22 @@ export const JSON_TASKS: ReadonlySet<LLMTaskType> = new Set<LLMTaskType>([
   'contradiction_check',
 ]);
 
+const PACK_TASKS = new Set<LLMTaskType>(['product_vision_generation']);
+
+/** Preferred provider-level defaults used when a workspace has a connection but no explicit model. */
+export const DEFAULT_PROVIDER_MODELS: Partial<Record<LLMProviderType, string | null>> = {
+  openai: MINI,
+  anthropic: SONNET,
+  google: GEMINI,
+  deepseek: DEEPSEEK,
+  mistral: 'mistral-large-latest',
+  openrouter: null,
+};
+
+export function defaultModelForProvider(provider: LLMProviderType): string | null {
+  return DEFAULT_PROVIDER_MODELS[provider] ?? null;
+}
+
 /** Pick a sensible fallback model that differs from the primary. */
 export function defaultFallback(modelId: string): string {
   if (modelId === MINI) return GEMINI;
@@ -73,9 +89,9 @@ export function defaultRoutingRule(taskType: LLMTaskType): LLMRoutingRule {
     modelId,
     fallbackModelId: defaultFallback(modelId),
     maxCostPerTask: null,
-    maxTokensPerTask: null,
-    timeoutMs: 60_000,
-    retryCount: 2,
+    maxTokensPerTask: PACK_TASKS.has(taskType) ? 16_000 : null,
+    timeoutMs: PACK_TASKS.has(taskType) ? 300_000 : 60_000,
+    retryCount: PACK_TASKS.has(taskType) ? 0 : 2,
     jsonRequired: JSON_TASKS.has(taskType),
   };
 }

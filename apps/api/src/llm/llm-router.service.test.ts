@@ -5,12 +5,15 @@ import type { CryptoService } from '../crypto/crypto.service';
 
 function makePrisma(over: {
   settings?: unknown;
-  connection?: unknown;
+  connections?: unknown[];
   usageCreate?: ReturnType<typeof vi.fn>;
 }) {
   return {
     workspaceLLMSettings: { findUnique: vi.fn().mockResolvedValue(over.settings ?? null) },
-    userLLMConnection: { findFirst: vi.fn().mockResolvedValue(over.connection ?? null) },
+    userLLMConnection: {
+      findFirst: vi.fn().mockResolvedValue(over.connections?.[0] ?? null),
+      findMany: vi.fn().mockResolvedValue(over.connections ?? []),
+    },
     lLMModel: { findFirst: vi.fn().mockResolvedValue(null) },
     lLMUsageLog: { create: over.usageCreate ?? vi.fn().mockResolvedValue({}) },
   } as unknown as PrismaService;
@@ -62,10 +65,34 @@ describe('LlmRouterService', () => {
     expect(usageCreate.mock.calls[0]![0].data.status).toBe('error');
   });
 
-  it('throws llm_model_not_configured when no workspace default model exists', async () => {
-    const svc = new LlmRouterService(makePrisma({ settings: null }), crypto);
+  it('resolves deepseek-chat when DeepSeek is the only active connection and no default model is set', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: null, fallbackModelId: null, routingRules: [] },
+        connections: [{ provider: 'deepseek', status: 'active', createdAt: new Date() }],
+      }),
+      crypto,
+    );
+    const est = await svc.estimate('w1', 'source_summarization', 1000, 1000);
+    expect(est.modelId).toBe('deepseek-chat');
+  });
+
+  it('uses the active connection default model before provider fallback', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: null, fallbackModelId: null, routingRules: [] },
+        connections: [{ provider: 'deepseek', defaultModelId: 'deepseek-reasoner', status: 'active', createdAt: new Date() }],
+      }),
+      crypto,
+    );
+    const est = await svc.estimate('w1', 'source_summarization', 1000, 1000);
+    expect(est.modelId).toBe('deepseek-reasoner');
+  });
+
+  it('throws llm_missing_connection when no active connection exists', async () => {
+    const svc = new LlmRouterService(makePrisma({ settings: null, connections: [] }), crypto);
     await expect(svc.run(makeRunRequest())).rejects.toMatchObject({
-      message: expect.stringContaining('llm_model_not_configured'),
+      message: expect.stringContaining('llm_missing_connection'),
     });
   });
 
@@ -80,12 +107,28 @@ describe('LlmRouterService', () => {
     const svc = new LlmRouterService(
       makePrisma({
         settings: { defaultModelId: 'gpt-4o-mini', fallbackModelId: null, routingRules: [] },
-        connection: null,
+        connections: [],
       }),
       crypto,
     );
     await expect(svc.run(makeRunRequest())).rejects.toMatchObject({
       message: expect.stringContaining('llm_missing_connection'),
+    });
+  });
+
+  it('asks to choose a default AI engine when multiple active connections exist', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: null, fallbackModelId: null, routingRules: [] },
+        connections: [
+          { provider: 'deepseek', status: 'active', createdAt: new Date('2026-01-01') },
+          { provider: 'openai', status: 'active', createdAt: new Date('2026-01-02') },
+        ],
+      }),
+      crypto,
+    );
+    await expect(svc.estimate('w1', 'source_summarization', 1000, 1000)).rejects.toMatchObject({
+      message: expect.stringContaining('choose a default AI engine'),
     });
   });
 

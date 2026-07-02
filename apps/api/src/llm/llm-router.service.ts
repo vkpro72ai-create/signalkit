@@ -23,6 +23,11 @@ interface StoredRoutingRule {
   fallbackModelId?: string | null;
 }
 
+type ExplicitRoutingRequest = GenerationRequest & {
+  modelId?: string;
+  provider?: LLMProviderType;
+};
+
 /**
  * The single entry point for AI generation. Feature modules call `run()`; they
  * MUST NOT build adapters or call providers themselves (enforced by lint +
@@ -62,6 +67,14 @@ export class LlmRouterService {
 
   /** Run a generation through the router. */
   run(request: GenerationRequest): Promise<GenerationResult> {
+    const explicit = request as ExplicitRoutingRequest;
+    const explicitModelId = explicit.modelId;
+    if (explicitModelId) {
+      return this.runWithModel(request, explicitModelId);
+    }
+    if (explicit.provider) {
+      return this.runWithProvider(request, explicit.provider);
+    }
     return this.router.run(request);
   }
 
@@ -87,6 +100,22 @@ export class LlmRouterService {
     return router.run(request);
   }
 
+  private async runWithProvider(
+    request: GenerationRequest,
+    provider: LLMProviderType,
+  ): Promise<GenerationResult> {
+    const modelId = await this.resolveProviderDefaultModel(provider);
+    if (!modelId) {
+      throw new LLMError(
+        'invalid_request',
+        `llm_model_not_configured: No known default model exists for provider ${provider}.`,
+        provider,
+        false,
+      );
+    }
+    return this.runWithModel(request, modelId, defaultFallbackForResolvedModel(modelId));
+  }
+
   /** Pre-flight cost estimate for the UI (before expensive actions). */
   async estimate(workspaceId: string, taskType: LLMTaskType, inputTokens: number, outputTokens: number) {
     const rule = await this.resolveRule(taskType, workspaceId);
@@ -103,6 +132,12 @@ export class LlmRouterService {
   private async resolveRule(taskType: LLMTaskType, workspaceId: string): Promise<LLMRoutingRule> {
     const settings = await this.prisma.workspaceLLMSettings.findUnique({ where: { workspaceId } });
     const base = defaultRoutingRule(taskType);
+    const baseWithTaskOverrides = {
+      ...base,
+      ...(taskType === 'product_vision_generation'
+        ? { maxTokensPerTask: 16_000, timeoutMs: 300_000, retryCount: 0 }
+        : {}),
+    };
     const rules = Array.isArray(settings?.routingRules)
       ? (settings.routingRules as unknown as StoredRoutingRule[])
       : [];
@@ -110,7 +145,7 @@ export class LlmRouterService {
 
     if (taskRule?.modelId) {
       return {
-        ...base,
+        ...baseWithTaskOverrides,
         taskType,
         modelId: taskRule.modelId,
         fallbackModelId: taskRule.fallbackModelId ?? settings?.fallbackModelId ?? null,
@@ -119,19 +154,54 @@ export class LlmRouterService {
 
     if (settings?.defaultModelId) {
       return {
-        ...base,
+        ...baseWithTaskOverrides,
         taskType,
         modelId: settings.defaultModelId,
         fallbackModelId: settings.fallbackModelId ?? null,
       };
     }
 
-    throw new LLMError(
-      'invalid_request',
-      `llm_model_not_configured: No model configured for task ${taskType} in workspace ${workspaceId}.`,
-      'openai',
-      false,
-    );
+    const activeConnections = await this.prisma.userLLMConnection.findMany({
+      where: { workspaceId, status: 'active' },
+      orderBy: [{ createdAt: 'asc' }],
+    });
+
+    if (activeConnections.length === 0) {
+      throw new LLMError(
+        'invalid_request',
+        `llm_missing_connection: No active AI provider connection configured for workspace ${workspaceId}.`,
+        'openai',
+        false,
+      );
+    }
+
+    if (activeConnections.length > 1) {
+      throw new LLMError(
+        'invalid_request',
+        'llm_model_not_configured: Multiple active AI provider connections exist. Please choose a default AI engine/model in workspace LLM settings.',
+        'openai',
+        false,
+      );
+    }
+
+    const connection = activeConnections[0] as { provider: LLMProviderType; defaultModelId?: string | null };
+    const provider = connection.provider;
+    const providerModel = connection.defaultModelId ?? await this.resolveProviderDefaultModel(provider);
+    if (!providerModel) {
+      throw new LLMError(
+        'invalid_request',
+        `llm_model_not_configured: No known default model exists for provider ${provider}.`,
+        provider,
+        false,
+      );
+    }
+
+    return {
+      ...baseWithTaskOverrides,
+      taskType,
+      modelId: providerModel,
+      fallbackModelId: defaultFallbackForResolvedModel(providerModel),
+    };
   }
 
   private async providerForModel(modelId: string): Promise<LLMProviderType> {
@@ -149,6 +219,18 @@ export class LlmRouterService {
 
   resolveProvider(modelId: string): Promise<LLMProviderType> {
     return this.providerForModel(modelId);
+  }
+
+  private async resolveProviderDefaultModel(provider: LLMProviderType): Promise<string | null> {
+    const seedDefault = providerDefaultModel(provider);
+    if (seedDefault) return seedDefault;
+
+    const row = await this.prisma.lLMModel.findFirst({
+      where: { provider },
+      orderBy: [{ ratingOverall: 'desc' }, { displayName: 'asc' }],
+      select: { modelId: true },
+    });
+    return row?.modelId ?? null;
   }
 
   /** Resolve a configured adapter for a model from BYOK connections. */
@@ -203,4 +285,30 @@ export class LlmRouterService {
       },
     });
   }
+}
+
+function providerDefaultModel(provider: LLMProviderType): string | null {
+  switch (provider) {
+    case 'deepseek':
+      return 'deepseek-chat';
+    case 'openai':
+      return 'gpt-4o-mini';
+    case 'anthropic':
+      return 'claude-sonnet-4-6';
+    case 'google':
+      return 'gemini-2.0-flash';
+    case 'mistral':
+      return 'mistral-large-latest';
+    default:
+      return null;
+  }
+}
+
+function defaultFallbackForResolvedModel(modelId: string): string {
+  if (modelId === 'gpt-4o-mini') return 'gemini-2.0-flash';
+  if (modelId === 'claude-sonnet-4-6') return 'gpt-4o';
+  if (modelId === 'deepseek-chat') return 'gpt-4o-mini';
+  if (modelId === 'gemini-2.0-flash') return 'gpt-4o-mini';
+  if (modelId === 'mistral-large-latest') return 'gpt-4o-mini';
+  return 'gpt-4o-mini';
 }

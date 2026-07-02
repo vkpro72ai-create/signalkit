@@ -30,6 +30,8 @@ interface DocMeta {
   sourceRefIds: string[];
   unresolvedQuestionIds: string[];
   confidence: { level: string } | null;
+  layer?: 'vision' | 'build' | 'execution' | 'evidence';
+  section?: { key: string; title: string } | null;
 }
 
 interface DocView {
@@ -47,11 +49,53 @@ interface DocView {
 
 interface GateCheck { id: string; label: string; status: string; message: string }
 
+interface PackMetadata {
+  packTitle?: string;
+  sourceMode?: string;
+  qualityGates?: {
+    structureGate: string;
+    evidenceGate: string;
+    safetyGate: string;
+    buildabilityGate: string;
+    exportGate: string;
+    openQuestions?: string[];
+    sourceNeeds?: string[];
+    whatNotToBuildOrClaim?: string[];
+  };
+  layers?: Array<{ key: 'vision' | 'build' | 'execution' | 'evidence'; title: string; documentTypes: string[]; titles: string[] }>;
+  executionHandoff?: {
+    mode: string;
+    qiraBacklogDraft: {
+      projectTitle: string;
+      projectDescription: string;
+      epics: Array<{ title: string; relatedSections: string[] }>;
+      sprints: Array<{ title: string; focus: string }>;
+      tasks: Array<{ title: string; ownerRole: string; phase: string; acceptanceCriteria: string[]; relatedSections: string[] }>;
+      dependencies: Array<{ from: string; to: string }>;
+      ownerRoles: string[];
+      labels: string[];
+      acceptanceCriteria: string[];
+      doneDefinition: string[];
+    };
+    aiAgentPromptBundleDraft: Array<{
+      title: string;
+      targetAgent: string;
+      purpose: string;
+      promptBody: string;
+      relatedSections: string[];
+      expectedFiles: string[];
+      tests: string[];
+      finalReportFormat: string[];
+    }>;
+  };
+}
+
 interface Pack {
   id: string;
   title: string;
   depth: string;
   status: string;
+  metadata?: PackMetadata | null;
   documents: DocView[];
   qualityGate: { status: string; passedCount: number; warnCount: number; failCount: number; checks: GateCheck[] } | null;
 }
@@ -144,7 +188,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   const originalBodyRef = useRef('');
 
   // Right panel tabs
-  const [rightTab, setRightTab] = useState<'info' | 'research' | 'comments'>('info');
+  const [rightTab, setRightTab] = useState<'info' | 'handoff' | 'research' | 'comments'>('info');
 
   // Version history
   const [showHistory, setShowHistory] = useState(false);
@@ -239,6 +283,10 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
   const doc = pack?.documents.find((d) => d.id === selected) ?? null;
   const isDirty = editBody !== originalBodyRef.current;
+  const displayTitle = pack ? normalizePackTitle(pack.metadata?.packTitle || pack.title) : t('nav.packs');
+  const groupedDocs = pack ? groupDocsForNavigation(pack.documents) : [];
+  const qualityGates = pack?.metadata?.qualityGates ?? null;
+  const handoff = pack?.metadata?.executionHandoff ?? null;
 
   function enterEdit() {
     if (!doc) return;
@@ -392,8 +440,8 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   return (
     <div style={{ maxWidth: 1400 }}>
       <PageHeader
-        title={pack ? pack.title : t('nav.packs')}
-        subtitle={pack ? `${pack.depth.replace(/_/g, ' ')} · ${pack.documents.length} documents` : 'Evidence-backed Product Document Pack.'}
+        title={displayTitle}
+        subtitle={pack ? `Build-Ready Product Pack · ${pack.depth.replace(/_/g, ' ')} · ${pack.documents.length} documents` : 'Build-Ready Product Pack.'}
         action={
           pack ? (
             <Button variant="secondary" onClick={() => router.push(`/signalkit/exports?packId=${pack.id}`)}>
@@ -423,6 +471,13 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                 <Badge variant="success">{pack.qualityGate.passedCount} pass</Badge>
                 {pack.qualityGate.warnCount > 0 && <Badge variant="warning">{pack.qualityGate.warnCount} warn</Badge>}
                 {pack.qualityGate.failCount > 0 && <Badge variant="failed">{pack.qualityGate.failCount} fail</Badge>}
+                {qualityGates && (
+                  <>
+                    <Badge variant={qualityGates.structureGate === 'complete' ? 'success' : 'failed'}>Structure: {qualityGates.structureGate}</Badge>
+                    <Badge variant={qualityGates.evidenceGate === 'supported' ? 'success' : 'warning'}>Evidence: {qualityGates.evidenceGate}</Badge>
+                    <Badge variant={qualityGates.safetyGate === 'clear' ? 'success' : 'warning'}>Safety: {qualityGates.safetyGate}</Badge>
+                  </>
+                )}
               </>
             )}
             <div style={{ flex: 1 }} />
@@ -440,29 +495,36 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
             {/* LEFT — Document navigation */}
             <Card style={{ padding: `${spacing.sm}px 0`, maxHeight: '80vh', overflow: 'auto' }}>
-              {pack.documents.map((d, i) => (
-                <button
-                  key={d.id}
-                  onClick={() => void selectDoc(d.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: spacing.xs,
-                    width: '100%',
-                    textAlign: 'start',
-                    background: d.id === selected ? palette.canvas : 'transparent',
-                    border: 'none',
-                    borderLeft: d.id === selected ? `2px solid ${palette.ink}` : '2px solid transparent',
-                    padding: `${spacing.xs}px ${spacing.sm}px`,
-                    fontSize: typography.size.xs,
-                    color: palette.ink,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <span style={{ color: palette.subtle, minWidth: 16, fontSize: 10 }}>{String(i + 1).padStart(2, '0')}</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: STATUS_COLOR[d.status] ?? palette.subtle, flexShrink: 0 }} />
-                </button>
+              {groupedDocs.map((group) => (
+                <div key={group.key}>
+                  <div style={{ padding: `${spacing.xs}px ${spacing.sm}px`, fontSize: 10, color: palette.subtle, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                    {group.title}
+                  </div>
+                  {group.documents.map((d, i) => (
+                    <button
+                      key={d.id}
+                      onClick={() => void selectDoc(d.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: spacing.xs,
+                        width: '100%',
+                        textAlign: 'start',
+                        background: d.id === selected ? palette.canvas : 'transparent',
+                        border: 'none',
+                        borderLeft: d.id === selected ? `2px solid ${palette.ink}` : '2px solid transparent',
+                        padding: `${spacing.xs}px ${spacing.sm}px`,
+                        fontSize: typography.size.xs,
+                        color: palette.ink,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <span style={{ color: palette.subtle, minWidth: 16, fontSize: 10 }}>{String(group.startIndex + i + 1).padStart(2, '0')}</span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: STATUS_COLOR[d.status] ?? palette.subtle, flexShrink: 0 }} />
+                    </button>
+                  ))}
+                </div>
               ))}
             </Card>
 
@@ -542,7 +604,12 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
             <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm }}>
               {/* Tab bar */}
               <div style={{ display: 'flex', borderBottom: `${border.hairline}px solid ${palette.line}` }}>
-                {(['info', 'research', 'comments'] as const).map((tab) => (
+                {([
+                  'info',
+                  ...(handoff ? (['handoff'] as const) : []),
+                  'research',
+                  'comments',
+                ] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setRightTab(tab)}
@@ -557,7 +624,11 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                       fontWeight: rightTab === tab ? typography.weight.medium : undefined,
                     }}
                   >
-                    {tab === 'comments' ? `Comments (${comments.filter(c => c.status === 'open').length})` : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    {tab === 'comments'
+                      ? `Comments (${comments.filter(c => c.status === 'open').length})`
+                      : tab === 'handoff'
+                        ? 'Execution Handoff'
+                        : tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
                 ))}
               </div>
@@ -577,6 +648,15 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                     <Row k="Assumptions" v={String(doc.metadata.assumptionIds.length)} />
                     <Row k="Sources" v={String(doc.metadata.sourceRefIds.length)} />
                     <Row k="Open questions" v={String(doc.metadata.unresolvedQuestionIds.length)} />
+                    {qualityGates && (
+                      <>
+                        <Row k="Structure gate" v={qualityGates.structureGate} />
+                        <Row k="Evidence gate" v={qualityGates.evidenceGate} />
+                        <Row k="Safety gate" v={qualityGates.safetyGate} />
+                        <Row k="Buildability gate" v={qualityGates.buildabilityGate} />
+                        <Row k="Export gate" v={qualityGates.exportGate} />
+                      </>
+                    )}
                     <Row k="Version" v={String(doc.version)} />
                     <div style={{ height: border.hairline, background: palette.line, margin: `${spacing.xs}px 0` }} />
                     <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs, color: palette.subtle }}>Review</span>
@@ -619,6 +699,38 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                       </select>
                     </div>
                   ))}
+                </Card>
+              )}
+
+              {rightTab === 'handoff' && handoff && (
+                <Card style={{ padding: spacing.md }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm, fontSize: typography.size.xs }}>
+                    <Row k="Mode" v={handoff.mode} />
+                    <Row k="Qira draft" v={`${handoff.qiraBacklogDraft.epics.length} epics · ${handoff.qiraBacklogDraft.sprints.length} sprints · ${handoff.qiraBacklogDraft.tasks.length} tasks`} />
+                    <Row k="AI prompts" v={String(handoff.aiAgentPromptBundleDraft.length)} />
+                    <div style={{ height: border.hairline, background: palette.line, margin: `${spacing.xs}px 0` }} />
+                    <div style={{ fontWeight: typography.weight.medium }}>Qira Draft</div>
+                    <div style={{ color: palette.subtle }}>{handoff.qiraBacklogDraft.projectDescription}</div>
+                    <div>
+                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>Epics</div>
+                      {handoff.qiraBacklogDraft.epics.map((epic) => (
+                        <div key={epic.title} style={{ marginBottom: spacing.xs }}>
+                          <div>{epic.title}</div>
+                          <div style={{ color: palette.subtle }}>{epic.relatedSections.join(', ')}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>AI Agent Prompts</div>
+                      {handoff.aiAgentPromptBundleDraft.map((prompt) => (
+                        <details key={prompt.title} style={{ marginBottom: spacing.xs }}>
+                          <summary style={{ cursor: 'pointer' }}>{prompt.title}</summary>
+                          <div style={{ color: palette.subtle, marginTop: 4 }}>{prompt.purpose}</div>
+                          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 10, background: palette.canvas, padding: spacing.sm, borderRadius: radius.sm, marginTop: spacing.xs }}>{prompt.promptBody}</pre>
+                        </details>
+                      ))}
+                    </div>
+                  </div>
                 </Card>
               )}
 
@@ -778,6 +890,32 @@ function BlueprintPanel({ blueprint }: { blueprint: BlueprintView | null }) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function normalizePackTitle(title: string): string {
+  return /preview/i.test(title) ? 'Build-Ready Product Pack' : title;
+}
+
+function groupDocsForNavigation(documents: DocView[]) {
+  const order: Array<{ key: 'vision' | 'build' | 'execution' | 'evidence'; title: string }> = [
+    { key: 'vision', title: 'Vision' },
+    { key: 'build', title: 'Build' },
+    { key: 'execution', title: 'Execution' },
+    { key: 'evidence', title: 'Evidence' },
+  ];
+  const fallback = documents.every((doc) => !doc.metadata?.layer);
+  if (fallback) {
+    return [{ key: 'build', title: 'Documents', documents, startIndex: 0 }] as const;
+  }
+  let startIndex = 0;
+  return order
+    .map((group) => {
+      const groupDocuments = documents.filter((doc) => doc.metadata?.layer === group.key);
+      const value = { ...group, documents: groupDocuments, startIndex };
+      startIndex += groupDocuments.length;
+      return value;
+    })
+    .filter((group) => group.documents.length > 0);
+}
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (

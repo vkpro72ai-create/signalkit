@@ -53,6 +53,8 @@ export interface GenerationRequest {
   jsonMode?: boolean;
   /** Override the rough output-token budget used for the cost estimate. */
   estimatedOutputTokens?: number;
+  /** Override the router/model timeout for this request. */
+  timeoutMs?: number;
 }
 
 export interface ValidationIssue {
