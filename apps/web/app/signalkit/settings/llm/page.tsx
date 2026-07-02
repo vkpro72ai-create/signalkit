@@ -50,7 +50,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   const [models, setModels] = useState<CatalogModelView[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [provider, setProvider] = useState<LLMProviderType>('deepseek');
+  const [provider, setProvider] = useState<LLMProviderType>(LLM_PROVIDER_TYPES[0] ?? 'openai');
   const [label, setLabel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
@@ -75,7 +75,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
       setConnections(conns);
       setSettings(s);
       setModels(modelRows);
-      setSelectedModelId((current) => current || s.defaultModelId || modelRows.find((m) => m.provider === 'deepseek')?.modelId || modelRows[0]?.modelId || '');
+      setSelectedModelId((current) => current || s.defaultModelId || '');
     } finally {
       setLoading(false);
     }
@@ -94,7 +94,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
         const modelRows = await llmApi.models();
         if (cancelled) return;
         setModels(modelRows);
-        setSelectedModelId((current) => current || modelRows.find((m) => m.provider === 'deepseek')?.modelId || modelRows[0]?.modelId || '');
+        setSelectedModelId((current) => current || '');
         const providerCount = Object.keys(result.byProvider).length;
         setCatalogStatus(`Live model catalog synced: ${result.refreshed} entries across ${providerCount} provider${providerCount === 1 ? '' : 's'}.`);
       } catch (e) {
@@ -176,28 +176,24 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   }
 
   async function runSmoke() {
-    const selectedModel = models.find((model) => model.modelId === selectedModelId);
-    if (!selectedModel) {
+    if (!selectedModelId) {
       setSmokeResult('Select a model before running the smoke test.');
       return;
     }
-    const activeConnection = connections.find((connection) => connection.provider === selectedModel.provider && connection.status === 'active');
-    if (!activeConnection) {
-      setSmokeResult(`No active ${PROVIDER_LABELS[selectedModel.provider] ?? selectedModel.provider} connection found. Connect the provider first.`);
+    if (settings?.defaultModelId !== selectedModelId) {
+      setSmokeResult('Save selected model before running smoke test.');
       return;
     }
     setBusy(true);
-    setSmokeResult('Running DeepSeek smoke…');
+    setSmokeResult('Running selected model smoke…');
     try {
       const result = await llmApi.smoke({
         workspaceId,
-        provider: selectedModel.provider,
-        modelId: selectedModel.modelId,
         prompt: 'Return exactly: SIGNALKIT_LLM_SMOKE_OK',
       });
       setSmokeResult(
         result.ok
-          ? `${result.provider}/${result.modelId} → ${result.text} · ${result.task} · ${result.latencyMs ?? 0} ms`
+          ? `${result.provider ?? 'unknown'}/${result.modelId ?? 'unknown'} → ${result.text ?? ''} · ${result.task ?? 'unknown'} · ${result.latencyMs ?? result.latency ?? 0} ms`
           : `${result.code}: ${result.message}`,
       );
     } catch (e) {
@@ -252,7 +248,9 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
               </select>
             </div>
             <Button onClick={() => void saveSettings()} disabled={busy || !selectedModelId}>Save</Button>
-            <Button variant="secondary" onClick={() => void runSmoke()} disabled={busy || !selectedModelId}>Run smoke test</Button>
+            <Button variant="secondary" onClick={() => void runSmoke()} disabled={busy || !selectedModelId || selectedModelId !== settings?.defaultModelId}>
+              Run selected model smoke
+            </Button>
           </div>
           <div style={{ display: 'flex', gap: spacing.xs, flexWrap: 'wrap', marginTop: spacing.md }}>
             <Badge variant="muted">Selected provider: {selectedModel ? PROVIDER_LABELS[selectedModel.provider] ?? selectedModel.provider : '—'}</Badge>

@@ -124,38 +124,26 @@ export class LlmController {
   @RequirePermissions('workspace:read')
   @ApiOperation({ summary: 'Run a real backend-routed LLM smoke test for a workspace connection' })
   async smoke(@Body() dto: LlmSmokeDto, @CurrentUser() user: JwtPayload) {
-    const resolvedProvider = await this.router.resolveProvider(dto.modelId);
-    if (resolvedProvider !== dto.provider) {
-      throw new BadRequestException({
-        ok: false,
-        code: 'llm_model_not_found',
-        message: `Model ${dto.modelId} is registered under provider ${resolvedProvider}, not ${dto.provider}.`,
-      });
-    }
-
     try {
-      const result = await this.router.runWithModel(
-        {
-          taskType: 'llm_smoke_test',
-          workspaceId: dto.workspaceId,
-          userId: user.sub,
-          contract: {
-            ...baseContract('en'),
-            outputLanguage: 'en',
-            evidenceRequirement: 'none',
-            unsupportedClaimsPolicy: 'forbid',
-          },
-          messages: [
-            {
-              role: 'system',
-              content: 'Return exactly the user-provided target text. Do not add punctuation, quotes, or explanations.',
-            },
-            { role: 'user', content: dto.prompt },
-          ],
-          estimatedOutputTokens: 64,
+      const result = await this.router.run({
+        taskType: 'llm_smoke_test',
+        workspaceId: dto.workspaceId,
+        userId: user.sub,
+        contract: {
+          ...baseContract('en'),
+          outputLanguage: 'en',
+          evidenceRequirement: 'none',
+          unsupportedClaimsPolicy: 'forbid',
         },
-        dto.modelId,
-      );
+        messages: [
+          {
+            role: 'system',
+            content: 'Return exactly the user-provided target text. Do not add punctuation, quotes, or explanations.',
+          },
+          { role: 'user', content: dto.prompt ?? 'Return exactly: SIGNALKIT_LLM_SMOKE_OK' },
+        ],
+        estimatedOutputTokens: 64,
+      });
 
       return {
         ok: true,
@@ -165,8 +153,13 @@ export class LlmController {
         text: result.content.trim(),
         usageLogged: true,
         latencyMs: result.latencyMs,
+        latency: result.latencyMs,
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
+        tokens: {
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+        },
         estimatedCost: result.estimatedCost,
       };
     } catch (error) {
@@ -177,27 +170,31 @@ export class LlmController {
 
 function mapSmokeError(error: unknown) {
   if (error instanceof LLMError) {
+    const message = error.message || '';
+    if (message.includes('llm_model_not_configured')) {
+      return { ok: false, code: 'llm_model_not_configured', message };
+    }
+    if (message.includes('llm_model_not_found')) {
+      return { ok: false, code: 'llm_model_not_found', message };
+    }
+    if (message.includes('llm_missing_connection')) {
+      return { ok: false, code: 'llm_missing_connection', message };
+    }
+
     switch (error.kind) {
       case 'auth':
-        return { ok: false, code: 'llm_auth_failed', message: error.message || 'LLM authentication failed.' };
+        return { ok: false, code: 'llm_auth_failed', message: message || 'LLM authentication failed.' };
       case 'timeout':
         return { ok: false, code: 'llm_timeout', message: 'The LLM request timed out.' };
       case 'invalid_request':
-        return { ok: false, code: 'llm_model_not_found', message: error.message || 'The selected model is invalid.' };
+        return { ok: false, code: 'llm_model_not_found', message: message || 'The selected model is invalid.' };
       case 'network':
       case 'server':
       case 'rate_limit':
       case 'unknown':
-        if (error.message.includes('no_connection_for_')) {
-          return {
-            ok: false,
-            code: 'llm_missing_connection',
-            message: `No active ${error.provider} connection is configured for this workspace.`,
-          };
-        }
-        return { ok: false, code: 'llm_provider_error', message: error.message || 'The provider returned an error.' };
+        return { ok: false, code: 'llm_provider_error', message: message || 'The provider returned an error.' };
       default:
-        return { ok: false, code: 'llm_provider_error', message: error.message || 'The provider returned an error.' };
+        return { ok: false, code: 'llm_provider_error', message: message || 'The provider returned an error.' };
     }
   }
   return { ok: false, code: 'llm_provider_error', message: error instanceof Error ? error.message : 'Unknown LLM error.' };

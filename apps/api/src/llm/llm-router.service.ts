@@ -99,24 +99,52 @@ export class LlmRouterService {
     });
   }
 
-  /** Resolve a task's routing rule: workspace task rule → defaults → workspace defaults. */
+  /** Resolve a task's routing rule: task-specific rule → workspace default → configured error. */
   private async resolveRule(taskType: LLMTaskType, workspaceId: string): Promise<LLMRoutingRule> {
     const settings = await this.prisma.workspaceLLMSettings.findUnique({ where: { workspaceId } });
     const base = defaultRoutingRule(taskType);
-    const rules = (settings?.routingRules as unknown as StoredRoutingRule[] | null) ?? [];
+    const rules = Array.isArray(settings?.routingRules)
+      ? (settings.routingRules as unknown as StoredRoutingRule[])
+      : [];
     const taskRule = rules.find((r) => r.taskType === taskType);
-    return {
-      ...base,
-      modelId: taskRule?.modelId ?? settings?.defaultModelId ?? base.modelId,
-      fallbackModelId: taskRule?.fallbackModelId ?? settings?.fallbackModelId ?? base.fallbackModelId,
-    };
+
+    if (taskRule?.modelId) {
+      return {
+        ...base,
+        taskType,
+        modelId: taskRule.modelId,
+        fallbackModelId: taskRule.fallbackModelId ?? settings?.fallbackModelId ?? null,
+      };
+    }
+
+    if (settings?.defaultModelId) {
+      return {
+        ...base,
+        taskType,
+        modelId: settings.defaultModelId,
+        fallbackModelId: settings.fallbackModelId ?? null,
+      };
+    }
+
+    throw new LLMError(
+      'invalid_request',
+      `llm_model_not_configured: No model configured for task ${taskType} in workspace ${workspaceId}.`,
+      'openai',
+      false,
+    );
   }
 
   private async providerForModel(modelId: string): Promise<LLMProviderType> {
     const cached = this.providerByModel.get(modelId);
     if (cached) return cached;
     const row = await this.prisma.lLMModel.findFirst({ where: { modelId }, select: { provider: true } });
-    return (row?.provider as LLMProviderType) ?? 'openai';
+    if (row?.provider) return row.provider as LLMProviderType;
+    throw new LLMError(
+      'invalid_request',
+      `llm_model_not_found: Model ${modelId} is not registered in the catalog.`,
+      'openai',
+      false,
+    );
   }
 
   resolveProvider(modelId: string): Promise<LLMProviderType> {
@@ -140,7 +168,12 @@ export class LlmRouterService {
       orderBy: { userId: 'desc' }, // non-null (user) before null (workspace)
     });
     if (!conn) {
-      throw new LLMError('auth', `no_connection_for_${provider}`, provider, false);
+      throw new LLMError(
+        'auth',
+        `llm_missing_connection: No active ${provider} connection configured for workspace ${ctx.workspaceId}.`,
+        provider,
+        false,
+      );
     }
     const apiKey = this.crypto.decrypt(conn.encryptedKey);
     return {

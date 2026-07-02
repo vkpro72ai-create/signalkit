@@ -116,4 +116,25 @@ describe('NichesService', () => {
     expect(scoreData.explanation).toContain('LLM-assisted');
     expect(out.generation.provider).toBe('deepseek');
   });
+
+  it('passes full context into the discovery prompt without hardcoded United States', async () => {
+    const { prisma, evidence, router } = makeDeps([]);
+    await new NichesService(prisma, evidence, router).discover('w1', 'p1', {
+      directions: ['AI / Automation'],
+      subthemes: ['multilingual support'],
+      audiences: ['SMB owners'],
+      productFormats: ['SaaS'],
+      riskTolerance: 'medium',
+      investorLens: true,
+      language: 'en',
+      mode: 'find_opportunities',
+    });
+
+    const prompt = router.run.mock.calls[0]![0].messages[1].content;
+    expect(prompt).toContain('AI / Automation');
+    expect(prompt).toContain('SMB owners');
+    expect(prompt).toContain('SaaS');
+    expect(prompt).toContain('Investor lens: enabled');
+    expect(prompt).not.toContain('United States');
+  });
 });

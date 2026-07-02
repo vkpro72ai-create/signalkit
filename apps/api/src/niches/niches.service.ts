@@ -91,8 +91,10 @@ export class NichesService {
     const project = await this.requireProject(workspaceId, projectId);
     const signals = await this.prisma.trendSignal.findMany({ where: { workspaceId, projectId } });
     const language = normalizeLocale(dto.language ?? project.defaultOutputLanguage ?? project.marketLanguage ?? 'en');
-    const market = dto.market ?? project.targetCountry ?? (project.marketScope === 'global' ? 'Global' : 'Selected market');
-    const verticals = dto.verticals?.map((value) => value.trim()).filter(Boolean) ?? [];
+    const market = resolveDiscoveryMarket(dto, project);
+    const directionContext = resolveDiscoveryDirectionContext(dto);
+    const audiences = dto.audiences?.map((value) => value.trim()).filter(Boolean) ?? [];
+    const productFormats = dto.productFormats?.map((value) => value.trim()).filter(Boolean) ?? [];
 
     if (signals.length > 0) {
       await this.evidence.synthesize(workspaceId, projectId);
@@ -129,7 +131,14 @@ export class NichesService {
               projectGoal: project.goal,
               market,
               language,
-              verticals,
+              directionContext,
+              buyerType: dto.buyerType,
+              productFormats,
+              audiences,
+              riskTolerance: dto.riskTolerance,
+              mvpTimeline: dto.mvpTimeline,
+              evidenceMode: dto.evidenceMode,
+              investorLens: dto.investorLens ?? false,
               role: dto.role ?? 'internal product scout',
               signals,
             }),
@@ -674,12 +683,45 @@ export class NichesService {
   }
 }
 
+function resolveDiscoveryMarket(
+  dto: Pick<DiscoverNichesDto, 'locations' | 'market' | 'marketScope'>,
+  project: { targetCountry?: string | null; targetCountries?: string[] | null; marketScope?: string | null },
+): string {
+  const locations = dto.locations?.map((value) => value.trim()).filter(Boolean) ?? [];
+  if (locations.length > 0) return locations.join(', ');
+  if (dto.market?.trim()) return dto.market.trim();
+  const projectLocations = (project.targetCountries ?? []).map((value) => value.trim()).filter(Boolean);
+  if (projectLocations.length > 0) return projectLocations.join(', ');
+  if (project.targetCountry?.trim()) return project.targetCountry.trim();
+  if (project.marketScope === 'global' || dto.marketScope === 'global') return 'Global';
+  if (project.marketScope === 'regional' || dto.marketScope === 'regional') return 'Regional';
+  return 'Global / Selected market';
+}
+
+function resolveDiscoveryDirectionContext(dto: Pick<DiscoverNichesDto, 'directions' | 'subthemes' | 'verticals'>): string {
+  const directionHints = [
+    ...(dto.directions ?? []).map((value) => value.trim()).filter(Boolean),
+    ...(dto.subthemes ?? []).map((value) => value.trim()).filter(Boolean),
+  ];
+  if (directionHints.length > 0) return directionHints.join(', ');
+  const verticalHints = (dto.verticals ?? []).map((value) => value.trim()).filter(Boolean);
+  if (verticalHints.length > 0) return verticalHints.join(', ');
+  return 'Not specified';
+}
+
 function buildDiscoveryPrompt(input: {
   projectName: string;
   projectGoal: string;
   market: string;
   language: LocaleCode;
-  verticals: string[];
+  directionContext: string;
+  buyerType?: string;
+  productFormats: string[];
+  audiences: string[];
+  riskTolerance?: string;
+  mvpTimeline?: string;
+  evidenceMode?: string;
+  investorLens: boolean;
   role: string;
   signals: SignalRow[];
 }): string {
@@ -691,9 +733,19 @@ function buildDiscoveryPrompt(input: {
     `Role: ${input.role}.`,
     `Project: ${input.projectName}.`,
     `Goal: ${input.projectGoal || 'Discover strong product opportunities.'}`,
-    `Target market: ${input.market}.`,
+    `Opportunity search context:`,
+    `- Market: ${input.market}.`,
+    `- Direction / subthemes: ${input.directionContext}.`,
+    `- Buyer type: ${input.buyerType ?? 'Not specified'}.`,
+    `- Audiences: ${input.audiences.length ? input.audiences.join(', ') : 'Not specified'}.`,
+    `- Product formats: ${input.productFormats.length ? input.productFormats.join(', ') : 'Not specified'}.`,
+    `- Risk tolerance: ${input.riskTolerance ?? 'Not specified'}.`,
+    `- MVP timeline: ${input.mvpTimeline ?? 'Not specified'}.`,
+    `- Evidence mode: ${input.evidenceMode ?? 'starter_hypothesis'}.`,
+    `- Investor lens: ${input.investorLens ? 'enabled' : 'disabled'}.`,
     `Output language: ${input.language}.`,
-    `Preferred verticals: ${input.verticals.length ? input.verticals.join(', ') : 'Not specified'}.`,
+    'Split the opportunities into local opportunities, global analogs if relevant, investor-radar opportunities when investorLens is enabled, and underrated niche opportunities.',
+    'Use the project signals below as primary evidence. If evidence is weak, keep the point in assumptions instead of presenting it as fact. Do not invent TAM or revenue numbers.',
     input.signals.length
       ? 'Use the project signals below as primary evidence. If evidence is weak, move the point into assumptions instead of stating it as fact.'
       : 'No project signals are available. Produce a clearly labeled LLM-assisted starter discovery and keep unverified claims in assumptions.',

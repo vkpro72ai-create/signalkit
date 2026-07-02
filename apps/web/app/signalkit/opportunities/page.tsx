@@ -28,6 +28,29 @@ import {
   type GeneratedOpportunityCard,
 } from '../../../lib/api';
 
+const DIRECTION_OPTIONS = [
+ 'AI / Automation',
+ 'Health / Medicine',
+ 'Mental health / Psychology',
+ 'Food / Nutrition',
+ 'Fitness / Sport / Recovery',
+ 'Education / Learning',
+ 'Travel / Mobility',
+ 'Finance / Insurance / Payments',
+ 'Legal / Compliance / RegTech',
+ 'Real estate / Construction',
+ 'Climate / Energy / Water',
+ 'Cybersecurity / Trust / Fraud',
+ 'Engineering / Manufacturing / Robotics',
+ 'Logistics / Supply chain',
+ 'Consumer / Lifestyle',
+ 'Creator / Media / Gaming',
+ 'SMB / Local business',
+ 'Enterprise workflow',
+ 'Gov / Defense / Public sector',
+ 'Detection / Monitoring / Intelligence',
+];
+
 export default function OpportunitiesPage() {
   const t = useT();
   const [state, setState] = useState<'loading' | 'error' | 'ready' | 'no_project'>('loading');
@@ -37,6 +60,17 @@ export default function OpportunitiesPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<AiRunMetadata | null>(null);
+  const [direction, setDirection] = useState('');
+  const [subthemesInput, setSubthemesInput] = useState('');
+  const [audienceInput, setAudienceInput] = useState('');
+  const [productFormat, setProductFormat] = useState('');
+  const [riskTolerance, setRiskTolerance] = useState<'low' | 'medium' | 'high'>('medium');
+  const [language, setLanguage] = useState(() => {
+    if (typeof window === 'undefined') return 'ru';
+    const browserLanguage = window.navigator.language.split('-')[0];
+    return browserLanguage === 'en' || browserLanguage === 'ru' ? browserLanguage : 'ru';
+  });
+  const [investorLens, setInvestorLens] = useState(true);
 
   const load = useCallback(async () => {
     setState('loading');
@@ -62,10 +96,22 @@ export default function OpportunitiesPage() {
     setBusy(true);
     setError(null);
     try {
+      const subthemes = subthemesInput
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const audiences = audienceInput
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
       const result = await opportunityApi.discover(ws, pid, {
-        market: 'United States',
-        verticals: ['AI', 'B2B SaaS'],
-        language: 'en',
+        directions: direction ? [direction] : undefined,
+        subthemes: subthemes.length > 0 ? subthemes : undefined,
+        audiences: audiences.length > 0 ? audiences : undefined,
+        productFormats: productFormat ? [productFormat] : undefined,
+        riskTolerance,
+        language,
+        investorLens,
         mode: 'find_opportunities',
       });
       applyDiscoveryResult(result);
@@ -90,13 +136,103 @@ export default function OpportunitiesPage() {
       <PageHeader
         title={t('nav.opportunities')}
         subtitle={`${opportunities.length} opportunit${opportunities.length === 1 ? 'y' : 'ies'} · evidence-backed, no fabricated market sizing`}
-        action={state === 'ready' ? <Button onClick={() => void discover()} disabled={busy}>{busy ? 'Scanning…' : 'Find opportunities'}</Button> : undefined}
+        action={state === 'ready' ? <Button onClick={() => void discover()} disabled={busy}>{busy ? 'Finding…' : 'Find opportunities'}</Button> : undefined}
       />
 
       {error && (
         <Card style={{ marginBottom: spacing.lg }}>
           <div style={{ fontWeight: typography.weight.semibold, marginBottom: spacing.xs }}>Discovery error</div>
           <div style={{ color: palette.subtle, fontSize: typography.size.sm }}>{error}</div>
+        </Card>
+      )}
+
+      {state === 'ready' && (
+        <Card style={{ marginBottom: spacing.lg }}>
+          <div style={{ fontWeight: typography.weight.semibold, marginBottom: spacing.sm }}>Search setup</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: spacing.sm }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>Direction</span>
+              <select
+                value={direction}
+                onChange={(event) => setDirection(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                <option value="">Any direction</option>
+                {DIRECTION_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>Subthemes</span>
+              <input
+                value={subthemesInput}
+                onChange={(event) => setSubthemesInput(event.target.value)}
+                placeholder="automation, compliance"
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>Audience</span>
+              <input
+                value={audienceInput}
+                onChange={(event) => setAudienceInput(event.target.value)}
+                placeholder="SMB owners"
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>Product format</span>
+              <select
+                value={productFormat}
+                onChange={(event) => setProductFormat(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                <option value="">Any format</option>
+                <option value="saas">SaaS</option>
+                <option value="web_app">Web app</option>
+                <option value="mobile_app">Mobile app</option>
+                <option value="api_platform">API / platform</option>
+                <option value="marketplace">Marketplace</option>
+                <option value="service">Service</option>
+                <option value="physical_product">Physical product</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>Risk tolerance</span>
+              <select
+                value={riskTolerance}
+                onChange={(event) => setRiskTolerance(event.target.value as 'low' | 'medium' | 'high')}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>Output language</span>
+              <select
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                <option value="ru">Russian</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, marginTop: spacing.sm, fontSize: typography.size.sm }}>
+            <input type="checkbox" checked={investorLens} onChange={(event) => setInvestorLens(event.target.checked)} />
+            <span>Investor lens</span>
+          </label>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: spacing.sm }}>
+            <Button onClick={() => void discover()} disabled={busy}>
+              {busy ? 'Finding…' : 'Find opportunities'}
+            </Button>
+          </div>
         </Card>
       )}
 
@@ -121,7 +257,7 @@ export default function OpportunitiesPage() {
       {state === 'no_project' && (
         <EmptyState
           title="No project yet"
-          body="Go to the home dashboard to start your Opportunity Radar."
+          body="Create a project first, then run discovery to surface evidence-backed opportunities."
           action={<Link href="/signalkit" style={{ textDecoration: 'none' }}><Button variant="secondary">Go to dashboard</Button></Link>}
         />
       )}
@@ -130,7 +266,7 @@ export default function OpportunitiesPage() {
         <EmptyState
           title="Find opportunities"
           body="SignalKit scans real signals and evidence for product opportunities worth building. No hype, no fake TAM."
-          action={<Button variant="secondary" onClick={() => void discover()} disabled={busy}>{busy ? 'Scanning…' : 'Find opportunities'}</Button>}
+          action={<Button variant="secondary" onClick={() => void discover()} disabled={busy}>{busy ? 'Finding…' : 'Find opportunities'}</Button>}
         />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>

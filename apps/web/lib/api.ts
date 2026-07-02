@@ -151,6 +151,17 @@ export interface GeneratedOpportunityCard extends OpportunityCard {
 
 export interface DiscoverOpportunitiesInput {
   market?: string;
+  marketScope?: string;
+  locations?: string[];
+  directions?: string[];
+  subthemes?: string[];
+  audiences?: string[];
+  buyerType?: 'consumer' | 'smb' | 'enterprise' | 'agency' | 'government' | 'mixed';
+  productFormats?: string[];
+  riskTolerance?: 'low' | 'medium' | 'high';
+  mvpTimeline?: '2_weeks' | '6_weeks' | '3_months';
+  evidenceMode?: 'starter_hypothesis' | 'source_backed' | 'deep_research';
+  investorLens?: boolean;
   verticals?: string[];
   language?: string;
   role?: string;
@@ -215,8 +226,10 @@ export interface LlmSmokeResult {
   text?: string;
   usageLogged?: boolean;
   latencyMs?: number;
+  latency?: number;
   inputTokens?: number;
   outputTokens?: number;
+  tokens?: { inputTokens: number; outputTokens: number };
   estimatedCost?: number;
   code?: string;
   message?: string;
@@ -258,8 +271,7 @@ export const llmApi = {
   settings: (workspaceId: string) => apiGet<LlmSettingsView>(`/llm/settings?workspaceId=${workspaceId}`),
   updateSettings: (input: { workspaceId: string; mode?: 'byok' | 'platform'; defaultModelId?: string; fallbackModelId?: string }) =>
     apiPut<LlmSettingsView>('/llm/settings', input),
-  smoke: (input: { workspaceId: string; provider: string; modelId: string; prompt: string }) =>
-    apiPost<LlmSmokeResult>('/llm/smoke', input),
+  smoke: (input: { workspaceId: string; prompt?: string }) => apiPost<LlmSmokeResult>('/llm/smoke', input),
   usage: (workspaceId: string) => apiGet<UsageSummary>(`/llm/usage?workspaceId=${workspaceId}`),
 };
 

@@ -18,9 +18,29 @@ function makePrisma(over: {
 
 const crypto = { decrypt: vi.fn().mockReturnValue('decrypted-key'), encrypt: vi.fn(), mask: vi.fn() } as unknown as CryptoService;
 
+function makeRunRequest() {
+  return {
+    taskType: 'source_summarization' as const,
+    workspaceId: 'w1',
+    contract: {
+      interfaceLanguage: 'en',
+      outputLanguage: 'en',
+      marketLanguage: 'en',
+      targetCountry: null,
+      targetRegion: null,
+      evidenceRequirement: 'preferred',
+      unsupportedClaimsPolicy: 'mark_as_assumption',
+    },
+    messages: [{ role: 'user' as const, content: 'hi' }],
+  };
+}
+
 describe('LlmRouterService', () => {
   it('estimates cost using the resolved rule and catalog prices', async () => {
-    const svc = new LlmRouterService(makePrisma({}), crypto);
+    const svc = new LlmRouterService(
+      makePrisma({ settings: { defaultModelId: 'gpt-4o-mini', fallbackModelId: null, routingRules: [] } }),
+      crypto,
+    );
     const est = await svc.estimate('w1', 'source_summarization', 10_000, 2_000);
     // gpt-4o-mini seed prices: 0.15 / 0.6 per 1M.
     expect(est.estimatedCost).toBeCloseTo((10_000 / 1e6) * 0.15 + (2_000 / 1e6) * 0.6, 6);
@@ -29,25 +49,56 @@ describe('LlmRouterService', () => {
 
   it('records a failure to usage when no BYOK connection exists', async () => {
     const usageCreate = vi.fn().mockResolvedValue({});
-    const svc = new LlmRouterService(makePrisma({ usageCreate }), crypto);
-    await expect(
-      svc.run({
-        taskType: 'source_summarization',
-        workspaceId: 'w1',
-        contract: {
-          interfaceLanguage: 'en',
-          outputLanguage: 'en',
-          marketLanguage: 'en',
-          targetCountry: null,
-          targetRegion: null,
-          evidenceRequirement: 'preferred',
-          unsupportedClaimsPolicy: 'mark_as_assumption',
-        },
-        messages: [{ role: 'user', content: 'hi' }],
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: 'gpt-4o-mini', fallbackModelId: null, routingRules: [] },
+        usageCreate,
       }),
-    ).rejects.toBeTruthy();
+      crypto,
+    );
+    await expect(svc.run(makeRunRequest())).rejects.toBeTruthy();
     // Usage logged for the failed attempt (no connection → auth error, no fallback connection either).
     expect(usageCreate).toHaveBeenCalled();
     expect(usageCreate.mock.calls[0]![0].data.status).toBe('error');
+  });
+
+  it('throws llm_model_not_configured when no workspace default model exists', async () => {
+    const svc = new LlmRouterService(makePrisma({ settings: null }), crypto);
+    await expect(svc.run(makeRunRequest())).rejects.toMatchObject({
+      message: expect.stringContaining('llm_model_not_configured'),
+    });
+  });
+
+  it('throws llm_model_not_found for unknown models', async () => {
+    const svc = new LlmRouterService(makePrisma({}), crypto);
+    await expect(svc.resolveProvider('not-a-real-model')).rejects.toMatchObject({
+      message: expect.stringContaining('llm_model_not_found'),
+    });
+  });
+
+  it('throws llm_missing_connection when the provider connection is missing', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: 'gpt-4o-mini', fallbackModelId: null, routingRules: [] },
+        connection: null,
+      }),
+      crypto,
+    );
+    await expect(svc.run(makeRunRequest())).rejects.toMatchObject({
+      message: expect.stringContaining('llm_missing_connection'),
+    });
+  });
+
+  it('uses the configured workspace default model', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({ settings: { defaultModelId: 'gpt-4o-mini', fallbackModelId: null, routingRules: [] } }),
+      crypto,
+    );
+    const rule = await (
+      svc as unknown as {
+        resolveRule: (taskType: string, workspaceId: string) => Promise<{ modelId: string }>;
+      }
+    ).resolveRule('source_summarization', 'w1');
+    expect(rule.modelId).toBe('gpt-4o-mini');
   });
 });

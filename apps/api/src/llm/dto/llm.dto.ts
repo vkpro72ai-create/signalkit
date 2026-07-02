@@ -128,16 +128,8 @@ export class LlmSmokeDto {
   @IsString()
   workspaceId!: string;
 
-  @ApiProperty({ enum: PROVIDERS })
-  @IsIn(PROVIDERS)
-  provider!: LLMProviderType;
-
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
-  modelId!: string;
-
-  @ApiProperty()
-  @IsString()
-  @MinLength(1)
-  prompt!: string;
+  prompt?: string;
 }
