@@ -96,3 +96,59 @@ export class CompareMarketsDto {
   @IsString({ each: true })
   countries?: string[];
 }
+
+export class CreateOpportunityFromIdeaDto {
+  @ApiPropertyOptional({ description: 'Workspace ID (also available in route param).' })
+  @IsOptional()
+  @IsString()
+  workspaceId?: string;
+
+  @ApiPropertyOptional({ description: 'Project ID.' })
+  @IsOptional()
+  @IsString()
+  projectId?: string;
+
+  @ApiPropertyOptional({ description: 'Full founder idea text (required, min 50 chars).' })
+  @IsString()
+  founderIdea!: string;
+
+  @ApiPropertyOptional({ description: 'Target market hint.' })
+  @IsOptional()
+  @IsString()
+  targetMarket?: string;
+
+  @ApiPropertyOptional({ description: 'Target audience hint.' })
+  @IsOptional()
+  @IsString()
+  targetAudience?: string;
+
+  @ApiPropertyOptional({ description: 'Product format hint.' })
+  @IsOptional()
+  @IsString()
+  productFormat?: string;
+
+  @ApiPropertyOptional({ enum: ['ru', 'en'], description: 'Desired output language.' })
+  @IsOptional()
+  @IsIn(['ru', 'en'])
+  outputLanguage?: 'ru' | 'en' | string;
+
+  @ApiPropertyOptional({ enum: ['team_studio', 'ai_agent_bundle', 'both'], description: 'Execution mode.' })
+  @IsOptional()
+  @IsIn(['team_studio', 'ai_agent_bundle', 'both'])
+  executionMode?: 'team_studio' | 'ai_agent_bundle' | 'both';
+
+  @ApiPropertyOptional({ enum: ['starter_hypothesis', 'source_backed', 'deep_research'], description: 'Evidence mode.' })
+  @IsOptional()
+  @IsIn(['starter_hypothesis', 'source_backed', 'deep_research'])
+  evidenceMode?: 'starter_hypothesis' | 'source_backed' | 'deep_research';
+
+  @ApiPropertyOptional({ enum: ['low', 'medium', 'high'], description: 'Risk tolerance.' })
+  @IsOptional()
+  @IsIn(['low', 'medium', 'high'])
+  riskTolerance?: 'low' | 'medium' | 'high';
+
+  @ApiPropertyOptional({ description: 'Optional notes from the founder.' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}

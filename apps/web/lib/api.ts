@@ -180,6 +180,18 @@ export const opportunityApi = {
   listAll: (workspaceId: string) => apiGet<OpportunityCard[]>(`/workspaces/${workspaceId}/niches`),
   discover: (workspaceId: string, projectId: string, body?: DiscoverOpportunitiesInput) =>
     apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/discover-niches`, body ?? {}),
+  createFromIdea: (workspaceId: string, projectId: string, body: {
+    founderIdea: string;
+    targetMarket?: string;
+    targetAudience?: string;
+    productFormat?: string;
+    outputLanguage?: 'ru' | 'en' | string;
+    executionMode?: 'team_studio' | 'ai_agent_bundle' | 'both';
+    evidenceMode?: 'starter_hypothesis' | 'source_backed' | 'deep_research';
+    riskTolerance?: 'low' | 'medium' | 'high';
+    notes?: string;
+  }) =>
+    apiPost<GeneratedOpportunityCard>(`/workspaces/${workspaceId}/projects/${projectId}/niches/from-idea`, body),
 };
 
 export interface PackListItem {

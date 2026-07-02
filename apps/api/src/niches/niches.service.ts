@@ -17,7 +17,7 @@ import { baseContract, LLMError } from '@signalkit/llm';
 import { PrismaService } from '../prisma/prisma.service';
 import { EvidenceService } from '../evidence/evidence.service';
 import { LlmRouterService } from '../llm/llm-router.service';
-import type { DiscoverNichesDto } from './dto/niche.dto';
+import type { CreateOpportunityFromIdeaDto, DiscoverNichesDto } from './dto/niche.dto';
 import { buildVentureThesis } from './venture';
 
 type SignalRow = {
@@ -278,6 +278,143 @@ export class NichesService {
         generatedAt: usage?.createdAt.toISOString() ?? generatedAt,
         usageLogId: usage?.id ?? null,
         mode: signals.length > 0 ? 'signal_backed' : 'starter_discovery',
+      },
+    };
+  }
+
+  async createFromIdea(
+    workspaceId: string,
+    projectId: string,
+    dto: CreateOpportunityFromIdeaDto,
+    _userId?: string,
+  ) {
+    const project = await this.requireProject(workspaceId, projectId);
+    const idea = dto.founderIdea.trim();
+
+    if (idea.length < 50) {
+      throw new BadRequestException({
+        code: 'founder_idea_too_short',
+        message: 'Founder idea must be at least 50 characters. Provide enough detail about the product, problem, and vision.',
+      });
+    }
+
+    const outputLanguage = normalizeLocale(
+      dto.outputLanguage ?? project.defaultOutputLanguage ?? project.marketLanguage ?? 'en',
+    );
+    const evidenceMode = dto.evidenceMode ?? 'starter_hypothesis';
+    const executionMode = dto.executionMode ?? 'both';
+    const riskTolerance = dto.riskTolerance ?? 'medium';
+    const title = idea.split('.')[0]?.trim().slice(0, 120) || idea.slice(0, 80);
+
+    // Store founder metadata in mvpConcept since Niche has no dedicated metadata column yet.
+    // Use an explicit wrapper flag so pack generation can distinguish it from normal text.
+    const founderMeta = JSON.stringify({
+      signalKitFounderIdeaMeta: true,
+      version: 1,
+      intakeMode: 'founder_idea',
+      founderIdea: idea,
+      executionMode,
+      evidenceMode,
+      outputLanguage,
+      targetMarket: dto.targetMarket ?? null,
+      targetAudience: dto.targetAudience ?? null,
+      productFormat: dto.productFormat ?? null,
+      notes: dto.notes ?? null,
+    });
+
+    const niche = await this.prisma.niche.create({
+      data: {
+        workspaceId,
+        projectId,
+        title,
+        oneLiner: idea.slice(0, 200),
+        problem: idea,
+        targetAudience: dto.targetAudience ?? '',
+        whyNow: '',
+        useCases: [],
+        competitors: [],
+        mvpConcept: founderMeta,
+        monetization: '',
+        recommendedProductFormat: dto.productFormat ?? 'b2b_saas',
+        riskLevel: riskTolerance,
+        language: outputLanguage,
+      },
+    });
+
+    const scoringVersion = await this.currentScoringVersion();
+    const generatedAt = new Date().toISOString();
+
+    await this.prisma.nicheScore.create({
+      data: {
+        nicheId: niche.id,
+        scoringVersionId: scoringVersion.id,
+        totalScore: 50,
+        confidenceValue: 0.25,
+        confidenceLevel: 'low',
+        breakdown: [
+          {
+            dimension: 'problem_urgency',
+            score: 55,
+            weight: 0.35,
+            explanation: 'Founder-supplied idea — starter hypothesis, no external evidence yet.',
+            assumptionBased: true,
+          },
+          {
+            dimension: 'market_momentum',
+            score: 50,
+            weight: 0.25,
+            explanation: 'Market context not yet validated against sources.',
+            assumptionBased: true,
+          },
+          {
+            dimension: 'distribution_access',
+            score: 45,
+            weight: 0.2,
+            explanation: 'Distribution remains to be validated.',
+            assumptionBased: true,
+          },
+          {
+            dimension: 'competition_gap',
+            score: 50,
+            weight: 0.2,
+            explanation: 'Competitive gap not yet assessed.',
+            assumptionBased: true,
+          },
+        ] as unknown as object,
+        riskPenalties: [] as unknown as object,
+        explanation: `Founder-supplied idea created as a starter hypothesis. Evidence mode: ${evidenceMode}. Validate before committing build scope.`,
+      },
+    });
+
+    return {
+      id: niche.id,
+      name: niche.title,
+      oneLiner: niche.oneLiner,
+      riskLevel: niche.riskLevel,
+      projectId,
+      targetMarket: dto.targetMarket ?? null,
+      evidenceCount: 0,
+      opportunityScore: 50,
+      confidence: { level: 'low', value: 0.25 },
+      ventureScaleScore: 50,
+      buildReadinessScore: 45,
+      assumptions: ['This is a starter hypothesis. Sources have not been validated.'],
+      risks: ['Competitive landscape and market demand need validation.'],
+      validationQuestions: [
+        'Validate willingness to pay with at least 5 target buyers.',
+        'Confirm distribution path before committing build scope.',
+      ],
+      generationMetadata: {
+        provider: 'founder_supplied',
+        model: 'founder_idea',
+        task: 'create_from_idea',
+        status: 'success',
+        durationMs: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCost: 0,
+        generatedAt,
+        mode: 'founder_idea',
       },
     };
   }

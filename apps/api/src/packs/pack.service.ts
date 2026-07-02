@@ -337,21 +337,55 @@ export class PackService {
   }
 
   private buildProductPackV2Input(ctx: PackContext, opts: GeneratePackOptions): BuildProductPackV2PromptInput {
+    // If niche was created via founder_idea, extract the raw idea and metadata from mvpConcept JSON.
+    const founderMeta = tryParseFounderMeta(ctx.niche.mvpConcept);
+
+    const founderIdeaText = founderMetaText(founderMeta?.founderIdea)
+      ? founderMetaText(founderMeta?.founderIdea)!
+      : [ctx.niche.title, ctx.niche.oneLiner, ctx.niche.problem].filter(Boolean).join('\n');
+
+    const outputLanguage = founderMetaText(founderMeta?.outputLanguage)
+      ? founderMetaText(founderMeta?.outputLanguage)!
+      : ctx.language;
+
+    const evidenceMode = founderMetaText(founderMeta?.evidenceMode)
+      ? founderMetaText(founderMeta?.evidenceMode)!
+      : ctx.sourceRefs.length > 0 ? 'source_backed' : 'starter_hypothesis';
+
+    const targetMarket = founderMetaText(founderMeta?.targetMarket)
+      ? founderMetaText(founderMeta?.targetMarket)!
+      : ctx.market.country ?? ctx.market.scope;
+
+    const targetAudience = founderMetaText(founderMeta?.targetAudience)
+      ? founderMetaText(founderMeta?.targetAudience)!
+      : ctx.niche.targetAudience;
+
+    const productFormat = founderMetaText(founderMeta?.productFormat)
+      ? founderMetaText(founderMeta?.productFormat)!
+      : ctx.niche.recommendedProductFormat;
+    const executionMode = founderMetaText(founderMeta?.executionMode);
+    const founderNotes = founderMetaText(founderMeta?.notes);
+    const founderDirection = founderMeta ? founderIdeaText : ctx.niche.mvpConcept;
+    const existingPackNotes = [
+      executionMode ? `Founder execution mode: ${executionMode}.` : null,
+      founderNotes ? `Founder notes: ${founderNotes}` : null,
+    ].filter((value): value is string => Boolean(value));
+
     return {
       opportunity: {
         id: ctx.niche.title,
         title: ctx.niche.title,
         oneLineThesis: ctx.niche.oneLiner,
         description: ctx.niche.problem,
-        market: ctx.market.country ?? ctx.market.scope,
-        direction: ctx.niche.mvpConcept,
+        market: targetMarket,
+        direction: founderDirection,
         subthemes: ctx.niche.useCases,
-        audience: ctx.niche.targetAudience,
+        audience: targetAudience,
         buyerType: ctx.niche.recommendedProductFormat,
-        productFormat: ctx.niche.recommendedProductFormat,
+        productFormat,
         riskTolerance: ctx.niche.riskLevel,
-        language: ctx.language,
-        evidenceMode: ctx.sourceRefs.length > 0 ? 'source_backed' : 'starter_hypothesis',
+        language: outputLanguage,
+        evidenceMode,
         investorLens: opts.depth === 'investor_grade' || opts.depth === 'build_ready',
         scores: ctx.score
           ? {
@@ -369,15 +403,20 @@ export class PackService {
       searchContext: {
         marketScope: ctx.market.scope,
         locations: [ctx.market.country, ctx.market.region].filter((value): value is string => Boolean(value)),
-        directions: [ctx.niche.oneLiner, ctx.niche.problem, ctx.niche.mvpConcept].filter(Boolean),
+        directions: [
+          ctx.niche.oneLiner,
+          ctx.niche.problem,
+          founderDirection,
+          executionMode ? `Execution mode: ${executionMode}` : null,
+        ].filter((value): value is string => Boolean(value)),
         subthemes: ctx.niche.useCases,
-        audiences: [ctx.niche.targetAudience].filter(Boolean),
+        audiences: [targetAudience].filter(Boolean),
         buyerType: ctx.niche.recommendedProductFormat,
-        productFormats: [ctx.niche.recommendedProductFormat].filter(Boolean),
+        productFormats: [productFormat].filter(Boolean),
         riskTolerance: ctx.niche.riskLevel,
         mvpTimeline: opts.depth === 'quick_opportunity' ? '6_weeks' : '3_months',
-        language: ctx.language,
-        evidenceMode: ctx.sourceRefs.length > 0 ? 'source_backed' : 'starter_hypothesis',
+        language: outputLanguage,
+        evidenceMode,
         investorLens: opts.depth === 'investor_grade' || opts.depth === 'build_ready',
       },
       evidence: {
@@ -395,9 +434,9 @@ export class PackService {
         assumptions: ctx.assumptions.map((a) => a.text),
         contradictions: ctx.constraints.map((c) => c.text),
       },
-      outputLanguage: ctx.language,
-      founderRequest: [ctx.niche.title, ctx.niche.oneLiner, ctx.niche.problem].filter(Boolean).join('\n'),
-      existingPackNotes: undefined,
+      outputLanguage,
+      founderRequest: founderIdeaText,
+      existingPackNotes: existingPackNotes.length > 0 ? existingPackNotes.join('\n') : undefined,
     };
   }
 
@@ -735,6 +774,27 @@ export class PackService {
     ctx.buildBlueprint = buildBuildBlueprint(ctx);
     return ctx;
   }
+}
+
+function tryParseFounderMeta(mvpConcept: string): Record<string, unknown> | null {
+  if (!mvpConcept || !mvpConcept.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(mvpConcept);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const meta = parsed as Record<string, unknown>;
+    if (meta.signalKitFounderIdeaMeta === true || meta.intakeMode === 'founder_idea') {
+      return meta;
+    }
+  } catch {
+    // Not JSON — normal mvpConcept text, ignore.
+  }
+  return null;
+}
+
+function founderMetaText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function extractLlmText(result: unknown): string {
