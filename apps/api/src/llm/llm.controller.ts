@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { baseContract, LLMError } from '@signalkit/llm';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.service';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
@@ -10,7 +11,7 @@ import { LlmSettingsService } from './settings.service';
 import { LlmUsageService } from './usage.service';
 import { LlmRouterService } from './llm-router.service';
 import type { LLMTaskType } from '@signalkit/shared';
-import { ConnectProviderDto, TestProviderDto, UpdateLlmSettingsDto, EstimateDto } from './dto/llm.dto';
+import { ConnectProviderDto, TestProviderDto, UpdateLlmSettingsDto, EstimateDto, LlmSmokeDto } from './dto/llm.dto';
 
 @ApiTags('llm')
 @Controller('llm')
@@ -117,4 +118,86 @@ export class LlmController {
       dto.estimatedOutputTokens ?? 1500,
     );
   }
+
+  @Post('smoke')
+  @RequirePermissions('workspace:read')
+  @ApiOperation({ summary: 'Run a real backend-routed LLM smoke test for a workspace connection' })
+  async smoke(@Body() dto: LlmSmokeDto, @CurrentUser() user: JwtPayload) {
+    const resolvedProvider = await this.router.resolveProvider(dto.modelId);
+    if (resolvedProvider !== dto.provider) {
+      throw new BadRequestException({
+        ok: false,
+        code: 'llm_model_not_found',
+        message: `Model ${dto.modelId} is registered under provider ${resolvedProvider}, not ${dto.provider}.`,
+      });
+    }
+
+    try {
+      const result = await this.router.runWithModel(
+        {
+          taskType: 'llm_smoke_test',
+          workspaceId: dto.workspaceId,
+          userId: user.sub,
+          contract: {
+            ...baseContract('en'),
+            outputLanguage: 'en',
+            evidenceRequirement: 'none',
+            unsupportedClaimsPolicy: 'forbid',
+          },
+          messages: [
+            {
+              role: 'system',
+              content: 'Return exactly the user-provided target text. Do not add punctuation, quotes, or explanations.',
+            },
+            { role: 'user', content: dto.prompt },
+          ],
+          estimatedOutputTokens: 64,
+        },
+        dto.modelId,
+      );
+
+      return {
+        ok: true,
+        provider: result.provider,
+        modelId: result.modelId,
+        task: result.taskType,
+        text: result.content.trim(),
+        usageLogged: true,
+        latencyMs: result.latencyMs,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        estimatedCost: result.estimatedCost,
+      };
+    } catch (error) {
+      throw new BadRequestException(mapSmokeError(error));
+    }
+  }
+}
+
+function mapSmokeError(error: unknown) {
+  if (error instanceof LLMError) {
+    switch (error.kind) {
+      case 'auth':
+        return { ok: false, code: 'llm_auth_failed', message: error.message || 'LLM authentication failed.' };
+      case 'timeout':
+        return { ok: false, code: 'llm_timeout', message: 'The LLM request timed out.' };
+      case 'invalid_request':
+        return { ok: false, code: 'llm_model_not_found', message: error.message || 'The selected model is invalid.' };
+      case 'network':
+      case 'server':
+      case 'rate_limit':
+      case 'unknown':
+        if (error.message.includes('no_connection_for_')) {
+          return {
+            ok: false,
+            code: 'llm_missing_connection',
+            message: `No active ${error.provider} connection is configured for this workspace.`,
+          };
+        }
+        return { ok: false, code: 'llm_provider_error', message: error.message || 'The provider returned an error.' };
+      default:
+        return { ok: false, code: 'llm_provider_error', message: error.message || 'The provider returned an error.' };
+    }
+  }
+  return { ok: false, code: 'llm_provider_error', message: error instanceof Error ? error.message : 'Unknown LLM error.' };
 }

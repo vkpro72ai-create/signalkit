@@ -65,6 +65,28 @@ export class LlmRouterService {
     return this.router.run(request);
   }
 
+  /** Run a generation against an explicitly selected model (e.g. smoke tests). */
+  runWithModel(
+    request: GenerationRequest,
+    modelId: string,
+    fallbackModelId: string | null = null,
+  ): Promise<GenerationResult> {
+    const baseRule = defaultRoutingRule(request.taskType);
+    const router = new DefaultLLMRouter({
+      ruleResolver: {
+        resolveRule: async () => ({
+          ...baseRule,
+          modelId,
+          fallbackModelId,
+        }),
+      },
+      adapterProvider: { forModel: (resolvedModelId, ctx) => this.forModel(resolvedModelId, ctx) },
+      costEstimator: this.costEstimator,
+      usageSink: { record: (entry) => this.recordUsage(entry) },
+    });
+    return router.run(request);
+  }
+
   /** Pre-flight cost estimate for the UI (before expensive actions). */
   async estimate(workspaceId: string, taskType: LLMTaskType, inputTokens: number, outputTokens: number) {
     const rule = await this.resolveRule(taskType, workspaceId);
@@ -95,6 +117,10 @@ export class LlmRouterService {
     if (cached) return cached;
     const row = await this.prisma.lLMModel.findFirst({ where: { modelId }, select: { provider: true } });
     return (row?.provider as LLMProviderType) ?? 'openai';
+  }
+
+  resolveProvider(modelId: string): Promise<LLMProviderType> {
+    return this.providerForModel(modelId);
   }
 
   /** Resolve a configured adapter for a model from BYOK connections. */

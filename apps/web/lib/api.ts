@@ -3,7 +3,7 @@
  * login. Server stays the single source of truth; this never imports server-only
  * packages (e.g. @signalkit/llm pulls node:crypto and must not reach the browser).
  */
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL?.trim() || '';
 
 function authHeaders(): Record<string, string> {
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('signalkit_token') : null;
@@ -22,7 +22,7 @@ function redirectToLogin() {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
   if (res.status === 401) {
     redirectToLogin();
     throw new Error('http_401');
@@ -32,7 +32,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 async function apiSend<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers: { 'content-type': 'application/json', ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -128,12 +128,47 @@ export interface OpportunityCard {
   buildReadinessScore: number | null;
 }
 
+export interface AiRunMetadata {
+  provider: string;
+  model: string;
+  task: string;
+  status: string;
+  durationMs: number;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCost?: number | null;
+  generatedAt: string;
+  usageLogId?: string | null;
+  mode?: string | null;
+}
+
+export interface GeneratedOpportunityCard extends OpportunityCard {
+  assumptions?: string[];
+  risks?: string[];
+  validationQuestions?: string[];
+  generationMetadata?: AiRunMetadata | null;
+}
+
+export interface DiscoverOpportunitiesInput {
+  market?: string;
+  verticals?: string[];
+  language?: string;
+  role?: string;
+  mode?: 'find_opportunities';
+}
+
+export interface DiscoverOpportunitiesResult {
+  niches: number;
+  opportunities: GeneratedOpportunityCard[];
+  generation: AiRunMetadata;
+}
+
 export const opportunityApi = {
   list: (workspaceId: string, projectId: string) =>
     apiGet<NicheSummary[]>(`/workspaces/${workspaceId}/projects/${projectId}/niches`),
   listAll: (workspaceId: string) => apiGet<OpportunityCard[]>(`/workspaces/${workspaceId}/niches`),
-  discover: (workspaceId: string, projectId: string) =>
-    apiPost(`/workspaces/${workspaceId}/projects/${projectId}/discover-niches`, {}),
+  discover: (workspaceId: string, projectId: string, body?: DiscoverOpportunitiesInput) =>
+    apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/discover-niches`, body ?? {}),
 };
 
 export interface PackListItem {
@@ -172,16 +207,56 @@ export interface LlmSettingsView {
   fallbackModelId: string | null;
 }
 
+export interface LlmSmokeResult {
+  ok: boolean;
+  provider?: string;
+  modelId?: string;
+  task?: string;
+  text?: string;
+  usageLogged?: boolean;
+  latencyMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCost?: number;
+  code?: string;
+  message?: string;
+}
+
+export interface UsageSummary {
+  recent: Array<{
+    id: string;
+    provider: string;
+    model: string;
+    taskType: string;
+    estimatedCost: number;
+    latencyMs: number;
+    status: string;
+    errorCode: string | null;
+    createdAt: string;
+  }>;
+  totals: { _count: number; _sum: { estimatedCost: number | null; inputTokens: number | null; outputTokens?: number | null } };
+  byProvider: Array<{ provider?: string; _count: number; _sum: { estimatedCost: number | null } }>;
+  byModel: Array<{ model?: string; _count: number; _sum: { estimatedCost: number | null } }>;
+  byTask: Array<{ taskType?: string; _count: number; _sum: { estimatedCost: number | null } }>;
+  failures: number;
+  mostExpensive: Array<{ id: string; model: string; taskType: string; estimatedCost: number }>;
+}
+
 export const llmApi = {
   connections: (workspaceId: string) => apiGet<LlmConnectionView[]>(`/llm/connections?workspaceId=${workspaceId}`),
-  connect: (input: { workspaceId: string; provider: string; apiKey: string; label: string; baseUrl?: string }) =>
+  models: () => apiGet<CatalogModelView[]>('/llm/models'),
+  providers: () => apiGet<ProviderView[]>('/llm/providers'),
+  connect: (input: { workspaceId: string; provider: string; apiKey: string; label: string; baseUrl?: string; defaultModelId?: string }) =>
     apiPost<LlmConnectionView>('/llm/providers/connect', input),
   testStored: (id: string, workspaceId: string) =>
     apiPost<{ ok: boolean; message?: string }>(`/llm/connections/${id}/test?workspaceId=${workspaceId}`),
   remove: (id: string, workspaceId: string) => apiDelete(`/llm/connections/${id}?workspaceId=${workspaceId}`),
   settings: (workspaceId: string) => apiGet<LlmSettingsView>(`/llm/settings?workspaceId=${workspaceId}`),
-  updateSettings: (workspaceId: string, mode: 'byok' | 'platform') =>
-    apiPut<LlmSettingsView>('/llm/settings', { workspaceId, mode }),
+  updateSettings: (input: { workspaceId: string; mode?: 'byok' | 'platform'; defaultModelId?: string; fallbackModelId?: string }) =>
+    apiPut<LlmSettingsView>('/llm/settings', input),
+  smoke: (input: { workspaceId: string; provider: string; modelId: string; prompt: string }) =>
+    apiPost<LlmSmokeResult>('/llm/smoke', input),
+  usage: (workspaceId: string) => apiGet<UsageSummary>(`/llm/usage?workspaceId=${workspaceId}`),
 };
 
 // ── Account / entitlements ────────────────────────────────────────────────────

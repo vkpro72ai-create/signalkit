@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/auth.service';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
 import { NichesService } from './niches.service';
-import { CompareMarketsDto } from './dto/niche.dto';
+import { CompareMarketsDto, DiscoverNichesDto } from './dto/niche.dto';
 
 @ApiTags('niches')
 @Controller('workspaces/:workspaceId')
@@ -12,8 +14,13 @@ export class NichesController {
   @Post('projects/:projectId/discover-niches')
   @RequirePermissions('niche:discover')
   @ApiOperation({ summary: 'Discover niches from the project signals + evidence' })
-  discover(@Param('workspaceId') ws: string, @Param('projectId') pid: string) {
-    return this.niches.discover(ws, pid);
+  discover(
+    @Param('workspaceId') ws: string,
+    @Param('projectId') pid: string,
+    @Body() dto: DiscoverNichesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.niches.discover(ws, pid, dto, user.sub);
   }
 
   @Get('projects/:projectId/niches')

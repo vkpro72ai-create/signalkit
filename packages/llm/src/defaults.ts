@@ -15,6 +15,7 @@ const GEMINI = 'gemini-2.0-flash';
 const DOC = SONNET;
 
 export const DEFAULT_TASK_MODELS: Record<LLMTaskType, string> = {
+  llm_smoke_test: DEEPSEEK,
   source_summarization: MINI,
   signal_extraction: MINI,
   signal_normalization: MINI,

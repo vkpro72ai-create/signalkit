@@ -15,7 +15,7 @@ import {
   palette,
 } from '../../../../components/ui';
 import { useT } from '../../../../lib/i18n';
-import { apiGet } from '../../../../lib/api';
+import { apiGet, llmApi, type UsageSummary } from '../../../../lib/api';
 
 interface GroupRow {
   provider?: string;
@@ -23,14 +23,6 @@ interface GroupRow {
   taskType?: string;
   _count: number;
   _sum: { estimatedCost: number | null };
-}
-interface UsageSummary {
-  totals: { _count: number; _sum: { estimatedCost: number | null; inputTokens: number | null } };
-  byProvider: GroupRow[];
-  byModel: GroupRow[];
-  byTask: GroupRow[];
-  failures: number;
-  mostExpensive: { model: string; taskType: string; estimatedCost: number }[];
 }
 interface MeResponse {
   memberships: { workspace: { id: string } }[];
@@ -51,7 +43,7 @@ export default function AiUsagePage() {
         setState('ready');
         return;
       }
-      setData(await apiGet<UsageSummary>(`/llm/usage?workspaceId=${workspaceId}`));
+      setData(await llmApi.usage(workspaceId));
       setState('ready');
     } catch {
       setState('error');
@@ -108,6 +100,22 @@ export default function AiUsagePage() {
                 { key: 'c', header: t('label.estCost'), render: (r) => `$${(r._sum.estimatedCost ?? 0).toFixed(4)}` },
               ]}
               rows={data.byTask}
+            />
+          </Card>
+
+          <Card>
+            <h2 style={{ fontSize: typography.size.lg, marginTop: 0 }}>Recent calls</h2>
+            <Table
+              columns={[
+                { key: 'p', header: 'Provider', render: (r: UsageSummary['recent'][number]) => r.provider },
+                { key: 'm', header: 'Model', render: (r) => r.model },
+                { key: 't', header: 'Task', render: (r) => r.taskType.replace(/_/g, ' ') },
+                { key: 's', header: 'Status', render: (r) => <Badge variant={r.status === 'success' ? 'success' : 'risk'}>{r.status}</Badge> },
+                { key: 'c', header: t('label.estCost'), render: (r) => `$${(r.estimatedCost ?? 0).toFixed(4)}` },
+                { key: 'e', header: 'Error', render: (r) => r.errorCode ?? '—' },
+                { key: 'd', header: 'When', render: (r) => new Date(r.createdAt).toLocaleString() },
+              ]}
+              rows={data.recent}
             />
           </Card>
 

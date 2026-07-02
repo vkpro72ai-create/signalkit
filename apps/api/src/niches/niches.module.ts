@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { EvidenceModule } from '../evidence/evidence.module';
+import { LlmModule } from '../llm/llm.module';
 import { NichesController } from './niches.controller';
 import { NichesService } from './niches.service';
 
@@ -10,7 +11,7 @@ import { NichesService } from './niches.service';
  * compares markets per the Session-6 market profiles.
  */
 @Module({
-  imports: [EvidenceModule],
+  imports: [EvidenceModule, LlmModule],
   controllers: [NichesController],
   providers: [NichesService],
   exports: [NichesService],

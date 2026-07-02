@@ -61,6 +61,8 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
   const [tab, setTab] = useState('overview');
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionInfo, setActionInfo] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -87,9 +89,13 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
   async function generateVentureThesis() {
     if (!ws) return;
     setBusy(true);
+    setActionError(null);
     try {
       setVenture(await apiPost<VentureThesisRow>(`/workspaces/${ws}/niches/${id}/venture-thesis/regenerate`));
       setTab('venture');
+      setActionInfo('Venture Thesis regenerated through the backend LLM router.');
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Could not generate the Venture Thesis.');
     } finally {
       setBusy(false);
     }
@@ -98,9 +104,16 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
   async function generateProductPack() {
     if (!ws) return;
     setBusy(true);
+    setActionError(null);
     try {
-      const res = await apiPost<{ pack: { id: string } }>(`/workspaces/${ws}/niches/${id}/generate-pack`, { depth: 'build_ready', vertical: 'b2b_saas' });
+      const res = await apiPost<{ pack: { id: string } }>(`/workspaces/${ws}/niches/${id}/generate-pack`, {
+        depth: 'build_ready',
+        vertical: 'b2b_saas',
+        useLlm: true,
+      });
       router.push(`/signalkit/packs/${res.pack.id}`);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Could not generate the Product Pack.');
     } finally {
       setBusy(false);
     }
@@ -125,16 +138,29 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
             </Button>
             {packs[0] ? (
               <Link href={`/signalkit/packs/${packs[0].id}`} style={{ textDecoration: 'none' }}>
-                <Button>Open Product Pack</Button>
+                <Button>Open Product Pack Preview</Button>
               </Link>
             ) : (
               <Button onClick={() => void generateProductPack()} disabled={busy}>
-                {busy ? 'Generating…' : 'Generate Product Pack'}
+                {busy ? 'Generating…' : 'Generate Product Pack Preview'}
               </Button>
             )}
           </div>
         }
       />
+
+      {actionError && (
+        <Card style={{ marginBottom: spacing.lg }}>
+          <div style={{ fontWeight: typography.weight.semibold, marginBottom: spacing.xs }}>AI action error</div>
+          <div style={{ color: palette.subtle, fontSize: typography.size.sm }}>{actionError}</div>
+        </Card>
+      )}
+
+      {actionInfo && (
+        <Card style={{ marginBottom: spacing.lg }}>
+          <div style={{ color: palette.subtle, fontSize: typography.size.sm }}>{actionInfo}</div>
+        </Card>
+      )}
 
       {score ? (
         <Card style={{ marginBottom: spacing.lg }}>

@@ -40,6 +40,11 @@ export class ConnectProviderDto {
   @IsOptional()
   @IsBoolean()
   userScoped?: boolean;
+
+  @ApiPropertyOptional({ description: 'Optionally select this model as the workspace default after connecting.' })
+  @IsOptional()
+  @IsString()
+  defaultModelId?: string;
 }
 
 export class TestProviderDto {
@@ -116,4 +121,23 @@ export class UpdateLlmSettingsDto {
   @ValidateNested({ each: true })
   @Type(() => RoutingRuleDto)
   routingRules?: RoutingRuleDto[];
+}
+
+export class LlmSmokeDto {
+  @ApiProperty()
+  @IsString()
+  workspaceId!: string;
+
+  @ApiProperty({ enum: PROVIDERS })
+  @IsIn(PROVIDERS)
+  provider!: LLMProviderType;
+
+  @ApiProperty()
+  @IsString()
+  modelId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  prompt!: string;
 }

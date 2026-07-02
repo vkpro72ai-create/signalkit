@@ -8,7 +8,7 @@ import {
 } from '../../../components/ui';
 import { useT } from '../../../lib/i18n';
 import {
-  apiGet, apiPost, firstWorkspaceId,
+  API_BASE, apiGet, apiPost, firstWorkspaceId,
   EXPORT_TYPES, ROLE_BRIEF_TYPES,
   type ExportJobView, type CreateExportInput,
 } from '../../../lib/api';
@@ -161,11 +161,10 @@ function ExportHistoryRow({
   workspaceId: string;
   onManifest: (m: ManifestView) => void;
 }) {
-  const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('signalkit_token') : null;
 
   const handleDownload = () => {
-    const url = `${API}/workspaces/${workspaceId}/exports/${job.id}/download`;
+    const url = `${API_BASE}/workspaces/${workspaceId}/exports/${job.id}/download`;
     if (token) {
       fetch(url, { headers: { authorization: `Bearer ${token}` } })
         .then((r) => r.blob())

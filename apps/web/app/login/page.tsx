@@ -6,8 +6,7 @@ import { spacing, typography, radius, border } from '@signalkit/ui';
 import { Button, Card, palette } from '../../components/ui';
 import { LanguageSwitcher } from '../../components/shell';
 import { useT } from '../../lib/i18n';
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+import { API_BASE } from '../../lib/api';
 
 export default function LoginPage() {
   const t = useT();
@@ -22,7 +21,7 @@ export default function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/auth/login`, {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ email, password }),

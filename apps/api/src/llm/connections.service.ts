@@ -52,8 +52,23 @@ export class LlmConnectionsService {
       actorId: userId,
       subjectType: 'UserLLMConnection',
       subjectId: conn.id,
-      metadata: { provider: dto.provider, maskedKey }, // never the raw key
+      metadata: { provider: dto.provider, maskedKey, defaultModelId: dto.defaultModelId ?? null }, // never the raw key
     });
+
+    if (dto.defaultModelId) {
+      await this.prisma.workspaceLLMSettings.upsert({
+        where: { workspaceId: dto.workspaceId },
+        update: {
+          mode: 'byok',
+          defaultModelId: dto.defaultModelId,
+        },
+        create: {
+          workspaceId: dto.workspaceId,
+          mode: 'byok',
+          defaultModelId: dto.defaultModelId,
+        },
+      });
+    }
 
     return this.sanitize(conn);
   }

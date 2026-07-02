@@ -43,7 +43,7 @@ export function I18nProvider({
     if (cookieLocale !== locale) {
       setLocaleState(cookieLocale);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [locale]);
 
   const setLocale = useCallback((next: LocaleCode) => {
     setLocaleState(next);

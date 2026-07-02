@@ -47,14 +47,18 @@ const selectStyle = { ...inputStyle };
 function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   const [connections, setConnections] = useState<LlmConnectionView[]>([]);
   const [settings, setSettings] = useState<LlmSettingsView | null>(null);
+  const [models, setModels] = useState<CatalogModelView[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [provider, setProvider] = useState<LLMProviderType>('openai');
+  const [provider, setProvider] = useState<LLMProviderType>('deepseek');
   const [label, setLabel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [selectedModelId, setSelectedModelId] = useState('');
   const [busy, setBusy] = useState(false);
   const [testResults, setTestResults] = useState<Record<string, string>>({});
+  const [smokeResult, setSmokeResult] = useState<string | null>(null);
+  const [saveResult, setSaveResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const needsBaseUrl = provider === 'openai_compatible' || provider === 'custom';
@@ -62,12 +66,15 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [conns, s] = await Promise.all([
+      const [conns, s, modelRows] = await Promise.all([
         llmApi.connections(workspaceId),
         llmApi.settings(workspaceId),
+        llmApi.models(),
       ]);
       setConnections(conns);
       setSettings(s);
+      setModels(modelRows);
+      setSelectedModelId((current) => current || s.defaultModelId || modelRows.find((m) => m.provider === 'deepseek')?.modelId || modelRows[0]?.modelId || '');
     } finally {
       setLoading(false);
     }
@@ -76,7 +83,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
   useEffect(() => { void load(); }, [load]);
 
   async function setMode(mode: 'byok' | 'platform') {
-    setSettings(await llmApi.updateSettings(workspaceId, mode));
+    setSettings(await llmApi.updateSettings({ workspaceId, mode, defaultModelId: selectedModelId || undefined }));
   }
 
   async function connect() {
@@ -91,6 +98,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
         apiKey: apiKey.trim(),
         label: label.trim() || PROVIDER_LABELS[provider],
         baseUrl: needsBaseUrl ? baseUrl.trim() : undefined,
+        defaultModelId: selectedModelId || undefined,
       });
       setApiKey('');
       setLabel('');
@@ -119,13 +127,70 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
     await load();
   }
 
+  async function saveSettings() {
+    if (!selectedModelId) {
+      setSaveResult('Select a model before saving.');
+      return;
+    }
+    setBusy(true);
+    setSaveResult(null);
+    try {
+      const next = await llmApi.updateSettings({
+        workspaceId,
+        mode: settings?.mode ?? 'byok',
+        defaultModelId: selectedModelId,
+      });
+      setSettings(next);
+      setSaveResult(`Saved default model: ${selectedModelId}`);
+    } catch (e) {
+      setSaveResult(e instanceof Error ? e.message : 'Could not save settings.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runSmoke() {
+    const selectedModel = models.find((model) => model.modelId === selectedModelId);
+    if (!selectedModel) {
+      setSmokeResult('Select a model before running the smoke test.');
+      return;
+    }
+    const activeConnection = connections.find((connection) => connection.provider === selectedModel.provider && connection.status === 'active');
+    if (!activeConnection) {
+      setSmokeResult(`No active ${PROVIDER_LABELS[selectedModel.provider] ?? selectedModel.provider} connection found. Connect the provider first.`);
+      return;
+    }
+    setBusy(true);
+    setSmokeResult('Running DeepSeek smoke…');
+    try {
+      const result = await llmApi.smoke({
+        workspaceId,
+        provider: selectedModel.provider,
+        modelId: selectedModel.modelId,
+        prompt: 'Return exactly: SIGNALKIT_LLM_SMOKE_OK',
+      });
+      setSmokeResult(
+        result.ok
+          ? `${result.provider}/${result.modelId} → ${result.text} · ${result.task} · ${result.latencyMs ?? 0} ms`
+          : `${result.code}: ${result.message}`,
+      );
+    } catch (e) {
+      setSmokeResult(e instanceof Error ? e.message : 'Smoke test failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const selectedModel = models.find((model) => model.modelId === selectedModelId) ?? null;
+  const selectedProviderConnections = selectedModel ? connections.filter((connection) => connection.provider === selectedModel.provider) : [];
+
   return (
     <>
       {/* Platform vs BYOK */}
       <div style={{ marginBottom: spacing.xl }}>
         <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>Platform AI</h2>
         <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }}>
             <div>
               <div style={{ fontSize: typography.size.sm, fontWeight: typography.weight.medium }}>
                 {settings?.mode === 'platform' ? 'Using SignalKit-hosted models' : 'Using your own API keys (BYOK)'}
@@ -133,12 +198,45 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
               <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: 4, maxWidth: 520 }}>
                 All requests route through the backend LLM router — the browser never calls a provider directly, and keys are encrypted at rest.
               </p>
+              <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: 4 }}>
+                Workspace: <span style={{ fontFamily: 'monospace' }}>{workspaceId}</span>
+              </p>
             </div>
             <div style={{ display: 'flex', gap: spacing.xs }}>
               <Button variant={settings?.mode === 'platform' ? 'primary' : 'secondary'} onClick={() => void setMode('platform')}>Platform</Button>
               <Button variant={settings?.mode === 'byok' ? 'primary' : 'secondary'} onClick={() => void setMode('byok')}>Bring my own key</Button>
             </div>
           </div>
+        </Card>
+      </div>
+
+      <div style={{ marginBottom: spacing.xl }}>
+        <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>Routing & smoke test</h2>
+        <Card>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.sm, alignItems: 'end' }}>
+            <div>
+              <label style={{ fontSize: typography.size.xs, color: palette.subtle }}>Default model</label>
+              <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} style={selectStyle}>
+                <option value="">Select model…</option>
+                {models.map((model) => (
+                  <option key={`${model.provider}:${model.modelId}`} value={model.modelId}>
+                    {model.displayName} · {PROVIDER_LABELS[model.provider] ?? model.provider}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button onClick={() => void saveSettings()} disabled={busy || !selectedModelId}>Save</Button>
+            <Button variant="secondary" onClick={() => void runSmoke()} disabled={busy || !selectedModelId}>Run smoke test</Button>
+          </div>
+          <div style={{ display: 'flex', gap: spacing.xs, flexWrap: 'wrap', marginTop: spacing.md }}>
+            <Badge variant="muted">Selected provider: {selectedModel ? PROVIDER_LABELS[selectedModel.provider] ?? selectedModel.provider : '—'}</Badge>
+            <Badge variant={selectedProviderConnections.some((connection) => connection.status === 'active') ? 'success' : 'risk'}>
+              Connection: {selectedProviderConnections.some((connection) => connection.status === 'active') ? 'active' : 'missing'}
+            </Badge>
+            {settings?.defaultModelId && <Badge variant="confidence">Current saved model: {settings.defaultModelId}</Badge>}
+          </div>
+          {saveResult && <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: spacing.sm, marginBottom: 0 }}>{saveResult}</p>}
+          {smokeResult && <p style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: spacing.sm, marginBottom: 0 }}>{smokeResult}</p>}
         </Card>
       </div>
 
@@ -173,6 +271,12 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
               )}
 
               {error && <div style={{ color: '#9B1C1C', fontSize: typography.size.xs }}>{error}</div>}
+
+              {provider === 'deepseek' && (
+                <p style={{ color: palette.subtle, fontSize: typography.size.xs, margin: 0 }}>
+                  DeepSeek uses the backend OpenAI-compatible adapter with base URL https://api.deepseek.com/v1.
+                </p>
+              )}
 
               <div style={{ display: 'flex', gap: spacing.sm, marginTop: spacing.xs }}>
                 <Button onClick={() => void connect()} disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</Button>
