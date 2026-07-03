@@ -28,6 +28,9 @@ type ExplicitRoutingRequest = GenerationRequest & {
   provider?: LLMProviderType;
 };
 
+const PRODUCT_PACK_TASK_MAX_OUTPUT_TOKENS = 48_000;
+const PRODUCT_PACK_TASK_TIMEOUT_MS = 300_000;
+
 /**
  * The single entry point for AI generation. Feature modules call `run()`; they
  * MUST NOT build adapters or call providers themselves (enforced by lint +
@@ -41,6 +44,7 @@ export class LlmRouterService {
   private readonly router: DefaultLLMRouter;
   private readonly priceByModel = new Map<string, ModelPrice>();
   private readonly providerByModel = new Map<string, LLMProviderType>();
+  private readonly maxOutputTokensByModel = new Map<string, number>();
   private readonly costEstimator: CatalogCostEstimator;
 
   constructor(
@@ -54,6 +58,9 @@ export class LlmRouterService {
         currency: m.currency,
       });
       this.providerByModel.set(m.modelId, m.provider);
+      if (typeof m.maxOutputTokens === 'number' && m.maxOutputTokens > 0) {
+        this.maxOutputTokensByModel.set(m.modelId, m.maxOutputTokens);
+      }
     }
     this.costEstimator = new CatalogCostEstimator((modelId) => this.priceByModel.get(modelId) ?? null);
 
@@ -84,20 +91,32 @@ export class LlmRouterService {
     modelId: string,
     fallbackModelId: string | null = null,
   ): Promise<GenerationResult> {
-    const baseRule = defaultRoutingRule(request.taskType);
     const router = new DefaultLLMRouter({
       ruleResolver: {
-        resolveRule: async () => ({
-          ...baseRule,
-          modelId,
-          fallbackModelId,
-        }),
+        resolveRule: async () =>
+          this.withTaskRoutingOverrides({
+            ...defaultRoutingRule(request.taskType),
+            taskType: request.taskType,
+            modelId,
+            fallbackModelId,
+          }),
       },
       adapterProvider: { forModel: (resolvedModelId, ctx) => this.forModel(resolvedModelId, ctx) },
       costEstimator: this.costEstimator,
       usageSink: { record: (entry) => this.recordUsage(entry) },
     });
     return router.run(request);
+  }
+
+  async resolveTaskOutputBudget(
+    taskType: LLMTaskType,
+    modelId: string,
+    requestedOutputTokens: number,
+  ): Promise<number> {
+    const overrides = await this.resolveTaskRoutingOverrides(taskType, modelId);
+    const taskCap = overrides.maxTokensPerTask ?? requestedOutputTokens;
+    if (requestedOutputTokens <= 0) return taskCap;
+    return Math.min(requestedOutputTokens, taskCap);
   }
 
   private async runWithProvider(
@@ -132,33 +151,27 @@ export class LlmRouterService {
   private async resolveRule(taskType: LLMTaskType, workspaceId: string): Promise<LLMRoutingRule> {
     const settings = await this.prisma.workspaceLLMSettings.findUnique({ where: { workspaceId } });
     const base = defaultRoutingRule(taskType);
-    const baseWithTaskOverrides = {
-      ...base,
-      ...(taskType === 'product_vision_generation'
-        ? { maxTokensPerTask: 16_000, timeoutMs: 300_000, retryCount: 0 }
-        : {}),
-    };
     const rules = Array.isArray(settings?.routingRules)
       ? (settings.routingRules as unknown as StoredRoutingRule[])
       : [];
     const taskRule = rules.find((r) => r.taskType === taskType);
 
     if (taskRule?.modelId) {
-      return {
-        ...baseWithTaskOverrides,
+      return this.withTaskRoutingOverrides({
+        ...base,
         taskType,
         modelId: taskRule.modelId,
         fallbackModelId: taskRule.fallbackModelId ?? settings?.fallbackModelId ?? null,
-      };
+      });
     }
 
     if (settings?.defaultModelId) {
-      return {
-        ...baseWithTaskOverrides,
+      return this.withTaskRoutingOverrides({
+        ...base,
         taskType,
         modelId: settings.defaultModelId,
         fallbackModelId: settings.fallbackModelId ?? null,
-      };
+      });
     }
 
     const activeConnections = await this.prisma.userLLMConnection.findMany({
@@ -196,11 +209,35 @@ export class LlmRouterService {
       );
     }
 
-    return {
-      ...baseWithTaskOverrides,
+    return this.withTaskRoutingOverrides({
+      ...base,
       taskType,
       modelId: providerModel,
       fallbackModelId: defaultFallbackForResolvedModel(providerModel),
+    });
+  }
+
+  private async withTaskRoutingOverrides(rule: LLMRoutingRule): Promise<LLMRoutingRule> {
+    return {
+      ...rule,
+      ...(await this.resolveTaskRoutingOverrides(rule.taskType, rule.modelId)),
+    };
+  }
+
+  private async resolveTaskRoutingOverrides(
+    taskType: LLMTaskType,
+    modelId: string,
+  ): Promise<Partial<Pick<LLMRoutingRule, 'maxTokensPerTask' | 'timeoutMs' | 'retryCount'>>> {
+    if (taskType !== 'product_vision_generation') {
+      return {};
+    }
+    const modelMaxOutputTokens = await this.resolveModelMaxOutputTokens(modelId);
+    return {
+      maxTokensPerTask: modelMaxOutputTokens
+        ? Math.min(modelMaxOutputTokens, PRODUCT_PACK_TASK_MAX_OUTPUT_TOKENS)
+        : PRODUCT_PACK_TASK_MAX_OUTPUT_TOKENS,
+      timeoutMs: PRODUCT_PACK_TASK_TIMEOUT_MS,
+      retryCount: 0,
     };
   }
 
@@ -215,6 +252,22 @@ export class LlmRouterService {
       'openai',
       false,
     );
+  }
+
+  private async resolveModelMaxOutputTokens(modelId: string): Promise<number | null> {
+    const cached = this.maxOutputTokensByModel.get(modelId);
+    if (typeof cached === 'number' && cached > 0) {
+      return cached;
+    }
+    const row = await this.prisma.lLMModel.findFirst({
+      where: { modelId },
+      select: { maxOutputTokens: true },
+    });
+    if (typeof row?.maxOutputTokens === 'number' && row.maxOutputTokens > 0) {
+      this.maxOutputTokensByModel.set(modelId, row.maxOutputTokens);
+      return row.maxOutputTokens;
+    }
+    return null;
   }
 
   resolveProvider(modelId: string): Promise<LLMProviderType> {

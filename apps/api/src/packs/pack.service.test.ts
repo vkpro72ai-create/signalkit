@@ -120,10 +120,22 @@ function makePackV2Json(options?: { evidenceCount?: number; missingInputs?: stri
   };
 }
 
+function makeRouter(run = vi.fn()) {
+  const resolveTaskOutputBudget = vi.fn().mockResolvedValue(48_000);
+  return {
+    router: {
+      run,
+      resolveTaskOutputBudget,
+    } as unknown as LlmRouterService,
+    run,
+    resolveTaskOutputBudget,
+  };
+}
+
 describe('PackService', () => {
   it('generates a full build-ready pack deterministically (no LLM), with metadata + quality gates', async () => {
     const { prisma, docCreate, gateCreate } = makePrisma();
-    const router = { run: vi.fn() } as unknown as LlmRouterService;
+    const { router, run } = makeRouter();
     const svc = new PackService(prisma, router);
 
     const out = await svc.generate('w1', 'n1', { depth: 'build_ready', vertical: 'b2b_saas' });
@@ -133,7 +145,7 @@ describe('PackService', () => {
     expect(gateCreate).toHaveBeenCalledTimes(1);
 
     // No direct LLM use when useLlm is not set.
-    expect((router.run as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(0);
+    expect(run.mock.calls.length).toBe(0);
 
     // Each document carries the metadata contract.
     const firstDoc = docCreate.mock.calls[0]![0].data;
@@ -157,11 +169,13 @@ describe('PackService', () => {
       estimatedCost: 0.1,
       validation: { ok: true, issues: [] },
     });
-    const router = { run: routerRun } as unknown as LlmRouterService;
+    const { router, resolveTaskOutputBudget } = makeRouter(routerRun);
     const svc = new PackService(prisma, router);
 
     const out = await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
     expect(routerRun).toHaveBeenCalledTimes(1);
+    expect(routerRun.mock.calls[0]![0].estimatedOutputTokens).toBe(48_000);
+    expect(resolveTaskOutputBudget).toHaveBeenCalledWith('product_vision_generation', 'm1', 48_000);
     expect(docCreate).toHaveBeenCalledTimes(PRODUCT_PACK_V2_SECTIONS.length);
     expect(gateCreate).toHaveBeenCalledTimes(1);
     expect(out.pack.title).toBe('Build-Ready Product Pack');
@@ -246,11 +260,13 @@ describe('PackService', () => {
         estimatedCost: 0.08,
         validation: { ok: true, issues: [] },
       });
-    const router = { run: routerRun } as unknown as LlmRouterService;
+    const { router } = makeRouter(routerRun);
     const svc = new PackService(prisma, router);
 
     await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
     expect(routerRun).toHaveBeenCalledTimes(2);
+    expect(routerRun.mock.calls[0]![0].estimatedOutputTokens).toBe(48_000);
+    expect(routerRun.mock.calls[1]![0].estimatedOutputTokens).toBe(48_000);
     expect(docCreate).toHaveBeenCalledTimes(PRODUCT_PACK_V2_SECTIONS.length);
     expect(gateCreate).toHaveBeenCalledTimes(1);
   });
@@ -274,7 +290,7 @@ describe('PackService', () => {
       estimatedCost: 0.1,
       validation: { ok: true, issues: [] },
     });
-    const router = { run: routerRun } as unknown as LlmRouterService;
+    const { router } = makeRouter(routerRun);
     const svc = new PackService(prisma, router);
 
     const out = await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
@@ -292,7 +308,7 @@ describe('PackService', () => {
   it('returns a visible LLM failure and does not create a fake fallback pack for useLlm=true', async () => {
     const { prisma, docCreate, gateCreate } = makePrisma();
     const routerRun = vi.fn().mockRejectedValue(new Error('llm_model_not_configured'));
-    const router = { run: routerRun } as unknown as LlmRouterService;
+    const { router } = makeRouter(routerRun);
     const svc = new PackService(prisma, router);
 
     await expect(
@@ -304,6 +320,48 @@ describe('PackService', () => {
       }),
     });
     expect(routerRun).toHaveBeenCalledTimes(1);
+    expect(docCreate).not.toHaveBeenCalled();
+    expect(gateCreate).not.toHaveBeenCalled();
+  });
+
+  it('returns product_pack_v2_output_truncated when both attempts hit the output cap with invalid JSON', async () => {
+    const { prisma, docCreate, gateCreate } = makePrisma();
+    const routerRun = vi.fn()
+      .mockResolvedValueOnce({
+        content: '{"packTitle":"Build-Ready Product Pack"',
+        taskType: 'product_vision_generation',
+        modelId: 'm1',
+        provider: 'openai',
+        usedFallback: false,
+        inputTokens: 100,
+        outputTokens: 48_000,
+        latencyMs: 50,
+        estimatedCost: 0.1,
+        validation: { ok: true, issues: [] },
+      })
+      .mockResolvedValueOnce({
+        content: '{"packTitle":"Build-Ready Product Pack"',
+        taskType: 'product_vision_generation',
+        modelId: 'm1',
+        provider: 'openai',
+        usedFallback: false,
+        inputTokens: 100,
+        outputTokens: 48_000,
+        latencyMs: 45,
+        estimatedCost: 0.08,
+        validation: { ok: true, issues: [] },
+      });
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await expect(
+      svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'product_pack_v2_output_truncated',
+        message: expect.stringContaining('truncated Product Pack JSON'),
+      }),
+    });
     expect(docCreate).not.toHaveBeenCalled();
     expect(gateCreate).not.toHaveBeenCalled();
   });

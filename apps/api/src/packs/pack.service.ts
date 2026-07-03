@@ -101,31 +101,61 @@ interface ProductPackV2QualityGates {
   whatNotToBuildOrClaim: string[];
 }
 
+type ProductPackV2ParseReason =
+  | 'ok'
+  | 'empty_json'
+  | 'invalid_json'
+  | 'schema_invalid_root'
+  | 'schema_missing_top_level'
+  | 'schema_invalid_quality'
+  | 'schema_missing_documents'
+  | 'schema_invalid_documents'
+  | 'schema_missing_sections';
+
+interface ProductPackV2ParseResult {
+  json: ProductPackV2Json | null;
+  reason: ProductPackV2ParseReason;
+}
+
+interface ProductPackV2RunDiagnostics {
+  stage: 'generate' | 'repair';
+  rawLength: number;
+  parseReason: ProductPackV2ParseReason | 'truncated_output';
+  outputTokens: number;
+  requestedMaxOutputTokens: number;
+  effectiveMaxOutputTokens: number;
+  provider: string;
+  modelId: string;
+  finishReason: string | null;
+  likelyTruncated: boolean;
+}
+
+interface PackV2AiRunDetails {
+  taskType: string;
+  modelId: string;
+  provider: string;
+  usedFallback: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  latencyMs: number;
+  estimatedCost: number;
+  requestedMaxOutputTokens: number;
+  effectiveMaxOutputTokens: number;
+  finishReason: string | null;
+  parseReason: ProductPackV2RunDiagnostics['parseReason'];
+}
+
 interface PackV2AiRun {
-  primary: {
-    taskType: string;
-    modelId: string;
-    provider: string;
-    usedFallback: boolean;
-    inputTokens: number;
-    outputTokens: number;
-    latencyMs: number;
-    estimatedCost: number;
-  };
-  repair?: {
-    taskType: string;
-    modelId: string;
-    provider: string;
-    usedFallback: boolean;
-    inputTokens: number;
-    outputTokens: number;
-    latencyMs: number;
-    estimatedCost: number;
-  };
+  primary: PackV2AiRunDetails;
+  repair?: PackV2AiRunDetails;
 }
 
 const PACK_V2_TASK_TYPE: LLMTaskType = 'product_vision_generation';
 const PACK_V2_TIMEOUT_MS = 300_000;
+const PACK_V2_GENERATE_MAX_OUTPUT_TOKENS = 48_000;
+const PACK_V2_REPAIR_MAX_OUTPUT_TOKENS = 48_000;
+const PACK_V2_OUTPUT_TRUNCATED_MESSAGE = 'Selected model/output limit returned truncated Product Pack JSON. Choose a model with higher output capacity or use chunked/background generation.';
+const PACK_V2_DEBUG_RAW_LOGGING = /^(1|true|yes)$/i.test(process.env.DEBUG_PRODUCT_PACK_V2 ?? '');
 
 /** docType → router task type, for optional LLM enhancement. */
 const DOC_TASK: Partial<Record<DocumentType, LLMTaskType>> = {
@@ -257,21 +287,30 @@ export class PackService {
     try {
       const prompt = buildProductPackV2Prompt(this.buildProductPackV2Input(ctx, opts));
       const firstRun = await this.runPackPrompt(workspaceId, pack.id, projectId, ctx.language, prompt, PACK_V2_TASK_TYPE, 'generate');
-      const firstText = extractLlmText(firstRun);
+      const firstAttempt = await this.inspectPackV2Attempt(workspaceId, PACK_V2_TASK_TYPE, 'generate', firstRun);
 
-      let packJson = this.parsePackV2Json(firstText);
-      let aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun) };
+      let packJson = firstAttempt.parsed.json;
+      let aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics) };
 
       if (!packJson) {
-        const repairPrompt = buildProductPackV2RepairPrompt(firstText);
+        const repairPrompt = buildProductPackV2RepairPrompt(firstAttempt.raw);
         const repairRun = await this.runPackPrompt(workspaceId, pack.id, projectId, ctx.language, repairPrompt, PACK_V2_TASK_TYPE, 'repair');
-        const repairText = extractLlmText(repairRun);
-        const repaired = this.parsePackV2Json(repairText);
+        const repairAttempt = await this.inspectPackV2Attempt(workspaceId, PACK_V2_TASK_TYPE, 'repair', repairRun);
+        const repaired = repairAttempt.parsed.json;
         if (!repaired) {
-          throw new BadRequestException({ code: 'product_pack_v2_repair_failed', message: 'Product Pack JSON repair failed.' });
+          if (firstAttempt.diagnostics.likelyTruncated || repairAttempt.diagnostics.likelyTruncated) {
+            throw buildProductPackV2TruncatedException();
+          }
+          throw new BadRequestException({
+            code: 'product_pack_v2_repair_failed',
+            message: `Product Pack JSON repair failed (reason: ${repairAttempt.diagnostics.parseReason}).`,
+          });
         }
         packJson = repaired;
-        aiRun = { primary: this.aiRunFromResult(firstRun), repair: this.aiRunFromResult(repairRun) };
+        aiRun = {
+          primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics),
+          repair: this.aiRunFromResult(repairRun, repairAttempt.diagnostics),
+        };
       }
 
       if (!packJson) {
@@ -416,7 +455,7 @@ export class PackService {
       projectId,
       packId,
       jsonMode: true,
-      estimatedOutputTokens: stage === 'generate' ? 9000 : 2500,
+      estimatedOutputTokens: requestedPackV2OutputTokens(stage),
       contract: {
         ...baseContract(language),
         outputLanguage: language,
@@ -432,7 +471,76 @@ export class PackService {
     return withTimeout(request, PACK_V2_TIMEOUT_MS, 'llm_timeout');
   }
 
-  private aiRunFromResult(result: Awaited<ReturnType<LlmRouterService['run']>>): PackV2AiRun['primary'] {
+  private async inspectPackV2Attempt(
+    workspaceId: string,
+    taskType: LLMTaskType,
+    stage: 'generate' | 'repair',
+    result: Awaited<ReturnType<LlmRouterService['run']>>,
+  ) {
+    const raw = extractLlmText(result);
+    const requestedMaxOutputTokens = requestedPackV2OutputTokens(stage);
+    const effectiveMaxOutputTokens = await this.router.resolveTaskOutputBudget(
+      taskType,
+      result.modelId,
+      requestedMaxOutputTokens,
+    );
+    const parsed = this.parsePackV2Json(raw);
+    const finishReason = extractFinishReason(result);
+    const likelyTruncated = isLikelyTruncatedPackOutput({
+      parsed,
+      outputTokens: result.outputTokens,
+      requestedMaxOutputTokens,
+      effectiveMaxOutputTokens,
+      finishReason,
+    });
+    const diagnostics: ProductPackV2RunDiagnostics = {
+      stage,
+      rawLength: raw.length,
+      parseReason: likelyTruncated && !parsed.json ? 'truncated_output' : parsed.reason,
+      outputTokens: result.outputTokens,
+      requestedMaxOutputTokens,
+      effectiveMaxOutputTokens,
+      provider: result.provider,
+      modelId: result.modelId,
+      finishReason,
+      likelyTruncated,
+    };
+    this.logPackV2Diagnostics(diagnostics, raw);
+    return { raw, parsed, diagnostics };
+  }
+
+  private logPackV2Diagnostics(diagnostics: ProductPackV2RunDiagnostics, raw: string) {
+    if (diagnostics.parseReason === 'ok' && !diagnostics.likelyTruncated) {
+      return;
+    }
+    this.logger.warn(
+      `Product Pack v2 ${diagnostics.stage} diagnostics: ${JSON.stringify({
+        stage: diagnostics.stage,
+        rawLength: diagnostics.rawLength,
+        parseReason: diagnostics.parseReason,
+        outputTokens: diagnostics.outputTokens,
+        requestedMaxOutputTokens: diagnostics.requestedMaxOutputTokens,
+        effectiveMaxOutputTokens: diagnostics.effectiveMaxOutputTokens,
+        provider: diagnostics.provider,
+        modelId: diagnostics.modelId,
+        finishReason: diagnostics.finishReason,
+        likelyTruncated: diagnostics.likelyTruncated,
+      })}`,
+    );
+    if (PACK_V2_DEBUG_RAW_LOGGING) {
+      this.logger.debug(
+        `Product Pack v2 ${diagnostics.stage} raw snippets: ${JSON.stringify({
+          start: raw.slice(0, 500),
+          end: raw.slice(-500),
+        })}`,
+      );
+    }
+  }
+
+  private aiRunFromResult(
+    result: Awaited<ReturnType<LlmRouterService['run']>>,
+    diagnostics: ProductPackV2RunDiagnostics,
+  ): PackV2AiRun['primary'] {
     return {
       taskType: result.taskType,
       modelId: result.modelId,
@@ -442,19 +550,27 @@ export class PackService {
       outputTokens: result.outputTokens,
       latencyMs: result.latencyMs,
       estimatedCost: result.estimatedCost,
+      requestedMaxOutputTokens: diagnostics.requestedMaxOutputTokens,
+      effectiveMaxOutputTokens: diagnostics.effectiveMaxOutputTokens,
+      finishReason: diagnostics.finishReason,
+      parseReason: diagnostics.parseReason,
     };
   }
 
-  private parsePackV2Json(raw: string): ProductPackV2Json | null {
+  private parsePackV2Json(raw: string): ProductPackV2ParseResult {
     try {
       const parsed = parseJsonLike(raw) as Partial<ProductPackV2Json>;
-      if (!parsed || typeof parsed !== 'object') return null;
-      if (parsed.packType !== 'build_ready_product_pack') return null;
-      if (typeof parsed.packTitle !== 'string' || !parsed.packTitle.trim()) return null;
-      if (typeof parsed.oneLineThesis !== 'string' || typeof parsed.language !== 'string') return null;
-      if (!parsed.ideaAmplification || typeof parsed.ideaAmplification !== 'object') return null;
-      if (!parsed.recommendedStrategy || typeof parsed.recommendedStrategy !== 'object') return null;
-      if (!parsed.quality || typeof parsed.quality !== 'object') return null;
+      if (!parsed || typeof parsed !== 'object') {
+        return { json: null, reason: 'schema_invalid_root' };
+      }
+      if (parsed.packType !== 'build_ready_product_pack') return { json: null, reason: 'schema_missing_top_level' };
+      if (typeof parsed.packTitle !== 'string' || !parsed.packTitle.trim()) return { json: null, reason: 'schema_missing_top_level' };
+      if (typeof parsed.oneLineThesis !== 'string' || typeof parsed.language !== 'string') {
+        return { json: null, reason: 'schema_missing_top_level' };
+      }
+      if (!parsed.ideaAmplification || typeof parsed.ideaAmplification !== 'object') return { json: null, reason: 'schema_missing_top_level' };
+      if (!parsed.recommendedStrategy || typeof parsed.recommendedStrategy !== 'object') return { json: null, reason: 'schema_missing_top_level' };
+      if (!parsed.quality || typeof parsed.quality !== 'object') return { json: null, reason: 'schema_invalid_quality' };
       if (
         typeof parsed.quality.completenessScore !== 'number' ||
         typeof parsed.quality.confidenceScore !== 'number' ||
@@ -463,9 +579,11 @@ export class PackService {
         typeof parsed.quality.riskLevel !== 'string' ||
         !Array.isArray(parsed.quality.missingInputs)
       ) {
-        return null;
+        return { json: null, reason: 'schema_invalid_quality' };
       }
-      if (!Array.isArray(parsed.documents) || parsed.documents.length === 0) return null;
+      if (!Array.isArray(parsed.documents) || parsed.documents.length === 0) {
+        return { json: null, reason: 'schema_missing_documents' };
+      }
       if (
         parsed.documents.some(
           (doc) =>
@@ -493,7 +611,7 @@ export class PackService {
             ),
         )
       ) {
-        return null;
+        return { json: null, reason: 'schema_invalid_documents' };
       }
 
       const matchedSections = new Set(
@@ -502,11 +620,16 @@ export class PackService {
           .filter((section): section is typeof PRODUCT_PACK_V2_SECTIONS[number] => Boolean(section))
           .map((section) => section.key),
       );
-      if (PRODUCT_PACK_V2_SECTIONS.some((section) => !matchedSections.has(section.key))) return null;
+      if (PRODUCT_PACK_V2_SECTIONS.some((section) => !matchedSections.has(section.key))) {
+        return { json: null, reason: 'schema_missing_sections' };
+      }
 
-      return parsed as ProductPackV2Json;
-    } catch {
-      return null;
+      return { json: parsed as ProductPackV2Json, reason: 'ok' };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'empty_json') {
+        return { json: null, reason: 'empty_json' };
+      }
+      return { json: null, reason: 'invalid_json' };
     }
   }
 
@@ -744,6 +867,59 @@ function extractLlmText(result: unknown): string {
   if (typeof record.content === 'string') return record.content;
   if (typeof record.text === 'string') return record.text;
   return '';
+}
+
+function requestedPackV2OutputTokens(stage: 'generate' | 'repair'): number {
+  return stage === 'generate' ? PACK_V2_GENERATE_MAX_OUTPUT_TOKENS : PACK_V2_REPAIR_MAX_OUTPUT_TOKENS;
+}
+
+function buildProductPackV2TruncatedException() {
+  return new BadRequestException({
+    code: 'product_pack_v2_output_truncated',
+    message: PACK_V2_OUTPUT_TRUNCATED_MESSAGE,
+  });
+}
+
+function extractFinishReason(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const direct = extractFinishReasonFromRecord(result as Record<string, unknown>);
+  if (direct) return direct;
+  const record = result as Record<string, unknown>;
+  for (const key of ['metadata', 'providerMetadata', 'raw']) {
+    const nested = record[key];
+    if (!nested || typeof nested !== 'object') continue;
+    const nestedReason = extractFinishReasonFromRecord(nested as Record<string, unknown>);
+    if (nestedReason) return nestedReason;
+  }
+  return null;
+}
+
+function extractFinishReasonFromRecord(record: Record<string, unknown>): string | null {
+  for (const key of ['finishReason', 'stopReason', 'finish_reason', 'stop_reason']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function isLikelyTruncatedPackOutput(input: {
+  parsed: ProductPackV2ParseResult;
+  outputTokens: number;
+  requestedMaxOutputTokens: number;
+  effectiveMaxOutputTokens: number;
+  finishReason: string | null;
+}): boolean {
+  if (input.parsed.json) return false;
+  if (isLengthStopReason(input.finishReason)) return true;
+  if (input.effectiveMaxOutputTokens > 0 && input.outputTokens >= input.effectiveMaxOutputTokens) return true;
+  if (input.requestedMaxOutputTokens > 0 && input.outputTokens >= input.requestedMaxOutputTokens) return true;
+  return false;
+}
+
+function isLengthStopReason(reason: string | null): boolean {
+  return Boolean(reason && /\b(length|max[_ ]?tokens?|output[_ ]?limit|token[_ ]?limit|context[_ ]?window)\b/i.test(reason));
 }
 
 function parseJsonLike(raw: string): unknown {
@@ -1315,7 +1491,7 @@ function mapPackGenerationError(error: unknown, fallbackMessage: string) {
       return new BadRequestException({ code: 'llm_auth_failed', message: message || fallbackMessage });
     }
     if (error.kind === 'invalid_request') {
-      return new BadRequestException({ code: 'llm_model_not_found', message: message || fallbackMessage });
+      return new BadRequestException({ code: 'llm_invalid_request', message: message || fallbackMessage });
     }
     return new BadRequestException({ code: 'llm_provider_error', message: message || fallbackMessage });
   }
@@ -1323,8 +1499,11 @@ function mapPackGenerationError(error: unknown, fallbackMessage: string) {
   if (error instanceof Error && error.message.includes('llm_timeout')) {
     return new BadRequestException({ code: 'llm_timeout', message: 'The LLM request timed out.' });
   }
+  if (error instanceof Error && error.message.includes('product_pack_v2_output_truncated')) {
+    return buildProductPackV2TruncatedException();
+  }
   if (error instanceof Error && error.message.includes('product_pack_v2_repair_failed')) {
-    return new BadRequestException({ code: 'product_pack_v2_repair_failed', message: 'Product Pack JSON repair failed.' });
+    return new BadRequestException({ code: 'product_pack_v2_repair_failed', message: error.message });
   }
   if (error instanceof Error && error.message.includes('product_pack_v2_invalid_output')) {
     return new BadRequestException({ code: 'product_pack_v2_invalid_output', message: error.message });

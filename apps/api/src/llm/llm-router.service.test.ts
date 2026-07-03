@@ -7,6 +7,7 @@ function makePrisma(over: {
   settings?: unknown;
   connections?: unknown[];
   usageCreate?: ReturnType<typeof vi.fn>;
+  modelFindFirst?: ReturnType<typeof vi.fn>;
 }) {
   return {
     workspaceLLMSettings: { findUnique: vi.fn().mockResolvedValue(over.settings ?? null) },
@@ -14,7 +15,7 @@ function makePrisma(over: {
       findFirst: vi.fn().mockResolvedValue(over.connections?.[0] ?? null),
       findMany: vi.fn().mockResolvedValue(over.connections ?? []),
     },
-    lLMModel: { findFirst: vi.fn().mockResolvedValue(null) },
+    lLMModel: { findFirst: over.modelFindFirst ?? vi.fn().mockResolvedValue(null) },
     lLMUsageLog: { create: over.usageCreate ?? vi.fn().mockResolvedValue({}) },
   } as unknown as PrismaService;
 }
@@ -143,5 +144,49 @@ describe('LlmRouterService', () => {
       }
     ).resolveRule('source_summarization', 'w1');
     expect(rule.modelId).toBe('gpt-4o-mini');
+  });
+
+  it('uses a product-pack-specific output cap instead of the generic 16000 when model metadata allows it', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: 'deepseek-v4-pro', fallbackModelId: null, routingRules: [] },
+        modelFindFirst: vi.fn().mockResolvedValue({ maxOutputTokens: 64_000 }),
+      }),
+      crypto,
+    );
+    const rule = await (
+      svc as unknown as {
+        resolveRule: (taskType: string, workspaceId: string) => Promise<{ maxTokensPerTask: number; timeoutMs: number }>;
+      }
+    ).resolveRule('product_vision_generation', 'w1');
+    expect(rule.maxTokensPerTask).toBe(48_000);
+    expect(rule.timeoutMs).toBe(300_000);
+  });
+
+  it('falls back to the product-pack default output cap when model metadata is missing', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        settings: { defaultModelId: 'deepseek-v4-pro', fallbackModelId: null, routingRules: [] },
+        modelFindFirst: vi.fn().mockResolvedValue(null),
+      }),
+      crypto,
+    );
+    const rule = await (
+      svc as unknown as {
+        resolveRule: (taskType: string, workspaceId: string) => Promise<{ maxTokensPerTask: number }>;
+      }
+    ).resolveRule('product_vision_generation', 'w1');
+    expect(rule.maxTokensPerTask).toBe(48_000);
+  });
+
+  it('clamps requested product-pack output budget to the resolved model limit', async () => {
+    const svc = new LlmRouterService(
+      makePrisma({
+        modelFindFirst: vi.fn().mockResolvedValue({ maxOutputTokens: 32_000 }),
+      }),
+      crypto,
+    );
+    const budget = await svc.resolveTaskOutputBudget('product_vision_generation', 'deepseek-v4-pro', 48_000);
+    expect(budget).toBe(32_000);
   });
 });
