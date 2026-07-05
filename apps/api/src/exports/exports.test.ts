@@ -3,6 +3,7 @@ import { ExportRendererService, type EvidenceData, type PackRow, type PackDocume
 import { ExportManifestService } from './export-manifest.service';
 import { ExportStorageService } from './export-storage.service';
 import { ExportJobService } from './export-job.service';
+import { ExportsController } from './exports.controller';
 import {
   ROLE_BRIEF_DOCUMENTS,
   AI_AGENT_BUNDLE_FILES,
@@ -531,6 +532,24 @@ describe('ExportJobService — inline export (no Redis)', () => {
 });
 
 // ── RBAC: no raw secrets in manifest ─────────────────────────────────────────
+
+// ── Controller: @CurrentUser() must map to requestedById ─────────────────────
+
+describe('ExportsController', () => {
+  it('passes the JWT payload\'s sub (not a nonexistent .id) as requestedById, so export creation never 500s on a missing required field', async () => {
+    const jobs = { create: vi.fn().mockResolvedValue({ id: 'job1', status: 'queued' }) };
+    const controller = new ExportsController(jobs as unknown as ExportJobService);
+
+    await controller.create(
+      'ws1',
+      'pack1',
+      { type: 'markdown_zip', language: 'en', roleBrief: null, applyBranding: false },
+      { sub: 'user1', email: 'u@example.com' },
+    );
+
+    expect(jobs.create).toHaveBeenCalledWith('ws1', 'pack1', 'user1', 'markdown_zip', 'en', null, false);
+  });
+});
 
 describe('Export RBAC and security', () => {
   it('role brief documents do not include LLM connection secrets', () => {

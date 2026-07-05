@@ -7,6 +7,7 @@ import type { Response } from 'express';
 import type { ExportType, LocaleCode, RoleBriefType } from '@signalkit/shared';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/auth.service';
 import { ExportJobService } from './export-job.service';
 import { CreateExportDto } from './dto/export.dto';
 
@@ -22,12 +23,12 @@ export class ExportsController {
     @Param('workspaceId') ws: string,
     @Param('packId') packId: string,
     @Body() dto: CreateExportDto,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: JwtPayload,
   ) {
     return this.jobs.create(
       ws,
       packId,
-      user.id,
+      user.sub,
       dto.type as ExportType,
       (dto.language ?? 'en') as LocaleCode,
       (dto.roleBrief ?? null) as RoleBriefType | null,
