@@ -104,7 +104,10 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'hidden_opportunities_underrated_features',
       'expansion_paths',
     ],
-    maxOutputTokens: 7000,
+    // Live-tested: 8 rich documents (whatThisIs/whyItExists/howToUse/
+    // doneDefinition + multi-field sections) naturally ran past 23k tokens
+    // even before finishing — budget with real headroom, not a guess.
+    maxOutputTokens: 30000,
     layerInstructions: VISION_INSTRUCTIONS,
     extraFieldsContract: `{
   "packTitle": string,
@@ -145,7 +148,9 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'mvp_scope',
       'post_mvp_scope',
     ],
-    maxOutputTokens: 8000,
+    // 10 documents at the same rich per-document schema as vision — see the
+    // vision step's budget note for why this needs real headroom.
+    maxOutputTokens: 36000,
     layerInstructions: BUILD_INSTRUCTIONS,
     extraFieldsContract: `{}`,
   },
@@ -160,7 +165,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'designer_pack',
       'frontend_pack',
     ],
-    maxOutputTokens: 8000,
+    maxOutputTokens: 26000,
     layerInstructions: BUILD_INSTRUCTIONS,
     extraFieldsContract: `{
   "screenStoryboard": [
@@ -189,7 +194,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'qa_acceptance_pack',
       'growth_monetization_pack',
     ],
-    maxOutputTokens: 8000,
+    maxOutputTokens: 28000,
     layerInstructions: BUILD_INSTRUCTIONS,
     extraFieldsContract: `{
   "apiContracts": [
@@ -204,7 +209,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'execution',
     title: 'Execution Layer — Phasing & Handoff',
     sectionKeys: ['execution_phasing', 'team_handoff', 'deployment_operations_plan'],
-    maxOutputTokens: 6000,
+    maxOutputTokens: 14000,
     layerInstructions: EXECUTION_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionPhases": [
@@ -220,7 +225,10 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'qira_backlog',
     title: 'Execution Layer — Qira-ready Backlog',
     sectionKeys: ['qira_ready_backlog_draft'],
-    maxOutputTokens: 10000,
+    // A real, full-project backlog (epics × tasks, covering every role,
+    // start to release) is the single most content-heavy deliverable —
+    // budget accordingly rather than treating it like a normal section.
+    maxOutputTokens: 30000,
     layerInstructions: QIRA_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionHandoff": {
@@ -250,7 +258,10 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'ai_agent_bundle',
     title: 'Execution Layer — AI Agent Prompt Bundle',
     sectionKeys: ['ai_agent_prompt_bundle_draft'],
-    maxOutputTokens: 12000,
+    // "Enough self-contained prompts to build the product end to end" is
+    // meant to be many prompts with full promptBody text each — the other
+    // content-heaviest deliverable alongside the Qira backlog.
+    maxOutputTokens: 35000,
     layerInstructions: AI_AGENT_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionHandoff": {
@@ -267,7 +278,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'evidence',
     title: 'Evidence Layer',
     sectionKeys: ['risks_assumptions_evidence', 'open_questions_source_needs', 'what_not_to_build_or_claim'],
-    maxOutputTokens: 6000,
+    maxOutputTokens: 14000,
     layerInstructions: EVIDENCE_INSTRUCTIONS,
     extraFieldsContract: `{
   "quality": {

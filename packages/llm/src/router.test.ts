@@ -118,6 +118,38 @@ describe('DefaultLLMRouter', () => {
     await expect(router.run(request)).rejects.toBeInstanceOf(LLMError);
     expect(calls).toBe(1); // no retry, no fallback
   });
+
+  it('narrows maxOutputTokens to a smaller caller-supplied estimatedOutputTokens instead of always using the task-level ceiling', async () => {
+    // Regression: a multi-step pipeline asking for a small, focused response
+    // (e.g. one section of a larger document) was silently getting the full
+    // task-level ceiling instead, letting the model write far more than
+    // budgeted and truncate mid-JSON.
+    const rule = { ...defaultRoutingRule('product_vision_generation'), maxTokensPerTask: 20_000 };
+    let seenMaxOutputTokens: number | undefined;
+    const adapter = fakeAdapter(async (req) => {
+      seenMaxOutputTokens = req.maxOutputTokens;
+      return makeResponse('ok');
+    });
+    const router = new DefaultLLMRouter(deps({ rule, adapter }));
+
+    await router.run({ ...request, estimatedOutputTokens: 5_000 });
+
+    expect(seenMaxOutputTokens).toBe(5_000);
+  });
+
+  it('never lets a caller-supplied estimatedOutputTokens exceed the task-level ceiling', async () => {
+    const rule = { ...defaultRoutingRule('product_vision_generation'), maxTokensPerTask: 20_000 };
+    let seenMaxOutputTokens: number | undefined;
+    const adapter = fakeAdapter(async (req) => {
+      seenMaxOutputTokens = req.maxOutputTokens;
+      return makeResponse('ok');
+    });
+    const router = new DefaultLLMRouter(deps({ rule, adapter }));
+
+    await router.run({ ...request, estimatedOutputTokens: 50_000 });
+
+    expect(seenMaxOutputTokens).toBe(20_000);
+  });
 });
 
 describe('output language enforcement', () => {

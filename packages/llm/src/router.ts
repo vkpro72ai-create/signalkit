@@ -113,11 +113,20 @@ export class DefaultLLMRouter {
       throw new CostLimitError(estimate.estimatedCost, rule.maxCostPerTask);
     }
 
+    // A caller-supplied estimatedOutputTokens narrows the task-level ceiling
+    // (rule.maxTokensPerTask) down for THIS call — e.g. a multi-step pipeline
+    // asking for a small, focused response instead of the full task budget.
+    // It can only shrink the cap, never exceed the task's configured ceiling.
+    const maxOutputTokens =
+      request.estimatedOutputTokens != null && rule.maxTokensPerTask != null
+        ? Math.min(request.estimatedOutputTokens, rule.maxTokensPerTask)
+        : (request.estimatedOutputTokens ?? rule.maxTokensPerTask ?? undefined);
+
     const llmRequest: Omit<LLMRequest, 'modelId'> = {
       taskType: request.taskType,
       messages: [...request.messages, buildLanguageDirective(request.contract.outputLanguage)],
       outputLanguage: request.contract.outputLanguage,
-      maxOutputTokens: rule.maxTokensPerTask ?? undefined,
+      maxOutputTokens,
       jsonMode: rule.jsonRequired || request.jsonMode === true,
       timeoutMs: request.timeoutMs ?? rule.timeoutMs,
     };
