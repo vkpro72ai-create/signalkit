@@ -9,12 +9,17 @@ type StepDef = (typeof PRODUCT_PACK_V2_STEPS)[number];
 
 function makePrisma() {
   const docCreate = vi.fn().mockResolvedValue({ id: 'd' });
+  // The V2 pipeline persists all documents in one createMany() call (see
+  // pack.service.ts) instead of one create() per document, to avoid
+  // exceeding Prisma's interactive-transaction timeout on large packs.
+  const docCreateMany = vi.fn().mockResolvedValue({ count: 0 });
   const gateCreate = vi.fn().mockResolvedValue({ id: 'g', status: 'warnings' });
   const packUpdate = vi.fn().mockResolvedValue({ id: 'pk1', nicheId: 'n1', projectId: 'p1', title: 'Build-Ready Product Pack' });
   const tx = {
     productPackDocument: {
       deleteMany: vi.fn().mockResolvedValue({}),
       create: docCreate,
+      createMany: docCreateMany,
       updateMany: vi.fn().mockResolvedValue({}),
     },
     qualityGateResult: { create: gateCreate },
@@ -48,7 +53,13 @@ function makePrisma() {
     buildBlueprint: { deleteMany: vi.fn().mockResolvedValue({}), create: vi.fn().mockResolvedValue({ id: 'bp1' }) },
     $transaction: vi.fn(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx)),
   } as unknown as PrismaService;
-  return { prisma, docCreate, gateCreate, packUpdate, tx };
+  return { prisma, docCreate, docCreateMany, gateCreate, packUpdate, tx };
+}
+
+/** Helper: the rows passed to the single createMany() call in a V2 test, or [] if it wasn't called. */
+function createdDocRows(docCreateMany: ReturnType<typeof vi.fn>): Array<Record<string, any>> {
+  const call = docCreateMany.mock.calls.at(-1) as [{ data: Array<Record<string, any>> }] | undefined;
+  return call ? call[0].data : [];
 }
 
 interface StepJsonOptions {
@@ -256,7 +267,7 @@ describe('PackService', () => {
   });
 
   it('generates a v2 pack across sequential steps, in order, with a real (non-fabricated) executionHandoff', async () => {
-    const { prisma, docCreate, gateCreate, tx } = makePrisma();
+    const { prisma, docCreateMany, gateCreate, tx } = makePrisma();
     const routerRun = mockAllStepsSucceed();
     const { router } = makeRouter(routerRun);
     const svc = new PackService(prisma, router);
@@ -269,20 +280,24 @@ describe('PackService', () => {
       expect(routerRun.mock.calls[index]![0].estimatedOutputTokens).toBe(step.maxOutputTokens);
     });
 
-    expect(docCreate).toHaveBeenCalledTimes(PRODUCT_PACK_V2_SECTIONS.length);
+    // All documents persisted in a single createMany() call (not one create() per doc —
+    // see pack.service.ts for why: avoids the Prisma interactive-transaction timeout).
+    expect(docCreateMany).toHaveBeenCalledTimes(1);
+    const docRows = createdDocRows(docCreateMany);
+    expect(docRows).toHaveLength(PRODUCT_PACK_V2_SECTIONS.length);
     expect(gateCreate).toHaveBeenCalledTimes(1);
     expect(out.pack.title).toBe('Build-Ready Product Pack');
-    expect(docCreate.mock.calls[0]![0].data.body).toContain('#');
-    expect(docCreate.mock.calls[0]![0].data.metadata.pack.packType).toBe('build_ready_product_pack');
-    expect(docCreate.mock.calls[0]![0].data.metadata.layer).toBe('vision');
+    expect(docRows[0]!.body).toContain('#');
+    expect(docRows[0]!.metadata.pack.packType).toBe('build_ready_product_pack');
+    expect(docRows[0]!.metadata.layer).toBe('vision');
 
     // Final document order follows the canonical section order, not step order.
-    const createdDocTypes = docCreate.mock.calls.map((call) => call[0].data.docType);
+    const createdDocTypes = docRows.map((row) => row.docType);
     expect(createdDocTypes).toEqual(PRODUCT_PACK_V2_SECTIONS.map((section) => section.key));
 
     // executionHandoff comes from the qira_backlog/ai_agent_bundle steps' real LLM output —
     // not the old hardcoded 3-epic/4-generic-prompt fabrication.
-    const packMetadata = docCreate.mock.calls[0]![0].data.metadata.packMetadata;
+    const packMetadata = docRows[0]!.metadata.packMetadata;
     const updatedPackArgs = tx.productDocumentPack.update.mock.calls[0]![0].data;
     expect(updatedPackArgs.title).toBe('Build-Ready Product Pack');
     expect(packMetadata.packTitle).toBe('Build-Ready Product Pack');
@@ -339,7 +354,7 @@ describe('PackService', () => {
   });
 
   it('repairs invalid JSON with one extra LLM call within a single step', async () => {
-    const { prisma, docCreate, gateCreate } = makePrisma();
+    const { prisma, docCreateMany, gateCreate } = makePrisma();
     const [firstStep, ...restSteps] = PRODUCT_PACK_V2_STEPS;
     const routerRun = vi.fn();
     routerRun.mockResolvedValueOnce(makeLlmResult('not json', { outputTokens: 50 }));
@@ -354,12 +369,12 @@ describe('PackService', () => {
     expect(routerRun).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length + 1);
     expect(routerRun.mock.calls[0]![0].estimatedOutputTokens).toBe(firstStep!.maxOutputTokens);
     expect(routerRun.mock.calls[1]![0].estimatedOutputTokens).toBe(firstStep!.maxOutputTokens);
-    expect(docCreate).toHaveBeenCalledTimes(PRODUCT_PACK_V2_SECTIONS.length);
+    expect(createdDocRows(docCreateMany)).toHaveLength(PRODUCT_PACK_V2_SECTIONS.length);
     expect(gateCreate).toHaveBeenCalledTimes(1);
   });
 
   it('normalizes preview wording and keeps missing-source packs as warnings with starter-hypothesis evidence', async () => {
-    const { prisma, docCreate, tx } = makePrisma();
+    const { prisma, docCreateMany, tx } = makePrisma();
     const routerRun = mockAllStepsSucceed({
       evidenceCount: 0,
       missingInputs: ['market sources'],
@@ -371,8 +386,9 @@ describe('PackService', () => {
 
     const out = await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
     expect(out.qualityGate.status).toBe('warnings');
-    expect(docCreate.mock.calls.find((call) => call[0].data.docType === 'market_context')![0].data.body).toContain('Assumption / needs source:');
-    const packMetadata = docCreate.mock.calls[0]![0].data.metadata.packMetadata;
+    const docRows = createdDocRows(docCreateMany);
+    expect(docRows.find((row) => row.docType === 'market_context')!.body).toContain('Assumption / needs source:');
+    const packMetadata = docRows[0]!.metadata.packMetadata;
     const updatedPackArgs = tx.productDocumentPack.update.mock.calls[0]![0].data;
     expect(updatedPackArgs.title).toBe('Build-Ready Product Pack');
     expect(packMetadata.packTitle).toBe('Build-Ready Product Pack');
@@ -423,7 +439,7 @@ describe('PackService', () => {
   });
 
   it('persists documents from completed steps when a later step fails even after repair, instead of discarding everything', async () => {
-    const { prisma, docCreate, gateCreate, tx } = makePrisma();
+    const { prisma, docCreateMany, gateCreate, tx } = makePrisma();
     const failingStepIndex = PRODUCT_PACK_V2_STEPS.findIndex((step) => step.id === 'qira_backlog');
     const completedSteps = PRODUCT_PACK_V2_STEPS.slice(0, failingStepIndex);
     const routerRun = vi.fn();
@@ -440,7 +456,7 @@ describe('PackService', () => {
     await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
 
     const completedSectionCount = completedSteps.reduce((sum, step) => sum + step.sectionKeys.length, 0);
-    expect(docCreate).toHaveBeenCalledTimes(completedSectionCount);
+    expect(createdDocRows(docCreateMany)).toHaveLength(completedSectionCount);
     expect(gateCreate).toHaveBeenCalledTimes(1);
 
     // Quality gate honestly reports the pack as incomplete (missing qira/ai-agent/evidence sections)...

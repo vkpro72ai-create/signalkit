@@ -407,9 +407,11 @@ export class PackService {
 
       const saved = await this.prisma.$transaction(async (tx) => {
         await tx.productPackDocument.deleteMany({ where: { packId: pack.id } });
-        for (const row of docRows) {
-          await tx.productPackDocument.create({ data: row });
-        }
+        // A step-based pack can have 30+ documents; creating them one at a
+        // time inside the transaction risked exceeding Prisma's default 5s
+        // interactive-transaction timeout under real DB latency. createMany
+        // does it in a single round trip.
+        await tx.productPackDocument.createMany({ data: docRows });
         const qualityGate = await tx.qualityGateResult.create({
           data: {
             packId: pack.id,
