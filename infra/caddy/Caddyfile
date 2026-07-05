@@ -45,8 +45,11 @@
     }
 
     reverse_proxy web:3000 {
-        # Health-based fail-fast
-        health_uri      /
+        # "/" 307-redirects to the default locale route, and Caddy's active
+        # health check only accepts 2xx by default — probe a path that
+        # resolves without a redirect, or Caddy marks this upstream
+        # permanently unhealthy and returns 503 to real traffic.
+        health_uri      /projects
         health_interval 30s
         health_timeout  5s
     }
