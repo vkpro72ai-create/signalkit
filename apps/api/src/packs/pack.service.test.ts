@@ -373,6 +373,47 @@ describe('PackService', () => {
     expect(gateCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('regenerates from scratch as a third attempt when a non-truncation JSON defect survives repair too', async () => {
+    // Large responses occasionally have a one-off syntax defect that isn't
+    // truncation and that a repair pass (re-editing the same broken text)
+    // doesn't reliably fix either — a fresh regeneration often succeeds
+    // where re-editing the same broken blob doesn't.
+    const { prisma, docCreateMany, gateCreate } = makePrisma();
+    const [firstStep, ...restSteps] = PRODUCT_PACK_V2_STEPS;
+    const routerRun = vi.fn();
+    routerRun.mockResolvedValueOnce(makeLlmResult('not json at all', { outputTokens: 500 }));
+    routerRun.mockResolvedValueOnce(makeLlmResult('still not json', { outputTokens: 500 }));
+    routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(firstStep!)), { outputTokens: 180 }));
+    for (const step of restSteps) {
+      routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    expect(routerRun).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length + 2); // generate + repair + regenerate for the first step
+    expect(createdDocRows(docCreateMany)).toHaveLength(PRODUCT_PACK_V2_SECTIONS.length);
+    expect(gateCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not waste a regenerate attempt when the failure is truncation (same budget would just truncate again)', async () => {
+    const { prisma, gateCreate } = makePrisma();
+    const firstStep = PRODUCT_PACK_V2_STEPS[0]!;
+    const routerRun = vi.fn()
+      .mockResolvedValueOnce(makeLlmResult('{"documents":[', { outputTokens: firstStep.maxOutputTokens }))
+      .mockResolvedValueOnce(makeLlmResult('{"documents":[', { outputTokens: firstStep.maxOutputTokens }));
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await expect(
+      svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true }),
+    ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'product_pack_v2_output_truncated' }) });
+
+    expect(routerRun).toHaveBeenCalledTimes(2); // no third (regenerate) call
+    expect(gateCreate).not.toHaveBeenCalled();
+  });
+
   it('self-heals a minor JSON syntax defect (trailing comma) without an extra LLM repair call', async () => {
     // Large multi-thousand-token responses occasionally have one syntax slip
     // even with the provider's JSON mode enabled — jsonrepair should fix
@@ -469,9 +510,10 @@ describe('PackService', () => {
     for (const step of completedSteps) {
       routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
     }
-    // qira_backlog: both generate and repair return non-truncated invalid JSON — step fails, pipeline stops here.
+    // qira_backlog: generate, repair, and regenerate all return non-truncated invalid JSON — step fails, pipeline stops here.
     routerRun.mockResolvedValueOnce(makeLlmResult('not json', { outputTokens: 10 }));
     routerRun.mockResolvedValueOnce(makeLlmResult('still not json', { outputTokens: 10 }));
+    routerRun.mockResolvedValueOnce(makeLlmResult('really still not json', { outputTokens: 10 }));
 
     const { router } = makeRouter(routerRun);
     const svc = new PackService(prisma, router);

@@ -186,7 +186,7 @@ interface ProductPackV2StepParseResult {
 }
 
 interface ProductPackV2RunDiagnostics {
-  stage: 'generate' | 'repair';
+  stage: 'generate' | 'repair' | 'regenerate';
   rawLength: number;
   parseReason: ProductPackV2ParseReason | 'truncated_output';
   outputTokens: number;
@@ -216,6 +216,7 @@ interface PackV2AiRunDetails {
 interface PackV2AiRun {
   primary: PackV2AiRunDetails;
   repair?: PackV2AiRunDetails;
+  regenerate?: PackV2AiRunDetails;
 }
 
 /** One AI-run record per completed pipeline step, keyed by step id. */
@@ -543,7 +544,8 @@ export class PackService {
     );
 
     let parsed = firstAttempt.parsed;
-    let aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics) };
+    const aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics) };
+    let lastDiagnostics = firstAttempt.diagnostics;
 
     if (!parsed.json) {
       const repairPrompt = buildProductPackV2StepRepairPrompt(step, firstAttempt.raw);
@@ -552,19 +554,35 @@ export class PackService {
         parsePackV2StepJson(raw, step),
       );
       parsed = repairAttempt.parsed;
-      if (!parsed.json) {
-        if (firstAttempt.diagnostics.likelyTruncated || repairAttempt.diagnostics.likelyTruncated) {
-          throw buildProductPackV2StepTruncatedException(step);
-        }
-        throw new BadRequestException({
-          code: 'product_pack_v2_step_repair_failed',
-          message: `Product Pack step "${step.title}" JSON repair failed (reason: ${repairAttempt.diagnostics.parseReason}).`,
-        });
+      aiRun.repair = this.aiRunFromResult(repairRun, repairAttempt.diagnostics);
+      lastDiagnostics = repairAttempt.diagnostics;
+    }
+
+    // Live-tested: large (80-100k char) JSON responses occasionally have a
+    // one-off syntax defect that isn't truncation and isn't a schema issue —
+    // just inherent LLM non-determinism (the identical prompt succeeded on a
+    // later isolated retry). Re-editing the same broken text via a repair
+    // prompt doesn't reliably fix that class of defect, but a fresh
+    // regeneration often doesn't reproduce it. Skip this for truncation,
+    // where asking again with the same budget would just truncate again.
+    if (!parsed.json && !firstAttempt.diagnostics.likelyTruncated && !lastDiagnostics.likelyTruncated) {
+      const regenerateRun = await this.runPackPrompt(workspaceId, packId, projectId, ctx.language, prompt, PACK_V2_TASK_TYPE, step.maxOutputTokens);
+      const regenerateAttempt = await this.inspectPackV2Attempt(PACK_V2_TASK_TYPE, 'regenerate', regenerateRun, step.maxOutputTokens, (raw) =>
+        parsePackV2StepJson(raw, step),
+      );
+      parsed = regenerateAttempt.parsed;
+      aiRun.regenerate = this.aiRunFromResult(regenerateRun, regenerateAttempt.diagnostics);
+      lastDiagnostics = regenerateAttempt.diagnostics;
+    }
+
+    if (!parsed.json) {
+      if (firstAttempt.diagnostics.likelyTruncated || lastDiagnostics.likelyTruncated) {
+        throw buildProductPackV2StepTruncatedException(step);
       }
-      aiRun = {
-        primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics),
-        repair: this.aiRunFromResult(repairRun, repairAttempt.diagnostics),
-      };
+      throw new BadRequestException({
+        code: 'product_pack_v2_step_repair_failed',
+        message: `Product Pack step "${step.title}" JSON repair failed (reason: ${lastDiagnostics.parseReason}).`,
+      });
     }
 
     const json = parsed.json;
@@ -609,7 +627,7 @@ export class PackService {
 
   private async inspectPackV2Attempt(
     taskType: LLMTaskType,
-    stage: 'generate' | 'repair',
+    stage: 'generate' | 'repair' | 'regenerate',
     result: Awaited<ReturnType<LlmRouterService['run']>>,
     requestedMaxOutputTokens: number,
     parseFn: (raw: string) => ProductPackV2StepParseResult,
