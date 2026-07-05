@@ -159,8 +159,8 @@ describe('LlmRouterService', () => {
         resolveRule: (taskType: string, workspaceId: string) => Promise<{ maxTokensPerTask: number; timeoutMs: number }>;
       }
     ).resolveRule('product_vision_generation', 'w1');
-    expect(rule.maxTokensPerTask).toBe(48_000);
-    expect(rule.timeoutMs).toBe(300_000);
+    expect(rule.maxTokensPerTask).toBe(60_000);
+    expect(rule.timeoutMs).toBe(480_000);
   });
 
   it('falls back to the product-pack default output cap when model metadata is missing', async () => {
@@ -176,7 +176,7 @@ describe('LlmRouterService', () => {
         resolveRule: (taskType: string, workspaceId: string) => Promise<{ maxTokensPerTask: number }>;
       }
     ).resolveRule('product_vision_generation', 'w1');
-    expect(rule.maxTokensPerTask).toBe(48_000);
+    expect(rule.maxTokensPerTask).toBe(60_000);
   });
 
   it('clamps requested product-pack output budget to the resolved model limit', async () => {

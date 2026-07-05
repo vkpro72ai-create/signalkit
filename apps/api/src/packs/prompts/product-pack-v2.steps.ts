@@ -194,7 +194,9 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'qa_acceptance_pack',
       'growth_monetization_pack',
     ],
-    maxOutputTokens: 28000,
+    // Live-tested: 28,000 truncated mid-document generating in Russian —
+    // 7 rich documents plus structured apiContracts/dataModel need more.
+    maxOutputTokens: 42000,
     layerInstructions: BUILD_INSTRUCTIONS,
     extraFieldsContract: `{
   "apiContracts": [
@@ -209,7 +211,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'execution',
     title: 'Execution Layer — Phasing & Handoff',
     sectionKeys: ['execution_phasing', 'team_handoff', 'deployment_operations_plan'],
-    maxOutputTokens: 14000,
+    maxOutputTokens: 20000,
     layerInstructions: EXECUTION_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionPhases": [
@@ -228,7 +230,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     // A real, full-project backlog (epics × tasks, covering every role,
     // start to release) is the single most content-heavy deliverable —
     // budget accordingly rather than treating it like a normal section.
-    maxOutputTokens: 30000,
+    maxOutputTokens: 42000,
     layerInstructions: QIRA_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionHandoff": {
@@ -261,7 +263,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     // "Enough self-contained prompts to build the product end to end" is
     // meant to be many prompts with full promptBody text each — the other
     // content-heaviest deliverable alongside the Qira backlog.
-    maxOutputTokens: 35000,
+    maxOutputTokens: 48000,
     layerInstructions: AI_AGENT_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionHandoff": {
@@ -278,7 +280,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'evidence',
     title: 'Evidence Layer',
     sectionKeys: ['risks_assumptions_evidence', 'open_questions_source_needs', 'what_not_to_build_or_claim'],
-    maxOutputTokens: 14000,
+    maxOutputTokens: 20000,
     layerInstructions: EVIDENCE_INSTRUCTIONS,
     extraFieldsContract: `{
   "quality": {

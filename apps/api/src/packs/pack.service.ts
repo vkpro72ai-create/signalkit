@@ -221,7 +221,10 @@ interface PackV2AiRun {
 type PackV2StepAiRuns = Partial<Record<ProductPackV2StepId, PackV2AiRun>>;
 
 const PACK_V2_TASK_TYPE: LLMTaskType = 'product_vision_generation';
-const PACK_V2_TIMEOUT_MS = 300_000;
+// Slightly above the router's own per-attempt timeout (see
+// PRODUCT_PACK_TASK_TIMEOUT_MS in llm-router.service.ts) so that timeout
+// fires first with a specific LLMError instead of this generic wrapper.
+const PACK_V2_TIMEOUT_MS = 500_000;
 const PACK_V2_DEBUG_RAW_LOGGING = /^(1|true|yes)$/i.test(process.env.DEBUG_PRODUCT_PACK_V2 ?? '');
 
 const FALLBACK_EXECUTION_HANDOFF: ProductPackV2ExecutionHandoff = {

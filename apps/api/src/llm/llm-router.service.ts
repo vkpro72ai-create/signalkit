@@ -28,8 +28,13 @@ type ExplicitRoutingRequest = GenerationRequest & {
   provider?: LLMProviderType;
 };
 
-const PRODUCT_PACK_TASK_MAX_OUTPUT_TOKENS = 48_000;
-const PRODUCT_PACK_TASK_TIMEOUT_MS = 300_000;
+// Live-tested against deepseek-v4-flash generating in Russian: a single rich
+// step (7 documents + structured API/data-model fields) needed more than
+// 28,000 output tokens. This is a safety ceiling per step, not a per-step
+// target — individual step budgets (see product-pack-v2.steps.ts) stay well
+// under it; it just must not become the new bottleneck.
+const PRODUCT_PACK_TASK_MAX_OUTPUT_TOKENS = 60_000;
+const PRODUCT_PACK_TASK_TIMEOUT_MS = 480_000;
 
 /**
  * The single entry point for AI generation. Feature modules call `run()`; they
