@@ -300,7 +300,7 @@ export function sectionsForStep(step: ProductPackV2Step) {
 
 /** The shared per-document shape every step returns `documents` in — unchanged from the original single-shot contract. */
 export const PRODUCT_PACK_V2_DOCUMENT_CONTRACT = `{
-  "type": string,
+  "type": string (MUST be copied verbatim from this section's "key" in SECTIONS TO PRODUCE below — e.g. "founder_investor_vision", never a made-up or descriptive slug like "vision_document" — and MUST stay in English even when "title" and everything else is written in the output language),
   "layer": "vision" | "build" | "execution" | "evidence",
   "title": string,
   "audience": string[],

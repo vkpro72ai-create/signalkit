@@ -410,38 +410,43 @@ export class PackService {
       );
       const gate = buildProductPackV2QualityGate(packJson, packMetadata.qualityGates);
 
-      const saved = await this.prisma.$transaction(async (tx) => {
-        await tx.productPackDocument.deleteMany({ where: { packId: pack.id } });
-        // A step-based pack can have 30+ documents; creating them one at a
-        // time inside the transaction risked exceeding Prisma's default 5s
-        // interactive-transaction timeout under real DB latency. createMany
-        // does it in a single round trip.
-        await tx.productPackDocument.createMany({ data: docRows });
-        const qualityGate = await tx.qualityGateResult.create({
-          data: {
-            packId: pack.id,
-            status: gate.status,
-            checks: gate.checks as unknown as Prisma.InputJsonValue,
-            passedCount: gate.passedCount,
-            warnCount: gate.warnCount,
-            failCount: gate.failCount,
-          },
-        });
-        const updatedPack = await tx.productDocumentPack.update({
-          where: { id: pack.id },
-          data: {
-            title: finalTitle,
-            status: 'draft',
-            confidenceValue,
-            confidenceLevel,
-          },
-        });
-        await tx.productPackDocument.updateMany({
-          where: { packId: pack.id },
-          data: { qualityGateStatus: gate.status === 'failed' ? 'failed' : gate.status === 'warnings' ? 'warnings' : 'passed' },
-        });
-        return { updatedPack, qualityGate };
-      });
+      const saved = await this.prisma.$transaction(
+        async (tx) => {
+          await tx.productPackDocument.deleteMany({ where: { packId: pack.id } });
+          // A step-based pack can have 30+ documents, each with a large JSON
+          // metadata blob (including a full pack snapshot). createMany cut
+          // this to one round trip, but a full ~39-document pack still moved
+          // enough data to exceed Prisma's default 5s interactive-transaction
+          // timeout on its own — raise it explicitly (see the timeout option
+          // below) rather than relying on the default.
+          await tx.productPackDocument.createMany({ data: docRows });
+          const qualityGate = await tx.qualityGateResult.create({
+            data: {
+              packId: pack.id,
+              status: gate.status,
+              checks: gate.checks as unknown as Prisma.InputJsonValue,
+              passedCount: gate.passedCount,
+              warnCount: gate.warnCount,
+              failCount: gate.failCount,
+            },
+          });
+          const updatedPack = await tx.productDocumentPack.update({
+            where: { id: pack.id },
+            data: {
+              title: finalTitle,
+              status: 'draft',
+              confidenceValue,
+              confidenceLevel,
+            },
+          });
+          await tx.productPackDocument.updateMany({
+            where: { packId: pack.id },
+            data: { qualityGateStatus: gate.status === 'failed' ? 'failed' : gate.status === 'warnings' ? 'warnings' : 'passed' },
+          });
+          return { updatedPack, qualityGate };
+        },
+        { timeout: 30_000 },
+      );
 
       if (ctx.buildBlueprint) {
         await this.persistBlueprint(workspaceId, pack.id, nicheId, projectId, ctx.buildBlueprint);
@@ -1063,17 +1068,29 @@ function parsePackV2StepJson(raw: string, step: ProductPackV2Step): ProductPackV
     if (!Array.isArray(parsed.documents) || parsed.documents.length === 0) {
       return { json: null, reason: 'schema_missing_documents' };
     }
-    const documents = parsed.documents as unknown[];
-    if (documents.some((doc) => !isValidPackV2Document(doc))) {
+    if ((parsed.documents as unknown[]).some((doc) => !isValidPackV2Document(doc))) {
       return { json: null, reason: 'schema_invalid_documents' };
     }
+    let documents = parsed.documents as ProductPackV2Document[];
 
-    const matchedKeys = new Set(
-      (documents as ProductPackV2Document[])
+    let matchedKeys = new Set(
+      documents
         .map((doc) => resolvePackV2Section(doc.type, doc.title))
         .filter((section): section is typeof PRODUCT_PACK_V2_SECTIONS[number] => Boolean(section))
         .map((section) => section.key),
     );
+
+    // The prompt asks for documents to be non-English-titled (translated)
+    // but keeps "type" as the stable English key, in the same order as the
+    // section list — occasionally the model still drifts on "type" too
+    // (e.g. a descriptive slug instead of the exact key). If the document
+    // count matches exactly, positional order is a safe fallback rather
+    // than failing the whole step over a naming miss.
+    if (step.sectionKeys.some((key) => !matchedKeys.has(key)) && documents.length === step.sectionKeys.length) {
+      documents = documents.map((doc, index) => ({ ...doc, type: step.sectionKeys[index]! }));
+      matchedKeys = new Set(step.sectionKeys);
+    }
+
     if (step.sectionKeys.some((key) => !matchedKeys.has(key))) {
       return { json: null, reason: 'schema_missing_sections' };
     }
@@ -1083,7 +1100,7 @@ function parsePackV2StepJson(raw: string, step: ProductPackV2Step): ProductPackV
     }
 
     return {
-      json: parsed as Partial<ProductPackV2Json> & { documents: ProductPackV2Document[] },
+      json: { ...parsed, documents } as Partial<ProductPackV2Json> & { documents: ProductPackV2Document[] },
       reason: 'ok',
     };
   } catch (error) {

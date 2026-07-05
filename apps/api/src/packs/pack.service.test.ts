@@ -437,6 +437,35 @@ describe('PackService', () => {
     expect(gateCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('falls back to positional section matching when the model drifts on "type" but the document count is exactly right', async () => {
+    // Live-tested: generating in a non-English output language, the model
+    // sometimes writes a generic/descriptive "type" (e.g. "vision_document")
+    // instead of the exact section key, even though "title" and "type" are
+    // both explicitly specified in the prompt. Since the prompt also asks
+    // for documents in the same order as the section list, an exact count
+    // match is a safe positional fallback instead of failing the step.
+    const { prisma, docCreateMany, gateCreate } = makePrisma();
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      const payload = makeStepPayload(step);
+      if (step.id === 'vision') {
+        payload.documents = payload.documents.map((doc) => ({ ...doc, type: 'vision_document', title: 'Обобщённое видение' }));
+      }
+      routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(payload)));
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    expect(routerRun).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length); // no repair/regenerate call needed
+    const docRows = createdDocRows(docCreateMany);
+    expect(docRows).toHaveLength(PRODUCT_PACK_V2_SECTIONS.length);
+    const visionStep = PRODUCT_PACK_V2_STEPS.find((s) => s.id === 'vision')!;
+    const visionDocTypes = docRows.filter((row) => visionStep.sectionKeys.includes(row.docType)).map((row) => row.docType);
+    expect(visionDocTypes.sort()).toEqual([...visionStep.sectionKeys].sort());
+  });
+
   it('normalizes preview wording and keeps missing-source packs as warnings with starter-hypothesis evidence', async () => {
     const { prisma, docCreateMany, tx } = makePrisma();
     const routerRun = mockAllStepsSucceed({
