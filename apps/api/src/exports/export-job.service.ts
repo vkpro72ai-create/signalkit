@@ -195,7 +195,7 @@ export class ExportJobService implements OnModuleInit, OnModuleDestroy {
         // Role briefs and single-type exports → Markdown
         const md = roleBrief
           ? this.renderer.renderRoleBrief(roleBrief, pack as PackRow, documents, ev)
-          : this.renderSingleTypeExport(type, documents, ev);
+          : this.renderSingleTypeExport(type, documents, ev, lang);
         buffer = Buffer.from(md, 'utf-8');
       }
 
@@ -346,9 +346,9 @@ export class ExportJobService implements OnModuleInit, OnModuleDestroy {
     return documents; // full pack types
   }
 
-  private renderSingleTypeExport(type: ExportType, documents: PackDocumentRow[], ev: EvidenceData): string {
-    if (type === 'evidence_appendix') return this.renderer.renderEvidenceAppendix(ev);
-    if (type === 'source_appendix') return this.renderer.renderSourceAppendix(ev.sourceRefs);
+  private renderSingleTypeExport(type: ExportType, documents: PackDocumentRow[], ev: EvidenceData, language: LocaleCode): string {
+    if (type === 'evidence_appendix') return this.renderer.renderEvidenceAppendix(ev, language);
+    if (type === 'source_appendix') return this.renderer.renderSourceAppendix(ev.sourceRefs, language);
     // For all other types, combine included docs
     const docs = documents;
     return docs.map((d) => `# ${d.title}\n\n${d.body}`).join('\n\n---\n\n');

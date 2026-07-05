@@ -6,20 +6,23 @@
  * validate the output → record usage. Feature modules NEVER call adapters
  * directly; they build a GenerationRequest and call `router.run()`.
  */
-import type {
-  LLMCostEstimate,
-  LLMProviderType,
-  LLMRoutingRule,
-  LLMTaskType,
+import {
+  LOCALE_LANGUAGE_NAMES,
+  type LLMCostEstimate,
+  type LLMProviderType,
+  type LLMRoutingRule,
+  type LLMTaskType,
+  type LocaleCode,
 } from '@signalkit/shared';
 import {
   LLMError,
   type LLMCostEstimator,
+  type LLMMessage,
   type LLMProviderAdapter,
   type LLMRequest,
   type LLMResponse,
 } from './index.js';
-import type { GenerationRequest, GenerationResult } from './contract.js';
+import type { GenerationRequest, GenerationResult, ValidationOutcome } from './contract.js';
 import { validateOutput } from './validators.js';
 import {
   DefaultFallbackPolicy,
@@ -112,7 +115,7 @@ export class DefaultLLMRouter {
 
     const llmRequest: Omit<LLMRequest, 'modelId'> = {
       taskType: request.taskType,
-      messages: request.messages,
+      messages: [...request.messages, buildLanguageDirective(request.contract.outputLanguage)],
       outputLanguage: request.contract.outputLanguage,
       maxOutputTokens: rule.maxTokensPerTask ?? undefined,
       jsonMode: rule.jsonRequired || request.jsonMode === true,
@@ -124,22 +127,35 @@ export class DefaultLLMRouter {
     for (const [modelId, isFallback] of this.modelSequence(rule)) {
       try {
         const { response, provider } = await this.attemptModel(modelId, request, llmRequest);
-        const validation = validateOutput(response.content, {
+        let finalResponse = response;
+        let validation = validateOutput(finalResponse.content, {
           contract: request.contract,
           jsonRequired: llmRequest.jsonMode === true,
         });
         await this.deps.usageSink.record(
-          this.entry(request, modelId, provider, response, estimate.estimatedCost, 'success', null),
+          this.entry(request, modelId, provider, finalResponse, estimate.estimatedCost, 'success', null),
         );
+
+        if (validation.issues.some((i) => i.code === 'output_language_mismatch')) {
+          const corrected = await this.tryLanguageCorrection(modelId, request, llmRequest, finalResponse);
+          if (corrected) {
+            await this.deps.usageSink.record(
+              this.entry(request, modelId, provider, corrected.response, estimate.estimatedCost, 'success', null),
+            );
+            finalResponse = corrected.response;
+            validation = corrected.validation;
+          }
+        }
+
         return {
-          content: response.content,
+          content: finalResponse.content,
           taskType: request.taskType,
           modelId,
           provider,
           usedFallback: isFallback,
-          inputTokens: response.inputTokens,
-          outputTokens: response.outputTokens,
-          latencyMs: response.latencyMs,
+          inputTokens: finalResponse.inputTokens,
+          outputTokens: finalResponse.outputTokens,
+          latencyMs: finalResponse.latencyMs,
           estimatedCost: estimate.estimatedCost,
           validation,
         };
@@ -167,6 +183,36 @@ export class DefaultLLMRouter {
       seq.push([rule.fallbackModelId, true]);
     }
     return seq;
+  }
+
+  /**
+   * One bounded retry when the model answered in the wrong language: replay
+   * the same conversation plus the bad answer and ask for a full rewrite.
+   * Never throws — a failed correction just falls back to the original
+   * (already-recorded) response, since a language miss shouldn't block
+   * generation outright.
+   */
+  private async tryLanguageCorrection(
+    modelId: string,
+    request: GenerationRequest,
+    base: Omit<LLMRequest, 'modelId'>,
+    badResponse: LLMResponse,
+  ): Promise<{ response: LLMResponse; validation: ValidationOutcome } | null> {
+    const correctionMessages: LLMMessage[] = [
+      ...base.messages,
+      { role: 'assistant', content: badResponse.content },
+      buildLanguageCorrection(request.contract.outputLanguage),
+    ];
+    try {
+      const { response } = await this.attemptModel(modelId, request, { ...base, messages: correctionMessages });
+      const validation = validateOutput(response.content, {
+        contract: request.contract,
+        jsonRequired: base.jsonMode === true,
+      });
+      return { response, validation };
+    } catch {
+      return null;
+    }
   }
 
   /** Run one model with the retry policy. Throws the last LLMError on exhaustion. */
@@ -245,4 +291,28 @@ export interface LLMRouter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * A dedicated, unmissable system message forcing the output language. This is
+ * appended last (after every task-specific prompt) since models weight recent
+ * instructions more heavily, and it is the only place in the pipeline that
+ * turns `outputLanguage` into an actual instruction the model receives —
+ * adapters never read that field themselves.
+ */
+function buildLanguageDirective(outputLanguage: LocaleCode): LLMMessage {
+  const languageName = LOCALE_LANGUAGE_NAMES[outputLanguage] ?? outputLanguage;
+  return {
+    role: 'system',
+    content: `LANGUAGE REQUIREMENT (overrides all other instructions): Write the ENTIRE response — every heading, label, sentence, and example — in ${languageName} (${outputLanguage}) only, using natural, fluent ${languageName}. Do not switch to English or any other language at any point, including for section titles or short labels, unless the requested language is English.`,
+  };
+}
+
+/** Corrective follow-up used once when validation detects the wrong language. */
+function buildLanguageCorrection(outputLanguage: LocaleCode): LLMMessage {
+  const languageName = LOCALE_LANGUAGE_NAMES[outputLanguage] ?? outputLanguage;
+  return {
+    role: 'user',
+    content: `Your previous answer was not fully written in ${languageName}. Rewrite your entire previous response fully in ${languageName}, keeping exactly the same structure, meaning, and format (including the JSON schema if one was requested).`,
+  };
 }

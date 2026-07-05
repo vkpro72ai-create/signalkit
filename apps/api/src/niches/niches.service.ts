@@ -13,11 +13,11 @@ import {
   type VentureThesis,
   type VerticalTemplate,
 } from '@signalkit/shared';
-import { baseContract, LLMError } from '@signalkit/llm';
+import { baseContract, LLMError, type GenerationResult } from '@signalkit/llm';
 import { PrismaService } from '../prisma/prisma.service';
 import { EvidenceService } from '../evidence/evidence.service';
 import { LlmRouterService } from '../llm/llm-router.service';
-import type { DiscoverNichesDto } from './dto/niche.dto';
+import type { CreateOpportunityFromIdeaDto, DiscoverNichesDto } from './dto/niche.dto';
 import { buildVentureThesis } from './venture';
 
 type SignalRow = {
@@ -122,7 +122,9 @@ export class NichesService {
             content:
               'You generate 3 to 5 market opportunities for SignalKit. Return strict JSON only: ' +
               '{"opportunities":[{"title":"","oneLineThesis":"","targetUser":"","pain":"","whyNow":"","market":"","vertical":"","opportunityScoreDraft":0,"confidenceDraft":0,"ventureScaleDraft":0,"buildReadinessDraft":0,"assumptions":[],"risks":[],"validationQuestions":[]}]} ' +
-              'Rules: keep the requested language, never fabricate TAM or revenue numbers, mark weak evidence as assumptions, and use integer draft scores from 0 to 100.',
+              'Rules: keep the requested language, never fabricate TAM or revenue numbers, mark weak evidence as assumptions, and use integer draft scores from 0 to 100. ' +
+              "If the user message includes a FOUNDER'S STATED IDEA / GOAL block, every opportunity you return MUST be a specific angle, feature, or market entry point within that idea — do not substitute a different, unrelated concept. " +
+              'The output language is ONLY the language you must write in — it is NOT evidence of the target market, target country, or the nationality/spoken language of the target audience. Someone writing in Russian can be building for the US, EU, or a global market; never narrow "market" or "targetUser" to a language-based nationality unless the idea or market hints explicitly say so. Default to the broadest defensible market (often global) when no market is specified.',
           },
           {
             role: 'user',
@@ -172,90 +174,19 @@ export class NichesService {
     const opportunities = [];
 
     for (const draft of payload.opportunities) {
-      const niche = await this.prisma.niche.create({
-        data: {
+      opportunities.push(
+        await this.persistOpportunityDraft({
           workspaceId,
           projectId,
-          title: draft.title,
-          oneLiner: draft.oneLineThesis,
-          problem: draft.pain,
-          targetAudience: draft.targetUser,
-          whyNow: draft.whyNow,
-          useCases: draft.validationQuestions.slice(0, 4),
-          competitors: draft.risks.slice(0, 4),
-          mvpConcept: `Starter hypothesis for ${draft.title}. Validate before committing build scope.`,
-          monetization: 'Validate pricing and packaging with target buyers.',
-          recommendedProductFormat: recommendFormat(draft.vertical),
-          riskLevel: draftRiskLevel(draft),
           language,
-        },
-      });
-
-      await this.prisma.nicheScore.create({
-        data: {
-          nicheId: niche.id,
+          draft,
           scoringVersionId: scoringVersion.id,
-          totalScore: clampScore(draft.opportunityScoreDraft),
-          confidenceValue: clampConfidence(draft.confidenceDraft),
-          confidenceLevel: confidenceLevelForDraft(draft.confidenceDraft),
-          breakdown: buildDraftBreakdown(draft) as unknown as object,
-          riskPenalties: draft.risks.slice(0, 3).map((reason) => ({ reason, penalty: 4 })) as unknown as object,
-          explanation:
-            signals.length > 0
-              ? 'LLM-assisted opportunity draft synthesized from project signals and evidence. Validate assumptions before treating the score as final.'
-              : 'LLM-assisted starter discovery draft. This is a hypothesis set, not verified market fact.',
-        },
-      });
-
-      await this.persistDiscoveryAssumptions(workspaceId, projectId, language, draft.assumptions);
-      await this.persistDiscoveryQuestions(workspaceId, projectId, language, draft.validationQuestions);
-
-      await this.prisma.ventureThesis.deleteMany({ where: { nicheId: niche.id } });
-      await this.prisma.ventureThesis.create({
-        data: {
-          workspaceId,
-          nicheId: niche.id,
-          projectId,
-          thesis: buildDraftVentureThesis(niche.title, draft, language) as unknown as object,
-          ventureScaleScore: clampScore(draft.ventureScaleDraft),
-          ventureScaleConfidence: clampConfidence(draft.confidenceDraft),
-          ventureScaleLevel: confidenceLevelForDraft(draft.confidenceDraft),
-          ventureScaleBreakdown: [] as unknown as object,
-          whatMustBeTrue: draft.validationQuestions as unknown as object,
-        },
-      });
-
-      opportunities.push({
-        id: niche.id,
-        name: niche.title,
-        oneLiner: niche.oneLiner,
-        riskLevel: niche.riskLevel,
-        projectId,
-        targetMarket: draft.market,
-        evidenceCount,
-        opportunityScore: clampScore(draft.opportunityScoreDraft),
-        confidence: {
-          level: confidenceLevelForDraft(draft.confidenceDraft),
-          value: clampConfidence(draft.confidenceDraft),
-        },
-        ventureScaleScore: clampScore(draft.ventureScaleDraft),
-        buildReadinessScore: clampScore(draft.buildReadinessDraft),
-        assumptions: draft.assumptions,
-        risks: draft.risks,
-        validationQuestions: draft.validationQuestions,
-        generationMetadata: {
-          provider: llmResult.provider,
-          model: llmResult.modelId,
-          task: llmResult.taskType,
-          status: 'success',
-          durationMs: llmResult.latencyMs,
-          inputTokens: llmResult.inputTokens,
-          outputTokens: llmResult.outputTokens,
-          estimatedCost: llmResult.estimatedCost,
+          evidenceCount,
           generatedAt,
+          llmResult,
           mode: signals.length > 0 ? 'signal_backed' : 'starter_discovery',
-        },
-      });
+        }),
+      );
     }
 
     const usage = await this.prisma.lLMUsageLog.findFirst({
@@ -278,6 +209,230 @@ export class NichesService {
         generatedAt: usage?.createdAt.toISOString() ?? generatedAt,
         usageLogId: usage?.id ?? null,
         mode: signals.length > 0 ? 'signal_backed' : 'starter_discovery',
+      },
+    };
+  }
+
+  /**
+   * Persist one LLM-generated opportunity draft as a Niche + NicheScore +
+   * assumptions/questions + VentureThesis, and return the API-shaped summary.
+   * Shared by `discover()` (one call per draft) and `createFromIdea()` (a
+   * single call) so the persistence logic never drifts between the two.
+   */
+  private async persistOpportunityDraft(params: {
+    workspaceId: string;
+    projectId: string;
+    language: LocaleCode;
+    draft: GeneratedOpportunityDraft;
+    scoringVersionId: string;
+    evidenceCount: number;
+    generatedAt: string;
+    llmResult: GenerationResult;
+    mode: 'signal_backed' | 'starter_discovery' | 'founder_idea';
+    extra?: { intakeMode?: string; founderIdeaText?: string };
+  }) {
+    const { workspaceId, projectId, language, draft, scoringVersionId, evidenceCount, generatedAt, llmResult, mode, extra } = params;
+
+    const niche = await this.prisma.niche.create({
+      data: {
+        workspaceId,
+        projectId,
+        title: draft.title,
+        oneLiner: draft.oneLineThesis,
+        problem: draft.pain,
+        targetAudience: draft.targetUser,
+        whyNow: draft.whyNow,
+        useCases: draft.validationQuestions.slice(0, 4),
+        competitors: draft.risks.slice(0, 4),
+        mvpConcept: `Starter hypothesis for ${draft.title}. Validate before committing build scope.`,
+        monetization: 'Validate pricing and packaging with target buyers.',
+        recommendedProductFormat: recommendFormat(draft.vertical),
+        riskLevel: draftRiskLevel(draft),
+        language,
+        intakeMode: extra?.intakeMode ?? 'discovered',
+        founderIdeaText: extra?.founderIdeaText ?? '',
+      },
+    });
+
+    await this.prisma.nicheScore.create({
+      data: {
+        nicheId: niche.id,
+        scoringVersionId,
+        totalScore: clampScore(draft.opportunityScoreDraft),
+        confidenceValue: clampConfidence(draft.confidenceDraft),
+        confidenceLevel: confidenceLevelForDraft(draft.confidenceDraft),
+        breakdown: buildDraftBreakdown(draft) as unknown as object,
+        riskPenalties: draft.risks.slice(0, 3).map((reason) => ({ reason, penalty: 4 })) as unknown as object,
+        explanation:
+          mode === 'signal_backed'
+            ? 'LLM-assisted opportunity draft synthesized from project signals and evidence. Validate assumptions before treating the score as final.'
+            : mode === 'founder_idea'
+              ? "LLM-developed founder-supplied idea. Scored against the idea as described — this is a starter hypothesis, validate before committing build scope."
+              : 'LLM-assisted starter discovery draft. This is a hypothesis set, not verified market fact.',
+      },
+    });
+
+    await this.persistDiscoveryAssumptions(workspaceId, projectId, language, draft.assumptions);
+    await this.persistDiscoveryQuestions(workspaceId, projectId, language, draft.validationQuestions);
+
+    await this.prisma.ventureThesis.deleteMany({ where: { nicheId: niche.id } });
+    await this.prisma.ventureThesis.create({
+      data: {
+        workspaceId,
+        nicheId: niche.id,
+        projectId,
+        thesis: buildDraftVentureThesis(niche.title, draft, language) as unknown as object,
+        ventureScaleScore: clampScore(draft.ventureScaleDraft),
+        ventureScaleConfidence: clampConfidence(draft.confidenceDraft),
+        ventureScaleLevel: confidenceLevelForDraft(draft.confidenceDraft),
+        ventureScaleBreakdown: [] as unknown as object,
+        whatMustBeTrue: draft.validationQuestions as unknown as object,
+      },
+    });
+
+    return {
+      id: niche.id,
+      name: niche.title,
+      oneLiner: niche.oneLiner,
+      riskLevel: niche.riskLevel,
+      projectId,
+      targetMarket: draft.market,
+      evidenceCount,
+      opportunityScore: clampScore(draft.opportunityScoreDraft),
+      confidence: {
+        level: confidenceLevelForDraft(draft.confidenceDraft),
+        value: clampConfidence(draft.confidenceDraft),
+      },
+      ventureScaleScore: clampScore(draft.ventureScaleDraft),
+      buildReadinessScore: clampScore(draft.buildReadinessDraft),
+      assumptions: draft.assumptions,
+      risks: draft.risks,
+      validationQuestions: draft.validationQuestions,
+      generationMetadata: {
+        provider: llmResult.provider,
+        model: llmResult.modelId,
+        task: llmResult.taskType,
+        status: 'success',
+        durationMs: llmResult.latencyMs,
+        inputTokens: llmResult.inputTokens,
+        outputTokens: llmResult.outputTokens,
+        estimatedCost: llmResult.estimatedCost,
+        generatedAt,
+        mode,
+      },
+    };
+  }
+
+  /**
+   * Create a single opportunity directly from a founder-supplied idea. Unlike
+   * `discover()`, this does not wipe existing niches for the project, and the
+   * LLM is asked to develop and score THIS specific idea (not scan the market
+   * for options) — score/confidence/risks/questions are real, not placeholders.
+   */
+  async createFromIdea(
+    workspaceId: string,
+    projectId: string,
+    dto: CreateOpportunityFromIdeaDto,
+    userId?: string,
+  ) {
+    const project = await this.requireProject(workspaceId, projectId);
+    const idea = dto.founderIdea.trim();
+    if (idea.length < 40) {
+      throw new BadRequestException({
+        code: 'founder_idea_too_short',
+        message: 'Founder idea must be at least 40 characters. Provide enough detail about the product, problem, and vision.',
+      });
+    }
+
+    const language = normalizeLocale(dto.outputLanguage ?? project.defaultOutputLanguage ?? project.marketLanguage ?? 'en');
+    const evidenceMode = dto.evidenceMode ?? 'starter_hypothesis';
+
+    let llmResult;
+    try {
+      llmResult = await this.router.run({
+        taskType: 'niche_generation',
+        workspaceId,
+        userId: userId ?? null,
+        projectId,
+        jsonMode: true,
+        estimatedOutputTokens: 1200,
+        contract: {
+          ...baseContract(language),
+          outputLanguage: language,
+          marketLanguage: language,
+          evidenceRequirement: 'preferred',
+          unsupportedClaimsPolicy: 'mark_as_assumption',
+        },
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You develop ONE founder-supplied idea into a single market opportunity for SignalKit. Return strict JSON only, with EXACTLY one entry: ' +
+              '{"opportunities":[{"title":"","oneLineThesis":"","targetUser":"","pain":"","whyNow":"","market":"","vertical":"","opportunityScoreDraft":0,"confidenceDraft":0,"ventureScaleDraft":0,"buildReadinessDraft":0,"assumptions":[],"risks":[],"validationQuestions":[]}]} ' +
+              'Rules: analyze the founder\'s idea as given — do not substitute a different or narrower concept. Find its full potential (hidden features, ecosystem/expansion angles, category potential) before scoring it. ' +
+              'Keep the requested language, never fabricate TAM or revenue numbers, mark weak or unvalidated evidence as assumptions, and use integer draft scores from 0 to 100. ' +
+              'Since this idea is founder-supplied and not yet validated against external sources, confidenceDraft should usually be modest (20-50) unless the idea itself supplies strong evidence. ' +
+              'The output language is ONLY the language you must write in — it is NOT evidence of the target market, target country, or the nationality/spoken language of the target audience. A founder writing in Russian can be building for the US, EU, or a global market; never narrow "market" or "targetUser" to a language-based nationality unless the idea text or the targetMarket/targetAudience hints explicitly say so. Default to the broadest defensible market (often global) when none is specified.',
+          },
+          {
+            role: 'user',
+            content: buildFounderIdeaPrompt({
+              projectName: project.name,
+              founderIdea: idea,
+              targetMarket: dto.targetMarket,
+              targetAudience: dto.targetAudience,
+              productFormat: dto.productFormat,
+              riskTolerance: dto.riskTolerance,
+              evidenceMode,
+              language,
+            }),
+          },
+        ],
+      });
+    } catch (error) {
+      throw new BadRequestException(mapLlmError(error, 'Developing your idea needs a configured LLM connection and selected model.'));
+    }
+
+    const payload = safeParseDiscoveryPayload(llmResult.content);
+    const draft = payload.opportunities[0];
+    if (!draft) {
+      throw new BadRequestException({
+        code: 'llm_provider_error',
+        message: 'The LLM could not develop this idea into an opportunity. Adjust the workspace model or idea text and try again.',
+      });
+    }
+
+    const scoringVersion = await this.currentScoringVersion();
+    const evidenceCount = await this.prisma.evidenceItem.count({ where: { projectId } });
+    const generatedAt = new Date().toISOString();
+
+    const opportunity = await this.persistOpportunityDraft({
+      workspaceId,
+      projectId,
+      language,
+      draft,
+      scoringVersionId: scoringVersion.id,
+      evidenceCount,
+      generatedAt,
+      llmResult,
+      mode: 'founder_idea',
+      extra: { intakeMode: 'founder_idea', founderIdeaText: idea },
+    });
+
+    return {
+      niches: 1,
+      opportunities: [opportunity],
+      generation: {
+        provider: llmResult.provider,
+        model: llmResult.modelId,
+        task: llmResult.taskType,
+        status: 'success',
+        durationMs: llmResult.latencyMs,
+        inputTokens: llmResult.inputTokens,
+        outputTokens: llmResult.outputTokens,
+        estimatedCost: llmResult.estimatedCost,
+        generatedAt,
+        mode: 'founder_idea',
       },
     };
   }
@@ -729,10 +884,13 @@ function buildDiscoveryPrompt(input: {
     (signal, index) =>
       `${index + 1}. [${signal.signalType}] topic=${signal.topic ?? 'general'} strength=${signal.strengthScore.toFixed(2)} freshness=${signal.freshnessScore.toFixed(2)} :: ${signal.text}`,
   );
+  const goal = input.projectGoal.trim();
   return [
     `Role: ${input.role}.`,
     `Project: ${input.projectName}.`,
-    `Goal: ${input.projectGoal || 'Discover strong product opportunities.'}`,
+    goal
+      ? `FOUNDER'S STATED IDEA / GOAL (every opportunity below MUST be a specific angle, feature, or market entry point within this idea — do not drift into an unrelated market or replace it with a different concept):\n\n${goal}`
+      : 'No specific founder goal was stated — run open discovery for strong product opportunities.',
     `Opportunity search context:`,
     `- Market: ${input.market}.`,
     `- Direction / subthemes: ${input.directionContext}.`,
@@ -743,7 +901,7 @@ function buildDiscoveryPrompt(input: {
     `- MVP timeline: ${input.mvpTimeline ?? 'Not specified'}.`,
     `- Evidence mode: ${input.evidenceMode ?? 'starter_hypothesis'}.`,
     `- Investor lens: ${input.investorLens ? 'enabled' : 'disabled'}.`,
-    `Output language: ${input.language}.`,
+    `Output language: ${input.language} (this is only the language to write in — it says nothing about the target market or audience nationality; do not narrow the market based on it).`,
     'Split the opportunities into local opportunities, global analogs if relevant, investor-radar opportunities when investorLens is enabled, and underrated niche opportunities.',
     'Use the project signals below as primary evidence. If evidence is weak, keep the point in assumptions instead of presenting it as fact. Do not invent TAM or revenue numbers.',
     input.signals.length
@@ -751,6 +909,30 @@ function buildDiscoveryPrompt(input: {
       : 'No project signals are available. Produce a clearly labeled LLM-assisted starter discovery and keep unverified claims in assumptions.',
     signalLines.length ? `Signals:\n${signalLines.join('\n')}` : '',
   ].filter(Boolean).join('\n\n');
+}
+
+function buildFounderIdeaPrompt(input: {
+  projectName: string;
+  founderIdea: string;
+  targetMarket?: string;
+  targetAudience?: string;
+  productFormat?: string;
+  riskTolerance?: string;
+  evidenceMode?: string;
+  language: LocaleCode;
+}): string {
+  return [
+    `Project: ${input.projectName}.`,
+    `FOUNDER'S IDEA (verbatim — analyze THIS idea, do not substitute a different or narrower concept):\n\n${input.founderIdea}`,
+    `Context hints (optional, may be unset):`,
+    `- Target market: ${input.targetMarket ?? 'Not specified'}.`,
+    `- Target audience: ${input.targetAudience ?? 'Not specified'}.`,
+    `- Product format: ${input.productFormat ?? 'Not specified'}.`,
+    `- Risk tolerance: ${input.riskTolerance ?? 'Not specified'}.`,
+    `- Evidence mode: ${input.evidenceMode ?? 'starter_hypothesis'}.`,
+    `Output language: ${input.language} (this is only the language to write in — it says nothing about the target market or audience nationality; do not narrow the market based on it).`,
+    'First find the largest strategic version of this idea: hidden opportunities, underrated features, ecosystem/expansion potential, category-creation potential. Then produce exactly one opportunity object scoring the idea honestly as a starter hypothesis — do not fabricate TAM, revenue, or unicorn-scale claims; mark anything unverified as an assumption.',
+  ].join('\n\n');
 }
 
 function safeParseDiscoveryPayload(raw: string): DiscoveryPayload {

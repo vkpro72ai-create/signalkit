@@ -57,4 +57,20 @@ export const id: Partial<Record<MessageKey, string>> = {
   'label.estCost': 'Perk. biaya',
   'market.compare': 'Bandingkan pasar',
   'market.global': 'Global',
+
+  'export.language': 'Bahasa keluaran',
+
+  'opportunities.tabFind': 'Temukan peluang',
+  'opportunities.tabDevelop': 'Kembangkan ide saya',
+  'opportunities.ideaLabel': 'Jelaskan ide Anda',
+  'opportunities.ideaPlaceholder': 'Jelaskan ide Anda sebagai founder: untuk siapa produk ini, masalah besar apa yang dipecahkan, dan bisa menjadi apa dalam bentuk terbaiknya — pasar, ekosistem, skenario yang penting.',
+  'opportunities.ideaMinLengthHint': 'Minimal 40 karakter — cukup detail agar sistem dapat mengembangkannya.',
+  'opportunities.targetMarketLabel': 'Pasar sasaran',
+  'opportunities.targetAudienceLabel': 'Audiens sasaran',
+  'opportunities.productFormatLabel': 'Format produk',
+  'opportunities.evidenceModeLabel': 'Mode bukti',
+  'opportunities.developSubmit': 'Kembangkan ide ini',
+  'opportunities.developing': 'Mengembangkan ide Anda…',
+  'opportunities.developError': 'Tidak dapat mengembangkan ide ini',
+  'opportunities.ideaTooShort': 'Tuliskan setidaknya 40 karakter.',
 };

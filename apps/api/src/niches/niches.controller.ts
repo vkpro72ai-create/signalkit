@@ -4,7 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.service';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
 import { NichesService } from './niches.service';
-import { CompareMarketsDto, DiscoverNichesDto } from './dto/niche.dto';
+import { CompareMarketsDto, CreateOpportunityFromIdeaDto, DiscoverNichesDto } from './dto/niche.dto';
 
 @ApiTags('niches')
 @Controller('workspaces/:workspaceId')
@@ -21,6 +21,18 @@ export class NichesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.niches.discover(ws, pid, dto, user.sub);
+  }
+
+  @Post('projects/:projectId/niches/from-idea')
+  @RequirePermissions('niche:discover')
+  @ApiOperation({ summary: 'Develop a single founder-supplied idea into a scored opportunity (does not replace existing niches)' })
+  createFromIdea(
+    @Param('workspaceId') ws: string,
+    @Param('projectId') pid: string,
+    @Body() dto: CreateOpportunityFromIdeaDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.niches.createFromIdea(ws, pid, dto, user.sub);
   }
 
   @Get('projects/:projectId/niches')

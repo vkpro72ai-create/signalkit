@@ -57,4 +57,20 @@ export const hi: Partial<Record<MessageKey, string>> = {
   'label.estCost': 'अनुमानित लागत',
   'market.compare': 'बाज़ारों की तुलना करें',
   'market.global': 'वैश्विक',
+
+  'export.language': 'आउटपुट भाषा',
+
+  'opportunities.tabFind': 'अवसर खोजें',
+  'opportunities.tabDevelop': 'मेरी आइडिया विकसित करें',
+  'opportunities.ideaLabel': 'अपनी आइडिया बताएँ',
+  'opportunities.ideaPlaceholder': 'एक फाउंडर के रूप में अपनी आइडिया बताएँ: यह किसके लिए है, यह कौन-सी बड़ी समस्या हल करती है, और यह अपने पूर्ण रूप में क्या बन सकती है — बाज़ार, इकोसिस्टम, महत्वपूर्ण परिदृश्य।',
+  'opportunities.ideaMinLengthHint': 'कम से कम 40 अक्षर — सिस्टम के इसे विकसित करने के लिए पर्याप्त विवरण।',
+  'opportunities.targetMarketLabel': 'लक्षित बाज़ार',
+  'opportunities.targetAudienceLabel': 'लक्षित दर्शक',
+  'opportunities.productFormatLabel': 'उत्पाद प्रारूप',
+  'opportunities.evidenceModeLabel': 'साक्ष्य मोड',
+  'opportunities.developSubmit': 'यह आइडिया विकसित करें',
+  'opportunities.developing': 'आपकी आइडिया विकसित की जा रही है…',
+  'opportunities.developError': 'यह आइडिया विकसित नहीं की जा सकी',
+  'opportunities.ideaTooShort': 'कृपया कम से कम 40 अक्षर लिखें।',
 };

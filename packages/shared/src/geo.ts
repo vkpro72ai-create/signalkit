@@ -36,6 +36,34 @@ export const DEFAULT_LOCALE: LocaleCode = 'en';
 /** Locales that render right-to-left. */
 export const RTL_LOCALES: readonly LocaleCode[] = ['ar'] as const;
 
+/** English display name for each supported locale — used to build unambiguous LLM language instructions. */
+export const LOCALE_LANGUAGE_NAMES: Record<LocaleCode, string> = {
+  en: 'English',
+  ru: 'Russian',
+  tr: 'Turkish',
+  de: 'German',
+  es: 'Spanish',
+  fr: 'French',
+  pt: 'Portuguese',
+  ar: 'Arabic',
+  hi: 'Hindi',
+  id: 'Indonesian',
+};
+
+/** ISO 639-3 code used by the `franc-min` language detector for each supported locale. */
+export const LOCALE_TO_ISO6393: Record<LocaleCode, string> = {
+  en: 'eng',
+  ru: 'rus',
+  tr: 'tur',
+  de: 'deu',
+  es: 'spa',
+  fr: 'fra',
+  pt: 'por',
+  ar: 'arb',
+  hi: 'hin',
+  id: 'ind',
+};
+
 /**
  * How a document's language is decided.
  * - `follow_interface`: use the user's interface locale

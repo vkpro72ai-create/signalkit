@@ -63,4 +63,20 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'label.estCost': 'Оценка стоимости',
   'market.compare': 'Сравнить рынки',
   'market.global': 'Глобально',
+
+  'export.language': 'Язык результата',
+
+  'opportunities.tabFind': 'Найти возможности',
+  'opportunities.tabDevelop': 'Развить мою идею',
+  'opportunities.ideaLabel': 'Опишите вашу идею',
+  'opportunities.ideaPlaceholder': 'Опишите идею как фаундер: для кого продукт, какую большую проблему он решает и каким он может стать в полном масштабе — рынки, экосистема, важные сценарии.',
+  'opportunities.ideaMinLengthHint': 'Минимум 40 символов — этого достаточно, чтобы система смогла развить идею.',
+  'opportunities.targetMarketLabel': 'Целевой рынок',
+  'opportunities.targetAudienceLabel': 'Целевая аудитория',
+  'opportunities.productFormatLabel': 'Формат продукта',
+  'opportunities.evidenceModeLabel': 'Режим доказательств',
+  'opportunities.developSubmit': 'Развить эту идею',
+  'opportunities.developing': 'Развиваем вашу идею…',
+  'opportunities.developError': 'Не удалось развить эту идею',
+  'opportunities.ideaTooShort': 'Напишите, пожалуйста, не менее 40 символов.',
 };

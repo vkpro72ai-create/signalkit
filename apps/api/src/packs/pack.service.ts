@@ -17,8 +17,8 @@ import { DEPTH_DOCUMENTS, buildDocument } from './templates';
 import { buildBuildBlueprint } from './blueprint';
 import { runQualityGates, type DocForGate } from './quality-gates';
 import {
-  buildProductPackV2Prompt,
-  buildProductPackV2RepairPrompt,
+  buildProductPackV2StepPrompt,
+  buildProductPackV2StepRepairPrompt,
   type BuildProductPackV2PromptInput,
 } from './prompts/product-pack-v2.builder';
 import {
@@ -26,6 +26,11 @@ import {
   type ProductPackV2Layer,
   type ProductPackV2SectionKey,
 } from './prompts/product-pack-v2.sections';
+import {
+  PRODUCT_PACK_V2_STEPS,
+  type ProductPackV2Step,
+  type ProductPackV2StepId,
+} from './prompts/product-pack-v2.steps';
 
 export interface GeneratePackOptions {
   depth: ProductPackDepth;
@@ -43,17 +48,77 @@ interface ProductPackV2Section {
   assumptions: string[];
   risks: string[];
   evidenceRefs: string[];
+  sourceNeeds: string[];
 }
 
 interface ProductPackV2Document {
   type: string;
+  layer?: string;
   title: string;
   audience: string[];
   purpose: string;
+  whatThisIs: string;
+  whyItExists: string;
   howToUse: string;
   connections: string[];
+  doneDefinition: string[];
   sections: ProductPackV2Section[];
   acceptanceCriteria: string[];
+}
+
+interface ProductPackV2QiraTask {
+  title: string;
+  description: string;
+  ownerRole: string;
+  taskType: string;
+  sourceSections: string[];
+  implementationNotes: string[];
+  filesHint: string[];
+  dependencies: string[];
+  acceptanceCriteria: string[];
+  qaChecks: string[];
+  doneDefinition: string[];
+}
+
+interface ProductPackV2QiraEpic {
+  title: string;
+  description: string;
+  sourceSections: string[];
+  priority: string;
+  sprintHint: string;
+  tasks: ProductPackV2QiraTask[];
+  acceptanceCriteria: string[];
+  dependencies: string[];
+  doneDefinition: string[];
+}
+
+interface ProductPackV2QiraBacklog {
+  projectTitle: string;
+  projectDescription: string;
+  epics: ProductPackV2QiraEpic[];
+  sprints: Array<{ name: string; goal: string; epicTitles: string[]; taskTitles: string[]; definitionOfDone: string[] }>;
+  dependencies: string[];
+  ownerRoles: string[];
+  labels: string[];
+  acceptanceCriteria: string[];
+  doneDefinition: string[];
+}
+
+interface ProductPackV2AiAgentPrompt {
+  title: string;
+  targetAgent: string;
+  purpose: string;
+  promptBody: string;
+  relatedSections: string[];
+  expectedFiles: string[];
+  tests: string[];
+  finalReportFormat: string[];
+}
+
+interface ProductPackV2ExecutionHandoff {
+  mode: string;
+  qiraBacklogDraft: ProductPackV2QiraBacklog | null;
+  aiAgentPromptBundleDraft: ProductPackV2AiAgentPrompt[];
 }
 
 interface ProductPackV2Json {
@@ -79,6 +144,7 @@ interface ProductPackV2Json {
   dataModel: unknown[];
   risks: unknown[];
   executionPhases: unknown[];
+  executionHandoff: ProductPackV2ExecutionHandoff;
   exportAssets: unknown[];
 }
 
@@ -112,8 +178,9 @@ type ProductPackV2ParseReason =
   | 'schema_invalid_documents'
   | 'schema_missing_sections';
 
-interface ProductPackV2ParseResult {
-  json: ProductPackV2Json | null;
+/** Parse result for ONE step's JSON output (documents scoped to that step, plus whichever top-level fields it owns). */
+interface ProductPackV2StepParseResult {
+  json: (Partial<ProductPackV2Json> & { documents: ProductPackV2Document[] }) | null;
   reason: ProductPackV2ParseReason;
 }
 
@@ -150,12 +217,18 @@ interface PackV2AiRun {
   repair?: PackV2AiRunDetails;
 }
 
+/** One AI-run record per completed pipeline step, keyed by step id. */
+type PackV2StepAiRuns = Partial<Record<ProductPackV2StepId, PackV2AiRun>>;
+
 const PACK_V2_TASK_TYPE: LLMTaskType = 'product_vision_generation';
 const PACK_V2_TIMEOUT_MS = 300_000;
-const PACK_V2_GENERATE_MAX_OUTPUT_TOKENS = 48_000;
-const PACK_V2_REPAIR_MAX_OUTPUT_TOKENS = 48_000;
-const PACK_V2_OUTPUT_TRUNCATED_MESSAGE = 'Selected model/output limit returned truncated Product Pack JSON. Choose a model with higher output capacity or use chunked/background generation.';
 const PACK_V2_DEBUG_RAW_LOGGING = /^(1|true|yes)$/i.test(process.env.DEBUG_PRODUCT_PACK_V2 ?? '');
+
+const FALLBACK_EXECUTION_HANDOFF: ProductPackV2ExecutionHandoff = {
+  mode: 'team_studio_and_ai_agent',
+  qiraBacklogDraft: null,
+  aiAgentPromptBundleDraft: [],
+};
 
 /** docType → router task type, for optional LLM enhancement. */
 const DOC_TASK: Partial<Record<DocumentType, LLMTaskType>> = {
@@ -261,6 +334,16 @@ export class PackService {
     return { pack, documentCount: built.length, qualityGate: result };
   }
 
+  /**
+   * Generate a Build-Ready Product Pack as a sequence of independent LLM
+   * steps (see product-pack-v2.steps.ts) instead of one ~39-section mega
+   * call. Steps run strictly in order — never in parallel — so each step
+   * can be told what earlier steps already decided (via a deterministic,
+   * non-LLM summary) and stay consistent with it. If a later step fails
+   * even after its own repair attempt, generation stops there but the
+   * documents/fields already produced by completed steps are still
+   * persisted rather than discarded.
+   */
   private async generatePackV2(
     workspaceId: string,
     nicheId: string,
@@ -284,47 +367,41 @@ export class PackService {
       },
     });
 
+    const input = this.buildProductPackV2Input(ctx, opts);
+    const documents: ProductPackV2Document[] = [];
+    const extraFields: Record<string, unknown> = {};
+    const stepAiRuns: PackV2StepAiRuns = {};
+    const priorSummaries: string[] = [];
+    let pipelineError: unknown = null;
+
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      try {
+        const stepResult = await this.runPackV2Step(workspaceId, pack.id, projectId, ctx, input, step, priorSummaries.join('\n\n'));
+        documents.push(...stepResult.documents);
+        mergeStepFields(extraFields, stepResult.extraFields);
+        stepAiRuns[step.id] = stepResult.aiRun;
+        priorSummaries.push(summarizeStepForNextStep(step, stepResult));
+      } catch (error) {
+        pipelineError = error;
+        this.logger.warn(`Product Pack v2 step "${step.id}" failed for niche ${nicheId}: ${String(error)}`);
+        break;
+      }
+    }
+
+    if (documents.length === 0) {
+      await this.prisma.productDocumentPack.update({ where: { id: pack.id }, data: { status: 'failed' } });
+      throw mapPackGenerationError(pipelineError, 'Build-Ready Product Pack generation failed.');
+    }
+
     try {
-      const prompt = buildProductPackV2Prompt(this.buildProductPackV2Input(ctx, opts));
-      const firstRun = await this.runPackPrompt(workspaceId, pack.id, projectId, ctx.language, prompt, PACK_V2_TASK_TYPE, 'generate');
-      const firstAttempt = await this.inspectPackV2Attempt(workspaceId, PACK_V2_TASK_TYPE, 'generate', firstRun);
-
-      let packJson = firstAttempt.parsed.json;
-      let aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics) };
-
-      if (!packJson) {
-        const repairPrompt = buildProductPackV2RepairPrompt(firstAttempt.raw);
-        const repairRun = await this.runPackPrompt(workspaceId, pack.id, projectId, ctx.language, repairPrompt, PACK_V2_TASK_TYPE, 'repair');
-        const repairAttempt = await this.inspectPackV2Attempt(workspaceId, PACK_V2_TASK_TYPE, 'repair', repairRun);
-        const repaired = repairAttempt.parsed.json;
-        if (!repaired) {
-          if (firstAttempt.diagnostics.likelyTruncated || repairAttempt.diagnostics.likelyTruncated) {
-            throw buildProductPackV2TruncatedException();
-          }
-          throw new BadRequestException({
-            code: 'product_pack_v2_repair_failed',
-            message: `Product Pack JSON repair failed (reason: ${repairAttempt.diagnostics.parseReason}).`,
-          });
-        }
-        packJson = repaired;
-        aiRun = {
-          primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics),
-          repair: this.aiRunFromResult(repairRun, repairAttempt.diagnostics),
-        };
-      }
-
-      if (!packJson) {
-        throw new BadRequestException({ code: 'product_pack_v2_invalid_output', message: 'Product Pack JSON could not be parsed.' });
-      }
-
-      packJson = normalizePackV2Pack(packJson);
+      const packJson = normalizePackV2Pack(finalizePackV2Json(extraFields, documents, ctx));
       const quality = packJson.quality;
       const finalTitle = normalizePackTitle(packJson.packTitle);
       const confidenceValue = normalizeConfidenceScore(quality.confidenceScore);
       const confidenceLevel = confidenceLevelFromScore(confidenceValue);
-      const packMetadata = buildProductPackV2Metadata(packJson, ctx, opts, aiRun);
+      const packMetadata = buildProductPackV2Metadata(packJson, stepAiRuns);
       const docRows = packJson.documents.map((doc) =>
-        mapPackV2DocumentToProductPackDocument(doc, packJson, packMetadata, ctx, opts, pack.id, aiRun),
+        mapPackV2DocumentToProductPackDocument(doc, packJson, packMetadata, ctx, opts, pack.id, stepAiRuns),
       );
       const gate = buildProductPackV2QualityGate(packJson, packMetadata.qualityGates);
 
@@ -370,7 +447,7 @@ export class PackService {
       };
     } catch (error) {
       await this.prisma.productDocumentPack.update({ where: { id: pack.id }, data: { status: 'failed' } });
-      this.logger.warn(`Product Pack v2 generation failed for niche ${nicheId}: ${String(error)}`);
+      this.logger.warn(`Product Pack v2 post-processing failed for niche ${nicheId}: ${String(error)}`);
       throw mapPackGenerationError(error, 'Build-Ready Product Pack generation failed.');
     }
   }
@@ -435,9 +512,62 @@ export class PackService {
         contradictions: ctx.constraints.map((c) => c.text),
       },
       outputLanguage: ctx.language,
-      founderRequest: [ctx.niche.title, ctx.niche.oneLiner, ctx.niche.problem].filter(Boolean).join('\n'),
+      founderRequest:
+        ctx.niche.intakeMode === 'founder_idea' && ctx.niche.founderIdeaText
+          ? ctx.niche.founderIdeaText
+          : [ctx.niche.title, ctx.niche.oneLiner, ctx.niche.problem].filter(Boolean).join('\n'),
       existingPackNotes: undefined,
     };
+  }
+
+  /** Run one step of the sequential Product Pack V2 pipeline: generate, and repair once if invalid. */
+  private async runPackV2Step(
+    workspaceId: string,
+    packId: string,
+    projectId: string,
+    ctx: PackContext,
+    input: BuildProductPackV2PromptInput,
+    step: ProductPackV2Step,
+    priorSummary: string,
+  ): Promise<{ documents: ProductPackV2Document[]; extraFields: Record<string, unknown>; aiRun: PackV2AiRun }> {
+    const prompt = buildProductPackV2StepPrompt(step, input, priorSummary);
+    const firstRun = await this.runPackPrompt(workspaceId, packId, projectId, ctx.language, prompt, PACK_V2_TASK_TYPE, step.maxOutputTokens);
+    const firstAttempt = await this.inspectPackV2Attempt(PACK_V2_TASK_TYPE, 'generate', firstRun, step.maxOutputTokens, (raw) =>
+      parsePackV2StepJson(raw, step),
+    );
+
+    let parsed = firstAttempt.parsed;
+    let aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics) };
+
+    if (!parsed.json) {
+      const repairPrompt = buildProductPackV2StepRepairPrompt(step, firstAttempt.raw);
+      const repairRun = await this.runPackPrompt(workspaceId, packId, projectId, ctx.language, repairPrompt, PACK_V2_TASK_TYPE, step.maxOutputTokens);
+      const repairAttempt = await this.inspectPackV2Attempt(PACK_V2_TASK_TYPE, 'repair', repairRun, step.maxOutputTokens, (raw) =>
+        parsePackV2StepJson(raw, step),
+      );
+      parsed = repairAttempt.parsed;
+      if (!parsed.json) {
+        if (firstAttempt.diagnostics.likelyTruncated || repairAttempt.diagnostics.likelyTruncated) {
+          throw buildProductPackV2StepTruncatedException(step);
+        }
+        throw new BadRequestException({
+          code: 'product_pack_v2_step_repair_failed',
+          message: `Product Pack step "${step.title}" JSON repair failed (reason: ${repairAttempt.diagnostics.parseReason}).`,
+        });
+      }
+      aiRun = {
+        primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics),
+        repair: this.aiRunFromResult(repairRun, repairAttempt.diagnostics),
+      };
+    }
+
+    const json = parsed.json;
+    const documents = json.documents;
+    const extraFields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(json)) {
+      if (key !== 'documents') extraFields[key] = value;
+    }
+    return { documents, extraFields, aiRun };
   }
 
   private async runPackPrompt(
@@ -447,7 +577,7 @@ export class PackService {
     language: LocaleCode,
     prompt: { system: string; user: string },
     taskType: LLMTaskType,
-    stage: 'generate' | 'repair',
+    maxOutputTokens: number,
   ) {
     const request = this.router.run({
       taskType,
@@ -455,7 +585,7 @@ export class PackService {
       projectId,
       packId,
       jsonMode: true,
-      estimatedOutputTokens: requestedPackV2OutputTokens(stage),
+      estimatedOutputTokens: maxOutputTokens,
       contract: {
         ...baseContract(language),
         outputLanguage: language,
@@ -472,22 +602,18 @@ export class PackService {
   }
 
   private async inspectPackV2Attempt(
-    workspaceId: string,
     taskType: LLMTaskType,
     stage: 'generate' | 'repair',
     result: Awaited<ReturnType<LlmRouterService['run']>>,
+    requestedMaxOutputTokens: number,
+    parseFn: (raw: string) => ProductPackV2StepParseResult,
   ) {
     const raw = extractLlmText(result);
-    const requestedMaxOutputTokens = requestedPackV2OutputTokens(stage);
-    const effectiveMaxOutputTokens = await this.router.resolveTaskOutputBudget(
-      taskType,
-      result.modelId,
-      requestedMaxOutputTokens,
-    );
-    const parsed = this.parsePackV2Json(raw);
+    const effectiveMaxOutputTokens = await this.router.resolveTaskOutputBudget(taskType, result.modelId, requestedMaxOutputTokens);
+    const parsed = parseFn(raw);
     const finishReason = extractFinishReason(result);
     const likelyTruncated = isLikelyTruncatedPackOutput({
-      parsed,
+      json: parsed.json,
       outputTokens: result.outputTokens,
       requestedMaxOutputTokens,
       effectiveMaxOutputTokens,
@@ -557,82 +683,6 @@ export class PackService {
     };
   }
 
-  private parsePackV2Json(raw: string): ProductPackV2ParseResult {
-    try {
-      const parsed = parseJsonLike(raw) as Partial<ProductPackV2Json>;
-      if (!parsed || typeof parsed !== 'object') {
-        return { json: null, reason: 'schema_invalid_root' };
-      }
-      if (parsed.packType !== 'build_ready_product_pack') return { json: null, reason: 'schema_missing_top_level' };
-      if (typeof parsed.packTitle !== 'string' || !parsed.packTitle.trim()) return { json: null, reason: 'schema_missing_top_level' };
-      if (typeof parsed.oneLineThesis !== 'string' || typeof parsed.language !== 'string') {
-        return { json: null, reason: 'schema_missing_top_level' };
-      }
-      if (!parsed.ideaAmplification || typeof parsed.ideaAmplification !== 'object') return { json: null, reason: 'schema_missing_top_level' };
-      if (!parsed.recommendedStrategy || typeof parsed.recommendedStrategy !== 'object') return { json: null, reason: 'schema_missing_top_level' };
-      if (!parsed.quality || typeof parsed.quality !== 'object') return { json: null, reason: 'schema_invalid_quality' };
-      if (
-        typeof parsed.quality.completenessScore !== 'number' ||
-        typeof parsed.quality.confidenceScore !== 'number' ||
-        typeof parsed.quality.assumptionCount !== 'number' ||
-        typeof parsed.quality.evidenceCount !== 'number' ||
-        typeof parsed.quality.riskLevel !== 'string' ||
-        !Array.isArray(parsed.quality.missingInputs)
-      ) {
-        return { json: null, reason: 'schema_invalid_quality' };
-      }
-      if (!Array.isArray(parsed.documents) || parsed.documents.length === 0) {
-        return { json: null, reason: 'schema_missing_documents' };
-      }
-      if (
-        parsed.documents.some(
-          (doc) =>
-            !doc ||
-            typeof doc !== 'object' ||
-            typeof doc.type !== 'string' ||
-            typeof doc.title !== 'string' ||
-            !Array.isArray(doc.audience) ||
-            typeof doc.purpose !== 'string' ||
-            typeof doc.howToUse !== 'string' ||
-            !Array.isArray(doc.connections) ||
-            !Array.isArray(doc.sections) ||
-            !Array.isArray(doc.acceptanceCriteria) ||
-            doc.sections.some(
-              (section) =>
-                !section ||
-                typeof section !== 'object' ||
-                typeof section.heading !== 'string' ||
-                typeof section.content !== 'string' ||
-                !Array.isArray(section.examples) ||
-                !Array.isArray(section.implementationNotes) ||
-                !Array.isArray(section.assumptions) ||
-                !Array.isArray(section.risks) ||
-                !Array.isArray(section.evidenceRefs),
-            ),
-        )
-      ) {
-        return { json: null, reason: 'schema_invalid_documents' };
-      }
-
-      const matchedSections = new Set(
-        parsed.documents
-          .map((doc) => resolvePackV2Section(doc?.type, doc?.title))
-          .filter((section): section is typeof PRODUCT_PACK_V2_SECTIONS[number] => Boolean(section))
-          .map((section) => section.key),
-      );
-      if (PRODUCT_PACK_V2_SECTIONS.some((section) => !matchedSections.has(section.key))) {
-        return { json: null, reason: 'schema_missing_sections' };
-      }
-
-      return { json: parsed as ProductPackV2Json, reason: 'ok' };
-    } catch (error) {
-      if (error instanceof Error && error.message === 'empty_json') {
-        return { json: null, reason: 'empty_json' };
-      }
-      return { json: null, reason: 'invalid_json' };
-    }
-  }
-
   /** Get the Build Blueprint for a pack (regenerating from context if absent). */
   async getBlueprint(workspaceId: string, packId: string) {
     await this.getPack(workspaceId, packId);
@@ -695,8 +745,30 @@ export class PackService {
     return metadata ? { ...pack, metadata, qualityGate: gate } : { ...pack, qualityGate: gate };
   }
 
-  listForNiche(workspaceId: string, nicheId: string) {
-    return this.prisma.productDocumentPack.findMany({ where: { workspaceId, nicheId }, orderBy: { createdAt: 'desc' } });
+  /**
+   * List packs for a niche with their documents and latest quality gate —
+   * the web/mobile pack list reads `pack.documents.length` and
+   * `pack.qualityGate.status` directly, so both must always be present
+   * (never `undefined`) even though `qualityGate` has no Prisma relation.
+   */
+  async listForNiche(workspaceId: string, nicheId: string) {
+    const packs = await this.prisma.productDocumentPack.findMany({
+      where: { workspaceId, nicheId },
+      orderBy: { createdAt: 'desc' },
+      include: { documents: true },
+    });
+    if (packs.length === 0) return [];
+
+    const gates = await this.prisma.qualityGateResult.findMany({
+      where: { packId: { in: packs.map((pack) => pack.id) } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const latestGateByPack = new Map<string, (typeof gates)[number]>();
+    for (const gate of gates) {
+      if (!latestGateByPack.has(gate.packId)) latestGateByPack.set(gate.packId, gate);
+    }
+
+    return packs.map((pack) => ({ ...pack, qualityGate: latestGateByPack.get(pack.id) ?? null }));
   }
 
   async documents(workspaceId: string, packId: string) {
@@ -796,7 +868,7 @@ export class PackService {
     });
     if (!niche) throw new NotFoundException('Niche not found');
     const project = await this.prisma.project.findUnique({ where: { id: niche.projectId } });
-    const language = (opts.language ?? (project?.marketLanguage as LocaleCode) ?? 'en') as LocaleCode;
+    const language = (opts.language ?? (project?.defaultOutputLanguage as LocaleCode) ?? (project?.marketLanguage as LocaleCode) ?? 'en') as LocaleCode;
 
     const [claims, assumptions, questions, constraints, evidence, sourceRefs] = await Promise.all([
       this.prisma.claim.findMany({ where: { projectId: niche.projectId } }),
@@ -813,6 +885,7 @@ export class PackService {
         title: niche.title, oneLiner: niche.oneLiner, problem: niche.problem, targetAudience: niche.targetAudience,
         whyNow: niche.whyNow, useCases: niche.useCases, competitors: niche.competitors, monetization: niche.monetization,
         mvpConcept: niche.mvpConcept, recommendedProductFormat: niche.recommendedProductFormat, riskLevel: niche.riskLevel,
+        intakeMode: niche.intakeMode, founderIdeaText: niche.founderIdeaText,
       },
       score: score
         ? {
@@ -869,14 +942,17 @@ function extractLlmText(result: unknown): string {
   return '';
 }
 
-function requestedPackV2OutputTokens(stage: 'generate' | 'repair'): number {
-  return stage === 'generate' ? PACK_V2_GENERATE_MAX_OUTPUT_TOKENS : PACK_V2_REPAIR_MAX_OUTPUT_TOKENS;
-}
-
 function buildProductPackV2TruncatedException() {
   return new BadRequestException({
     code: 'product_pack_v2_output_truncated',
-    message: PACK_V2_OUTPUT_TRUNCATED_MESSAGE,
+    message: 'Selected model/output limit returned truncated Product Pack JSON. Choose a model with higher output capacity.',
+  });
+}
+
+function buildProductPackV2StepTruncatedException(step: ProductPackV2Step) {
+  return new BadRequestException({
+    code: 'product_pack_v2_output_truncated',
+    message: `Selected model/output limit returned truncated JSON for the "${step.title}" step of Product Pack generation. Choose a model with higher output capacity.`,
   });
 }
 
@@ -905,13 +981,13 @@ function extractFinishReasonFromRecord(record: Record<string, unknown>): string 
 }
 
 function isLikelyTruncatedPackOutput(input: {
-  parsed: ProductPackV2ParseResult;
+  json: unknown;
   outputTokens: number;
   requestedMaxOutputTokens: number;
   effectiveMaxOutputTokens: number;
   finishReason: string | null;
 }): boolean {
-  if (input.parsed.json) return false;
+  if (input.json) return false;
   if (isLengthStopReason(input.finishReason)) return true;
   if (input.effectiveMaxOutputTokens > 0 && input.outputTokens >= input.effectiveMaxOutputTokens) return true;
   if (input.requestedMaxOutputTokens > 0 && input.outputTokens >= input.requestedMaxOutputTokens) return true;
@@ -942,8 +1018,296 @@ function parseJsonLike(raw: string): unknown {
   }
 }
 
+/** Parse and validate ONE step's JSON output: documents must cover exactly this step's section keys, and any fields the step owns (see validateStepExtraFields) must be present. */
+function parsePackV2StepJson(raw: string, step: ProductPackV2Step): ProductPackV2StepParseResult {
+  try {
+    const parsed = parseJsonLike(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') {
+      return { json: null, reason: 'schema_invalid_root' };
+    }
+    if (!Array.isArray(parsed.documents) || parsed.documents.length === 0) {
+      return { json: null, reason: 'schema_missing_documents' };
+    }
+    const documents = parsed.documents as unknown[];
+    if (documents.some((doc) => !isValidPackV2Document(doc))) {
+      return { json: null, reason: 'schema_invalid_documents' };
+    }
+
+    const matchedKeys = new Set(
+      (documents as ProductPackV2Document[])
+        .map((doc) => resolvePackV2Section(doc.type, doc.title))
+        .filter((section): section is typeof PRODUCT_PACK_V2_SECTIONS[number] => Boolean(section))
+        .map((section) => section.key),
+    );
+    if (step.sectionKeys.some((key) => !matchedKeys.has(key))) {
+      return { json: null, reason: 'schema_missing_sections' };
+    }
+
+    if (!validateStepExtraFields(step.id, parsed)) {
+      return { json: null, reason: 'schema_missing_top_level' };
+    }
+
+    return {
+      json: parsed as Partial<ProductPackV2Json> & { documents: ProductPackV2Document[] },
+      reason: 'ok',
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'empty_json') {
+      return { json: null, reason: 'empty_json' };
+    }
+    return { json: null, reason: 'invalid_json' };
+  }
+}
+
+function isValidPackV2Document(doc: unknown): doc is ProductPackV2Document {
+  if (!doc || typeof doc !== 'object') return false;
+  const d = doc as Record<string, unknown>;
+  return (
+    typeof d.type === 'string' &&
+    typeof d.title === 'string' &&
+    Array.isArray(d.audience) &&
+    typeof d.purpose === 'string' &&
+    typeof d.whatThisIs === 'string' &&
+    typeof d.whyItExists === 'string' &&
+    typeof d.howToUse === 'string' &&
+    Array.isArray(d.connections) &&
+    Array.isArray(d.doneDefinition) &&
+    Array.isArray(d.sections) &&
+    Array.isArray(d.acceptanceCriteria) &&
+    (d.sections as unknown[]).every((section) => isValidPackV2Section(section))
+  );
+}
+
+function isValidPackV2Section(section: unknown): section is ProductPackV2Section {
+  if (!section || typeof section !== 'object') return false;
+  const s = section as Record<string, unknown>;
+  return (
+    typeof s.heading === 'string' &&
+    typeof s.content === 'string' &&
+    Array.isArray(s.examples) &&
+    Array.isArray(s.implementationNotes) &&
+    Array.isArray(s.assumptions) &&
+    Array.isArray(s.risks) &&
+    Array.isArray(s.evidenceRefs) &&
+    Array.isArray(s.sourceNeeds)
+  );
+}
+
+/** Checks the top-level fields a given step is responsible for (beyond the universal `documents[]`), mirroring each step's `extraFieldsContract` in product-pack-v2.steps.ts. */
+function validateStepExtraFields(stepId: ProductPackV2StepId, obj: Record<string, unknown>): boolean {
+  switch (stepId) {
+    case 'vision':
+      return (
+        typeof obj.packTitle === 'string' &&
+        obj.packTitle.trim().length > 0 &&
+        typeof obj.oneLineThesis === 'string' &&
+        typeof obj.language === 'string' &&
+        isRecord(obj.ideaAmplification) &&
+        isRecord(obj.recommendedStrategy)
+      );
+    case 'build_product':
+      return true;
+    case 'build_design':
+      return Array.isArray(obj.screenStoryboard) && isRecord(obj.navigation);
+    case 'build_engineering':
+      return Array.isArray(obj.apiContracts) && Array.isArray(obj.dataModel);
+    case 'execution':
+      return Array.isArray(obj.executionPhases) && isRecord(obj.roleBriefs);
+    case 'qira_backlog': {
+      const handoff = obj.executionHandoff;
+      return isRecord(handoff) && isRecord(handoff.qiraBacklogDraft);
+    }
+    case 'ai_agent_bundle': {
+      const handoff = obj.executionHandoff;
+      return isRecord(handoff) && Array.isArray(handoff.aiAgentPromptBundleDraft);
+    }
+    case 'evidence':
+      return isRecord(obj.quality) && Array.isArray(obj.risks) && Array.isArray(obj.exportAssets);
+    default:
+      return true;
+  }
+}
+
+/** Merge one step's extra fields into the running accumulator. `executionHandoff` is special-cased since two separate steps (qira_backlog, ai_agent_bundle) each own a different sub-key of it. */
+function mergeStepFields(target: Record<string, unknown>, extra: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(extra)) {
+    if (key === 'executionHandoff' && isRecord(target.executionHandoff) && isRecord(value)) {
+      target.executionHandoff = { ...target.executionHandoff, ...value };
+    } else {
+      target[key] = value;
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isValidQuality(value: unknown): value is ProductPackV2Json['quality'] {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.completenessScore === 'number' &&
+    typeof value.confidenceScore === 'number' &&
+    typeof value.assumptionCount === 'number' &&
+    typeof value.evidenceCount === 'number' &&
+    typeof value.riskLevel === 'string' &&
+    Array.isArray(value.missingInputs)
+  );
+}
+
+/**
+ * Merge the accumulated per-step fields and documents into the same
+ * `ProductPackV2Json` shape the (unchanged) downstream normalize/metadata/
+ * quality-gate functions already expect. Any field a step never reached
+ * (because the pipeline stopped early) gets a safe default instead of
+ * `undefined`, so an incomplete pack degrades gracefully rather than
+ * crashing post-processing — the structure-gate check already surfaces
+ * exactly which sections are missing.
+ */
+function finalizePackV2Json(
+  fields: Record<string, unknown>,
+  documents: ProductPackV2Document[],
+  ctx: PackContext,
+): ProductPackV2Json {
+  const executionHandoff = isRecord(fields.executionHandoff)
+    ? {
+        mode: typeof fields.executionHandoff.mode === 'string' ? fields.executionHandoff.mode : FALLBACK_EXECUTION_HANDOFF.mode,
+        qiraBacklogDraft: isRecord(fields.executionHandoff.qiraBacklogDraft)
+          ? (fields.executionHandoff.qiraBacklogDraft as unknown as ProductPackV2QiraBacklog)
+          : null,
+        aiAgentPromptBundleDraft: Array.isArray(fields.executionHandoff.aiAgentPromptBundleDraft)
+          ? (fields.executionHandoff.aiAgentPromptBundleDraft as ProductPackV2AiAgentPrompt[])
+          : [],
+      }
+    : FALLBACK_EXECUTION_HANDOFF;
+
+  return {
+    packTitle: typeof fields.packTitle === 'string' && fields.packTitle.trim() ? fields.packTitle : ctx.niche.title,
+    oneLineThesis: typeof fields.oneLineThesis === 'string' && fields.oneLineThesis.trim() ? fields.oneLineThesis : ctx.niche.oneLiner,
+    language: typeof fields.language === 'string' && fields.language.trim() ? fields.language : ctx.language,
+    packType: typeof fields.packType === 'string' && fields.packType.trim() ? fields.packType : 'build_ready_product_pack',
+    ideaAmplification: isRecord(fields.ideaAmplification) ? fields.ideaAmplification : {},
+    recommendedStrategy: isRecord(fields.recommendedStrategy) ? fields.recommendedStrategy : {},
+    quality: isValidQuality(fields.quality)
+      ? fields.quality
+      : {
+          completenessScore: 0,
+          confidenceScore: ctx.score?.confidenceValue ?? 0.5,
+          assumptionCount: 0,
+          evidenceCount: 0,
+          riskLevel: 'medium',
+          missingInputs: ['evidence_layer_step_incomplete'],
+        },
+    documents,
+    roleBriefs: isRecord(fields.roleBriefs) ? (fields.roleBriefs as Record<string, string[]>) : {},
+    screenStoryboard: Array.isArray(fields.screenStoryboard) ? fields.screenStoryboard : [],
+    navigation: isRecord(fields.navigation) ? fields.navigation : {},
+    apiContracts: Array.isArray(fields.apiContracts) ? fields.apiContracts : [],
+    dataModel: Array.isArray(fields.dataModel) ? fields.dataModel : [],
+    risks: Array.isArray(fields.risks) ? fields.risks : [],
+    executionPhases: Array.isArray(fields.executionPhases) ? fields.executionPhases : [],
+    executionHandoff,
+    exportAssets: Array.isArray(fields.exportAssets) ? fields.exportAssets : [],
+  };
+}
+
+/**
+ * Deterministic (non-LLM) summary of what a completed step decided, handed
+ * to the next step's prompt as "PRIOR LAYERS" context. Kept non-LLM so it
+ * never becomes its own failure point.
+ */
+function summarizeStepForNextStep(
+  step: ProductPackV2Step,
+  result: { documents: ProductPackV2Document[]; extraFields: Record<string, unknown> },
+): string {
+  const lines: string[] = [`${step.title}:`];
+  switch (step.id) {
+    case 'vision': {
+      const strategy = result.extraFields.recommendedStrategy;
+      lines.push(`- Pack title: ${String(result.extraFields.packTitle ?? '')}`);
+      lines.push(`- One-line thesis: ${String(result.extraFields.oneLineThesis ?? '')}`);
+      if (isRecord(strategy) && strategy.name) {
+        lines.push(`- Recommended strategic wedge: ${String(strategy.name)}${strategy.strategicWedge ? ` — ${String(strategy.strategicWedge)}` : ''}`);
+      }
+      break;
+    }
+    case 'build_product': {
+      const mvpDoc = result.documents.find((doc) => resolvePackV2Section(doc.type, doc.title)?.key === 'mvp_scope');
+      if (mvpDoc) lines.push(`- MVP scope defined in "${mvpDoc.title}": ${mvpDoc.purpose}`);
+      const icpDoc = result.documents.find((doc) => resolvePackV2Section(doc.type, doc.title)?.key === 'target_audience_icp');
+      if (icpDoc) lines.push(`- ICP: ${icpDoc.purpose}`);
+      break;
+    }
+    case 'build_design': {
+      const storyboard = Array.isArray(result.extraFields.screenStoryboard) ? result.extraFields.screenStoryboard : [];
+      const screens = storyboard
+        .map((entry) => (isRecord(entry) && typeof entry.screen === 'string' ? entry.screen : null))
+        .filter((screen): screen is string => Boolean(screen));
+      if (screens.length) lines.push(`- Screens: ${screens.join(', ')}`);
+      break;
+    }
+    case 'build_engineering': {
+      const dataModel = Array.isArray(result.extraFields.dataModel) ? result.extraFields.dataModel : [];
+      const entities = dataModel
+        .map((entry) => (isRecord(entry) && typeof entry.entity === 'string' ? entry.entity : null))
+        .filter((entity): entity is string => Boolean(entity));
+      if (entities.length) lines.push(`- Entities: ${entities.join(', ')}`);
+      const apiContracts = Array.isArray(result.extraFields.apiContracts) ? result.extraFields.apiContracts : [];
+      const endpoints = apiContracts
+        .map((entry) => (isRecord(entry) && typeof entry.name === 'string' ? entry.name : null))
+        .filter((name): name is string => Boolean(name));
+      if (endpoints.length) lines.push(`- Endpoints: ${endpoints.join(', ')}`);
+      break;
+    }
+    case 'execution': {
+      const phases = Array.isArray(result.extraFields.executionPhases) ? result.extraFields.executionPhases : [];
+      const phaseNames = phases
+        .map((entry) => (isRecord(entry) && typeof entry.phase === 'string' ? entry.phase : null))
+        .filter((phase): phase is string => Boolean(phase));
+      if (phaseNames.length) lines.push(`- Execution phases: ${phaseNames.join(', ')}`);
+      break;
+    }
+    case 'qira_backlog': {
+      const handoff = result.extraFields.executionHandoff;
+      const epics = isRecord(handoff) && isRecord(handoff.qiraBacklogDraft) && Array.isArray(handoff.qiraBacklogDraft.epics)
+        ? handoff.qiraBacklogDraft.epics
+        : [];
+      const epicTitles = epics
+        .map((entry) => (isRecord(entry) && typeof entry.title === 'string' ? entry.title : null))
+        .filter((title): title is string => Boolean(title));
+      if (epicTitles.length) lines.push(`- Backlog epics already drafted: ${epicTitles.join(', ')}`);
+      break;
+    }
+    case 'ai_agent_bundle': {
+      const handoff = result.extraFields.executionHandoff;
+      const prompts = isRecord(handoff) && Array.isArray(handoff.aiAgentPromptBundleDraft) ? handoff.aiAgentPromptBundleDraft : [];
+      const promptTitles = prompts
+        .map((entry) => (isRecord(entry) && typeof entry.title === 'string' ? entry.title : null))
+        .filter((title): title is string => Boolean(title));
+      if (promptTitles.length) lines.push(`- AI-agent prompts already drafted: ${promptTitles.join(', ')}`);
+      break;
+    }
+    case 'evidence': {
+      const quality = result.extraFields.quality;
+      if (isRecord(quality) && typeof quality.riskLevel === 'string') {
+        lines.push(`- Overall risk level: ${quality.riskLevel}`);
+      }
+      break;
+    }
+  }
+  return lines.join('\n');
+}
+
 function documentToMarkdown(doc: ProductPackV2Document): string {
-  const lines: string[] = [`# ${doc.title}`, '', `**Audience:** ${doc.audience.join(', ') || '—'}`, `**Purpose:** ${doc.purpose}`, `**How to use:** ${doc.howToUse}`];
+  const lines: string[] = [
+    `# ${doc.title}`,
+    '',
+    `**Audience:** ${doc.audience.join(', ') || '—'}`,
+    `**What this is:** ${doc.whatThisIs}`,
+    `**Why it exists:** ${doc.whyItExists}`,
+    `**Purpose:** ${doc.purpose}`,
+    `**How to use:** ${doc.howToUse}`,
+  ];
 
   if (doc.connections.length) {
     lines.push('', '## Connections', ...doc.connections.map((item) => `- ${item}`));
@@ -958,7 +1322,12 @@ function documentToMarkdown(doc: ProductPackV2Document): string {
       if (section.assumptions.length) lines.push('', '**Assumptions**', ...section.assumptions.map((item) => `- ${item}`));
       if (section.risks.length) lines.push('', '**Risks**', ...section.risks.map((item) => `- ${item}`));
       if (section.evidenceRefs.length) lines.push('', '**Evidence refs**', ...section.evidenceRefs.map((item) => `- ${item}`));
+      if (section.sourceNeeds.length) lines.push('', '**Source needs**', ...section.sourceNeeds.map((item) => `- ${item}`));
     }
+  }
+
+  if (doc.doneDefinition.length) {
+    lines.push('', '## Done Definition', ...doc.doneDefinition.map((item) => `- ${item}`));
   }
 
   if (doc.acceptanceCriteria.length) {
@@ -975,7 +1344,7 @@ function mapPackV2DocumentToProductPackDocument(
   ctx: PackContext,
   opts: GeneratePackOptions,
   packId: string,
-  aiRun: PackV2AiRun,
+  aiRuns: PackV2StepAiRuns,
 ): Prisma.ProductPackDocumentUncheckedCreateInput {
   const confidenceValue = normalizeConfidenceScore(packJson.quality.confidenceScore);
   const section = resolvePackV2Section(doc.type, doc.title);
@@ -1000,7 +1369,7 @@ function mapPackV2DocumentToProductPackDocument(
       assumptionIds: ctx.assumptions.map((assumption) => assumption.id),
       constraintIds: ctx.constraints.map((constraint) => constraint.id),
       unresolvedQuestionIds: ctx.unresolvedQuestions.map((question) => question.id),
-      aiRun,
+      aiRuns,
       pack: packJson,
       packMetadata,
       document: doc,
@@ -1027,12 +1396,7 @@ function normalizePackV2Pack(packJson: ProductPackV2Json): ProductPackV2Json {
   };
 }
 
-function buildProductPackV2Metadata(
-  packJson: ProductPackV2Json,
-  ctx: PackContext,
-  opts: GeneratePackOptions,
-  aiRun: PackV2AiRun,
-) {
+function buildProductPackV2Metadata(packJson: ProductPackV2Json, aiRuns: PackV2StepAiRuns) {
   const qualityGates = buildProductPackV2QualityMetadata(packJson);
   const layerOrder: ProductPackV2Layer[] = ['vision', 'build', 'execution', 'evidence'];
   const layers = layerOrder.map((layer) => {
@@ -1051,8 +1415,8 @@ function buildProductPackV2Metadata(
     sourceMode: hasPackSources(packJson) ? 'source_backed' : 'starter_hypothesis',
     qualityGates,
     layers,
-    executionHandoff: buildExecutionHandoff(packJson, ctx, opts),
-    aiRun,
+    executionHandoff: packJson.executionHandoff,
+    aiRuns,
   };
 }
 
@@ -1091,80 +1455,6 @@ function buildProductPackV2QualityMetadata(packJson: ProductPackV2Json): Product
     openQuestions,
     sourceNeeds,
     whatNotToBuildOrClaim,
-  };
-}
-
-function buildExecutionHandoff(
-  packJson: ProductPackV2Json,
-  ctx: PackContext,
-  opts: GeneratePackOptions,
-) {
-  const layerSections = groupDocumentsByLayer(packJson.documents);
-  const executionTitles = layerSections.execution.map((doc) => doc.title);
-  const buildTitles = layerSections.build.map((doc) => doc.title);
-  const phaseNames = Array.isArray(packJson.executionPhases)
-    ? packJson.executionPhases
-        .map((phase) => (phase && typeof phase === 'object' && typeof (phase as { phase?: unknown }).phase === 'string'
-          ? (phase as { phase: string }).phase
-          : null))
-        .filter((phase): phase is string => Boolean(phase))
-    : [];
-  const roleSections = new Map<string, string[]>([
-    ['designer', ['UX Storyboard', 'Navigation & Information Architecture', 'Designer Pack', 'Design BRD']],
-    ['frontend_ai_agent', ['Frontend Developer Pack', 'Frontend BRD', 'API Requirements', 'Screen Map']],
-    ['backend_ai_agent', ['Backend Developer Pack', 'Backend BRD', 'Data Model', 'API Requirements', 'AI Agent Pack']],
-    ['qa_ai_agent', ['QA & Acceptance Pack', 'Acceptance Criteria', 'Execution Phasing']],
-  ]);
-  return {
-    mode: 'team_studio_and_ai_agent',
-    qiraBacklogDraft: {
-      projectTitle: normalizePackTitle(packJson.packTitle),
-      projectDescription: `${packJson.oneLineThesis}\n\nDepth: ${opts.depth}\nVision preserved before MVP/phasing.`,
-      epics: [
-        { title: 'Vision Layer Alignment', relatedSections: layerSections.vision.map((doc) => doc.title) },
-        { title: 'Build Layer Delivery', relatedSections: buildTitles },
-        { title: 'Execution Layer Rollout', relatedSections: executionTitles },
-      ],
-      sprints: [
-        { title: phaseNames[0] ?? 'Sprint 1', focus: 'Prove the core wedge without losing the full vision.' },
-        { title: phaseNames[1] ?? 'Sprint 2', focus: 'Deliver the primary build layer for the launchable product.' },
-        { title: phaseNames[2] ?? 'Sprint 3', focus: 'Operationalize handoff, QA, and expansion hooks.' },
-      ],
-      tasks: packJson.documents.slice(0, 16).map((doc, index) => ({
-        title: doc.title,
-        description: doc.purpose,
-        ownerRole: inferOwnerRole(doc),
-        phase: index < 8 ? 'Vision' : index < 14 ? 'Build' : 'Execution',
-        acceptanceCriteria: doc.acceptanceCriteria,
-        relatedSections: [doc.title],
-      })),
-      dependencies: [
-        { from: 'Vision Layer Alignment', to: 'Build Layer Delivery' },
-        { from: 'Build Layer Delivery', to: 'Execution Layer Rollout' },
-      ],
-      ownerRoles: ['founder', 'designer', 'frontend', 'backend', 'aiEngineer', 'qa', 'growth', 'legalPrivacy'],
-      labels: ['build-ready-product-pack', opts.vertical, opts.depth, ctx.language],
-      acceptanceCriteria: [
-        'Vision Layer is preserved before MVP scope.',
-        'Build Layer documents remain available to design and engineering.',
-        'Execution phases are sequenced without replacing the full product idea.',
-      ],
-      doneDefinition: [
-        'Vision, Build, Execution, and Evidence layers are all represented.',
-        'No Preview wording remains in the pack title.',
-        'Unsourced claims are labeled as assumptions, source needs, or research questions.',
-      ],
-    },
-    aiAgentPromptBundleDraft: Array.from(roleSections.entries()).map(([targetAgent, relatedSections]) => ({
-      title: `${targetAgent.replace(/_/g, ' ')} implementation prompt`,
-      targetAgent,
-      purpose: `Execute the ${targetAgent.replace(/_/g, ' ')} slice of the Build-Ready Product Pack without relying on prior chat context.`,
-      promptBody: buildSelfContainedAgentPrompt(ctx.niche.title, packJson.oneLineThesis, targetAgent, relatedSections),
-      relatedSections,
-      expectedFiles: ['Inspect only the smallest relevant files first.'],
-      tests: ['Run targeted tests only for the touched implementation area.'],
-      finalReportFormat: ['files changed', 'behavior changed', 'tests run', 'blockers'],
-    })),
   };
 }
 
@@ -1255,15 +1545,6 @@ function sortPackV2Documents(documents: ProductPackV2Document[]): ProductPackV2D
   });
 }
 
-function groupDocumentsByLayer(documents: ProductPackV2Document[]): Record<ProductPackV2Layer, ProductPackV2Document[]> {
-  return {
-    vision: documents.filter((doc) => resolvePackV2Section(doc.type, doc.title)?.layer === 'vision'),
-    build: documents.filter((doc) => resolvePackV2Section(doc.type, doc.title)?.layer === 'build'),
-    execution: documents.filter((doc) => resolvePackV2Section(doc.type, doc.title)?.layer === 'execution'),
-    evidence: documents.filter((doc) => resolvePackV2Section(doc.type, doc.title)?.layer === 'evidence'),
-  };
-}
-
 function normalizePackV2DocumentEvidence(doc: ProductPackV2Document, hasSources: boolean): ProductPackV2Document {
   if (hasSources) return doc;
   return {
@@ -1329,60 +1610,6 @@ function layerLabel(layer: ProductPackV2Layer): string {
     case 'evidence':
       return 'Evidence';
   }
-}
-
-function inferOwnerRole(doc: ProductPackV2Document): string {
-  const audience = doc.audience.join(' ').toLowerCase();
-  if (audience.includes('designer')) return 'designer';
-  if (audience.includes('frontend')) return 'frontend';
-  if (audience.includes('backend')) return 'backend';
-  if (audience.includes('qa')) return 'qa';
-  if (audience.includes('growth')) return 'growth';
-  if (audience.includes('investor')) return 'founder';
-  if (audience.includes('ai')) return 'aiEngineer';
-  return 'founder';
-}
-
-function buildSelfContainedAgentPrompt(
-  productTitle: string,
-  oneLineThesis: string,
-  targetAgent: string,
-  relatedSections: string[],
-): string {
-  return [
-    'Context:',
-    `- Product: ${productTitle}`,
-    `- Why this task exists: implement the ${targetAgent.replace(/_/g, ' ')} slice of the Build-Ready Product Pack while preserving the full product idea.`,
-    `- Source Product Pack sections: ${relatedSections.join(', ')}`,
-    '',
-    'Scope:',
-    `- Cover only the ${targetAgent.replace(/_/g, ' ')} responsibilities needed to deliver: ${oneLineThesis}`,
-    '',
-    'Open only:',
-    '- inspect only the smallest relevant files first',
-    '',
-    'Do not:',
-    '- do not scan whole workspace',
-    '- do not rewrite unrelated code',
-    '- do not deploy unless this prompt explicitly says deploy',
-    '- do not change product philosophy',
-    '',
-    'Task:',
-    `- Implement the work implied by ${relatedSections.join(', ')} for the ${targetAgent.replace(/_/g, ' ')} slice.`,
-    '',
-    'Acceptance:',
-    '- measurable done criteria must be satisfied for the touched scope',
-    '- preserve the full vision before MVP-only simplification',
-    '',
-    'Tests:',
-    '- targeted tests only',
-    '',
-    'Final report:',
-    '- files changed',
-    '- behavior changed',
-    '- tests run',
-    '- blockers',
-  ].join('\n');
 }
 
 function resolvePackV2Section(type?: string | null, title?: string | null) {

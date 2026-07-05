@@ -3,15 +3,32 @@
  * required markdown sections, non-empty output, output language, and the
  * unsupported-claims policy. Issues are surfaced (never silently swallowed).
  */
-import type { LocaleCode } from '@signalkit/shared';
+import { franc } from 'franc-min';
+import { LOCALE_TO_ISO6393, type LocaleCode } from '@signalkit/shared';
 import type { GenerationContract, ValidationIssue, ValidationOutcome } from './contract.js';
 
-/** Script ranges for locales where a quick language check is reliable. */
-const SCRIPT_RANGES: Partial<Record<LocaleCode, RegExp>> = {
-  ar: /[؀-ۿ]/,
-  ru: /[Ѐ-ӿ]/,
-  hi: /[ऀ-ॿ]/,
-};
+const ISO6393_TO_LOCALE: Partial<Record<string, LocaleCode>> = Object.fromEntries(
+  Object.entries(LOCALE_TO_ISO6393).map(([locale, iso]) => [iso, locale as LocaleCode]),
+);
+
+/**
+ * Detect the dominant language of a piece of text using `franc-min` (ISO
+ * 639-3 detector), mapped back to our LocaleCode. Returns `null` when the
+ * text is too short/ambiguous to call (never guess on thin evidence).
+ */
+export function detectLocale(text: string): LocaleCode | null {
+  const trimmed = text.trim();
+  if (trimmed.length < 40) return null;
+  const iso = franc(trimmed, { minLength: 40 });
+  if (iso === 'und') return null;
+  return ISO6393_TO_LOCALE[iso] ?? null;
+}
+
+/** True when `text` is confidently in a known language other than `expected`. */
+export function looksLikeWrongLanguage(text: string, expected: LocaleCode): boolean {
+  const detected = detectLocale(text);
+  return detected !== null && detected !== expected;
+}
 
 const OVERCONFIDENT = /\b(guaranteed|definitely|always works|proven fact|certainly will|100%)\b/i;
 const GROUNDING_MARKERS = /\b(assumption|assume|evidence|source|unverified|hypothesis)\b/i;
@@ -39,12 +56,11 @@ export function validateRequiredSections(content: string, sections: string[]): V
 }
 
 export function validateOutputLanguage(content: string, locale: LocaleCode): ValidationIssue | null {
-  const range = SCRIPT_RANGES[locale];
-  if (range && content.trim().length > 0 && !range.test(content)) {
+  if (looksLikeWrongLanguage(content, locale)) {
     return {
       code: 'output_language_mismatch',
       message: `Output does not appear to be in ${locale}`,
-      severity: 'warning',
+      severity: 'error',
     };
   }
   return null;

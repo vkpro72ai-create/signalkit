@@ -14,6 +14,8 @@ import {
   type RuleResolver,
   type UsageSink,
   type LLMProviderAdapter,
+  type LLMRequest,
+  type LLMMessage,
   type LLMResponse,
 } from './index.js';
 
@@ -21,7 +23,7 @@ function makeResponse(content: string): LLMResponse {
   return { modelId: 'm', provider: 'openai', content, inputTokens: 10, outputTokens: 20, latencyMs: 5, finishReason: 'stop' };
 }
 
-function fakeAdapter(impl: () => Promise<LLMResponse>): LLMProviderAdapter {
+function fakeAdapter(impl: (request: LLMRequest) => Promise<LLMResponse>): LLMProviderAdapter {
   return {
     info: { provider: 'openai', configured: true },
     testConnection: async () => ({ ok: true, message: 'ok' }),
@@ -118,6 +120,69 @@ describe('DefaultLLMRouter', () => {
   });
 });
 
+describe('output language enforcement', () => {
+  const esRequest: GenerationRequest = {
+    ...request,
+    contract: { ...baseContract('es'), outputLanguage: 'es' },
+  };
+
+  it('appends an unmissable language-directive system message naming the target language', async () => {
+    const seenMessages: LLMMessage[][] = [];
+    const adapter = fakeAdapter(async (req) => {
+      seenMessages.push(req.messages);
+      return makeResponse('Este es un texto en español sobre la visión del producto y por qué ahora es el momento adecuado.');
+    });
+    const router = new DefaultLLMRouter(deps({ adapter }));
+    await router.run(esRequest);
+
+    const directive = seenMessages[0]!.find((m) => m.role === 'system' && m.content.includes('LANGUAGE REQUIREMENT'));
+    expect(directive?.content).toContain('Spanish');
+  });
+
+  it('retries once with a corrective message when the model answers in the wrong language, and keeps the corrected answer', async () => {
+    let callCount = 0;
+    const seenMessages: LLMMessage[][] = [];
+    const adapter = fakeAdapter(async (req) => {
+      callCount += 1;
+      seenMessages.push(req.messages);
+      if (callCount === 1) {
+        return makeResponse(
+          'This is a long English answer even though Spanish was requested, long enough to be confidently detected as English.',
+        );
+      }
+      return makeResponse('Este es un texto en español que corrige correctamente la respuesta anterior sobre el producto.');
+    });
+    const usage = { record: vi.fn().mockResolvedValue(undefined) };
+    const router = new DefaultLLMRouter(deps({ adapter, usage }));
+    const result = await router.run(esRequest);
+
+    expect(callCount).toBe(2);
+    expect(result.content).toContain('español');
+    expect(result.validation.issues.some((i) => i.code === 'output_language_mismatch')).toBe(false);
+    // Both the wrong-language attempt and the correction are recorded for cost accuracy.
+    expect(usage.record.mock.calls.filter((c) => c[0].status === 'success')).toHaveLength(2);
+
+    const correction = seenMessages[1]!.find((m) => m.role === 'user' && m.content.includes('Rewrite'));
+    expect(correction).toBeDefined();
+    const replayedBadAnswer = seenMessages[1]!.find((m) => m.role === 'assistant');
+    expect(replayedBadAnswer?.content).toContain('long English answer');
+  });
+
+  it('falls back to the original response when the correction retry also fails validation', async () => {
+    let callCount = 0;
+    const adapter = fakeAdapter(async () => {
+      callCount += 1;
+      return makeResponse('Still English on every attempt, long enough for confident language detection to catch it every time.');
+    });
+    const router = new DefaultLLMRouter(deps({ adapter }));
+    const result = await router.run(esRequest);
+
+    expect(callCount).toBe(2);
+    expect(result.content).toContain('Still English');
+    expect(result.validation.issues.some((i) => i.code === 'output_language_mismatch')).toBe(true);
+  });
+});
+
 describe('output validation', () => {
   it('flags empty output and bad JSON', () => {
     expect(validateOutput('', { contract: baseContract('en'), jsonRequired: false }).ok).toBe(false);
@@ -125,10 +190,34 @@ describe('output validation', () => {
     expect(validateOutput('{"a":1}', { contract: baseContract('en'), jsonRequired: true }).ok).toBe(true);
   });
 
-  it('warns on output-language mismatch for non-latin locales', () => {
+  it('fails on output-language mismatch for a non-latin locale (Russian)', () => {
     const ru = { ...baseContract('ru'), outputLanguage: 'ru' as const };
-    const outcome = validateOutput('This is English text', { contract: ru, jsonRequired: false });
+    const outcome = validateOutput(
+      'This is a fairly long piece of English text that should be detected as English by the language checker, not Russian.',
+      { contract: ru, jsonRequired: false },
+    );
+    expect(outcome.ok).toBe(false);
     expect(outcome.issues.some((i) => i.code === 'output_language_mismatch')).toBe(true);
+  });
+
+  it('fails on output-language mismatch for latin-script locales (Spanish, French, German)', () => {
+    const englishBody =
+      'This is a fairly long piece of English text that should be detected as English by the language checker, not the requested locale.';
+    for (const locale of ['es', 'fr', 'de'] as const) {
+      const contract = { ...baseContract(locale), outputLanguage: locale };
+      const outcome = validateOutput(englishBody, { contract, jsonRequired: false });
+      expect(outcome.ok, `expected ${locale} to be flagged`).toBe(false);
+      expect(outcome.issues.some((i) => i.code === 'output_language_mismatch')).toBe(true);
+    }
+  });
+
+  it('passes when the output is genuinely in the requested language', () => {
+    const es = { ...baseContract('es'), outputLanguage: 'es' as const };
+    const outcome = validateOutput(
+      'Este es un texto en español que describe la visión del producto y explica por qué ahora es el momento adecuado para construirlo.',
+      { contract: es, jsonRequired: false },
+    );
+    expect(outcome.issues.some((i) => i.code === 'output_language_mismatch')).toBe(false);
   });
 
   it('flags unsupported overconfident claims when evidence is required', () => {

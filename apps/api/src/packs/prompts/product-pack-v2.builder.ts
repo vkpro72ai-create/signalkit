@@ -1,8 +1,9 @@
-import { PRODUCT_PACK_V2_SECTIONS } from './product-pack-v2.sections';
+import { PRODUCT_PACK_V2_SYSTEM_PROMPT } from './product-pack-v2.system';
 import {
-  PRODUCT_PACK_V2_OUTPUT_CONTRACT,
-  PRODUCT_PACK_V2_SYSTEM_PROMPT,
-} from './product-pack-v2.system';
+  PRODUCT_PACK_V2_DOCUMENT_CONTRACT,
+  sectionsForStep,
+  type ProductPackV2Step,
+} from './product-pack-v2.steps';
 
 export interface ProductPackV2OpportunityInput {
   id?: string;
@@ -73,21 +74,31 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value ?? null, null, 2);
 }
 
-function sectionsByLayer(): Record<string, string[]> {
-  return PRODUCT_PACK_V2_SECTIONS.reduce<Record<string, string[]>>(
-    (acc, section) => {
-      acc[section.layer] ||= [];
-      acc[section.layer].push(`${section.key}: ${section.title}`);
-      return acc;
-    },
-    {},
-  );
+/** Merge a step's extra-fields contract (its own `{ ... }` object) with the universal `documents[]` shape. */
+function buildStepOutputContract(step: ProductPackV2Step): string {
+  const trimmed = step.extraFieldsContract.trim();
+  const body = trimmed.length > 2 ? trimmed.slice(1, -1).trim() : '';
+  const extra = body ? `,\n${body}` : '';
+  return `{
+  "documents": [
+    ${PRODUCT_PACK_V2_DOCUMENT_CONTRACT}
+  ]${extra}
+}`;
 }
 
-export function buildProductPackV2Prompt(input: BuildProductPackV2PromptInput): {
-  system: string;
-  user: string;
-} {
+/**
+ * Build the prompt for ONE step of the sequential Product Pack V2 pipeline
+ * (see product-pack-v2.steps.ts for why this replaced a single 39-section
+ * mega-call). Steps run in order, never in parallel, and each one is told
+ * what earlier steps already decided via `priorSummary` so the pack stays
+ * coherent without re-sending the full prior JSON (which would balloon
+ * tokens right back up).
+ */
+export function buildProductPackV2StepPrompt(
+  step: ProductPackV2Step,
+  input: BuildProductPackV2PromptInput,
+  priorSummary: string,
+): { system: string; user: string } {
   const outputLanguage =
     input.outputLanguage ||
     input.searchContext?.language ||
@@ -95,10 +106,11 @@ export function buildProductPackV2Prompt(input: BuildProductPackV2PromptInput): 
     'en';
 
   const user = `
-Build a complete SignalKit Build-Ready Product Pack.
+Build ONE step of a SignalKit Build-Ready Product Pack: "${step.title}".
+This pack is generated step by step across several calls. Produce ONLY the sections and fields listed for THIS step — do not attempt the rest of the pack, and do not repeat sections from other steps.
 
 OUTPUT LANGUAGE:
-${outputLanguage}
+${outputLanguage} (this is only the language to write in — it says nothing about the target market or audience nationality; do not narrow the market based on it).
 
 FOUNDER RAW REQUEST:
 ${input.founderRequest || 'No raw founder request provided. Use the opportunity and search context.'}
@@ -115,66 +127,31 @@ ${stableJson(input.evidence)}
 EXISTING PACK NOTES:
 ${input.existingPackNotes || 'None'}
 
-MANDATORY PRODUCT PACK SECTIONS:
-${stableJson(PRODUCT_PACK_V2_SECTIONS)}
+${
+  priorSummary
+    ? `PRIOR LAYERS (already decided in earlier steps of this same pack — stay consistent with them; do not contradict, shrink, or silently repeat them):\n${priorSummary}`
+    : 'This is the first step of this pack — nothing has been decided yet.'
+}
 
-MANDATORY SECTION LAYERS:
-${stableJson(sectionsByLayer())}
-
-CRITICAL NON-DESTRUCTIVE INSTRUCTIONS:
+CRITICAL NON-DESTRUCTIVE INSTRUCTIONS (apply across the whole pack, not just this step):
 1. Do not reduce this idea to MVP first.
 2. Do not shrink the founder's ambition before expanding it.
 3. Do not replace useful execution/build documents with only high-level strategy.
-4. Preserve and enrich execution documents such as Product Vision, Market Context, ICP, JTBD, UX Flow, Screen Map, Designer Pack, Frontend Pack, Backend Pack, Data Model, API Requirements, AI Agent Pack, QA Pack, Growth Pack, Execution Phasing, and Team Handoff.
-5. Add the missing venture-grade upper layer before build/execution: Founder & Investor Vision, Category & Market Strategy, Competitive Attack & Switching Strategy, Strategic Product Paths, Product Ecosystem Vision, Largest Upside Scenario, Hidden Opportunities & Underrated Features, and Expansion Paths.
-6. Use MVP Scope only as one execution/build section, not as the main product answer.
-7. Build the pack in layers: Vision, Build, Execution, Evidence.
+4. Use MVP Scope only as one execution/build section, not as the main product answer.
+${step.layerInstructions}
 
-VISION LAYER INSTRUCTIONS:
-1. First expand and strengthen the full vision.
-2. Find hidden opportunities inside the idea.
-3. Find underrated features.
-4. Find competitor gaps and switching opportunities.
-5. Generate multiple possible product paths.
-6. Recommend a strategic path, but explain alternatives.
-7. Explain the largest upside scenario without fabricating TAM, revenue, clinical proof, laws, or sources.
-8. Explain category creation or category attack potential.
-
-BUILD LAYER INSTRUCTIONS:
-1. Make the pack understandable to a cold reader.
-2. Create separate useful packages for founder/investor, designer, frontend, backend, AI engineer, QA, growth, and legal/privacy.
-3. Include screen storyboard and navigation/information architecture.
-4. Include UX flow and screen map.
-5. Include data model and API contracts.
-6. Include AI agent behavior rules, memory rules, forbidden outputs, and evaluation rules.
-7. Include acceptance criteria and QA scenarios.
-8. Include privacy/trust boundaries.
-
-EXECUTION LAYER INSTRUCTIONS:
-1. Include phases only as execution planning, not as a way to shrink the idea.
-2. Include Team & AI-Agent Handoff.
-3. Include a Qira-ready Backlog Draft, but do not assume or call any Qira API.
-4. Include an AI Agent Prompt Bundle Draft with self-contained prompts.
-5. Each AI-agent prompt must work without previous chat context.
-6. Every AI-agent prompt must include: Context, Scope, Open only, Do not, Task, Acceptance, Tests, Final report.
-7. If exact files are unknown, say: inspect only the smallest relevant files first.
-
-EVIDENCE LAYER INSTRUCTIONS:
-1. Include risks, assumptions, evidence needs, and claims that must not be made yet.
-2. Do not invent TAM/revenue/statistics/sources.
-3. If sources are missing, mark the pack as strategic starter / starter hypothesis for evidence.
-4. If a claim lacks evidence, mark it as assumption, source needed, or research question.
-5. If text would say "according to reports/agencies/data", it must have evidenceRefs. Otherwise rewrite as an assumption or source need.
-6. Missing sources should not make the whole pack structurally failed if the documents are complete. Use evidenceGate = "weak" or "starter_hypothesis".
+SECTIONS TO PRODUCE IN THIS STEP (produce exactly one document per section below, no more, no fewer):
+${stableJson(sectionsForStep(step))}
 
 QUALITY AND NAMING:
-1. Never call this a Preview. It is a Build-Ready Product Pack.
+1. Never call this a Preview. It is part of a Build-Ready Product Pack.
 2. Every document must include whatThisIs, whyItExists, howToUse, connections, doneDefinition.
 3. Do not output generic bullet-point startup docs.
 4. Do not output only short bullet lines.
 5. Make every section readable and useful to someone with zero prior context.
 
-${PRODUCT_PACK_V2_OUTPUT_CONTRACT}
+Return JSON only, no markdown fences, no commentary, in exactly this shape:
+${buildStepOutputContract(step)}
 `;
 
   return {
@@ -184,31 +161,30 @@ ${PRODUCT_PACK_V2_OUTPUT_CONTRACT}
 }
 
 export const PRODUCT_PACK_V2_JSON_REPAIR_SYSTEM_PROMPT = `
-You repair invalid JSON for SignalKit Product Pack generation.
+You repair invalid JSON for one step of a SignalKit Product Pack generation pipeline.
 
 Return valid JSON only.
 Do not add markdown.
 Do not add commentary.
 Do not remove required fields.
 Do not downgrade the pack into MVP-first output.
-Do not remove Vision Layer, Build Layer, Execution Layer, or Evidence Layer.
-If content is truncated, preserve what is available and mark missing parts in quality.missingInputs.
+If content is truncated, preserve what is available and mark missing parts by leaving the rest of the array/object empty rather than inventing content.
 `;
 
-export function buildProductPackV2RepairPrompt(rawOutput: string): {
-  system: string;
-  user: string;
-} {
+export function buildProductPackV2StepRepairPrompt(
+  step: ProductPackV2Step,
+  rawOutput: string,
+): { system: string; user: string } {
   return {
     system: PRODUCT_PACK_V2_JSON_REPAIR_SYSTEM_PROMPT,
     user: `
-Repair this invalid Product Pack JSON so it matches the required contract.
+Repair this invalid JSON for the "${step.title}" step of a SignalKit Build-Ready Product Pack so it matches the required contract.
 
-REQUIRED CONTRACT:
-${PRODUCT_PACK_V2_OUTPUT_CONTRACT}
+REQUIRED CONTRACT FOR THIS STEP:
+${buildStepOutputContract(step)}
 
-REQUIRED SECTION DEFINITIONS:
-${stableJson(PRODUCT_PACK_V2_SECTIONS)}
+REQUIRED SECTION DEFINITIONS FOR THIS STEP:
+${stableJson(sectionsForStep(step))}
 
 RAW OUTPUT:
 ${rawOutput.slice(0, 120000)}

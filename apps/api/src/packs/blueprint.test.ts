@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeVentureScaleScore, REQUIRED_SCREEN_STATES, type ScoringInput } from '@signalkit/shared';
+import { createPackContentTranslator } from '@signalkit/i18n';
 import { buildPackContext, type PackContext, type PackContextInput } from './context';
 import { buildBuildBlueprint } from './blueprint';
 import { DEPTH_DOCUMENTS, buildDocument } from './templates';
@@ -53,10 +54,14 @@ describe('Build Blueprint generator', () => {
   });
 
   it('maps API endpoints to screens and includes a DO_NOT_BUILD list', () => {
-    const bp = ctxWithBlueprint().buildBlueprint!;
+    const ctx = ctxWithBlueprint();
+    const bp = ctx.buildBlueprint!;
+    const t = createPackContentTranslator(ctx.language);
     expect(bp.apiToScreenMap.length).toBeGreaterThan(0);
     expect(bp.doNotBuild.length).toBeGreaterThan(0);
-    expect(bp.doNotBuild.some((d) => /generat/i.test(d.item) || /app/i.test(d.item))).toBe(true);
+    // Checked against the translated text (ctx.language is 'tr' here) rather than
+    // an English keyword regex, since DO_NOT_BUILD reasons are localized content.
+    expect(bp.doNotBuild.some((d) => d.item === t('blueprint.dnb_app_generation_item'))).toBe(true);
     expect(bp.permissionMatrix.length).toBeGreaterThan(0);
   });
 

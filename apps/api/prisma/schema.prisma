@@ -431,6 +431,12 @@ model Niche {
   recommendedProductFormat String    @default("")
   riskLevel                RiskLevel @default(medium)
   language                 String    @default("en")
+  // 'discovered' (default, via discover()) | 'founder_idea' (via createFromIdea()).
+  intakeMode               String    @default("discovered")
+  // Verbatim founder-supplied idea text when intakeMode is 'founder_idea'; kept
+  // separate from the LLM-derived oneLiner/problem so Pack generation can use
+  // the founder's own words as founderRequest.
+  founderIdeaText          String    @default("")
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 

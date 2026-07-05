@@ -137,4 +137,75 @@ describe('NichesService', () => {
     expect(prompt).toContain('Investor lens: enabled');
     expect(prompt).not.toContain('United States');
   });
+
+  it('tells the model that output language is not evidence of target market/audience', async () => {
+    const { prisma, evidence, router } = makeDeps([]);
+    await new NichesService(prisma, evidence, router).discover('w1', 'p1', { language: 'ru' });
+
+    const systemPrompt = router.run.mock.calls[0]![0].messages[0].content;
+    const userPrompt = router.run.mock.calls[0]![0].messages[1].content;
+    expect(systemPrompt).toMatch(/output language is only|not evidence of the target market/i);
+    expect(userPrompt).toContain('this is only the language to write in');
+  });
+
+  it('anchors discovery on the project goal with a prominent, labeled block', async () => {
+    const { prisma, evidence, router } = makeDeps([]);
+    await new NichesService(prisma, evidence, router).discover('w1', 'p1');
+
+    const prompt = router.run.mock.calls[0]![0].messages[1].content;
+    expect(prompt).toContain("FOUNDER'S STATED IDEA / GOAL");
+    expect(prompt).toContain('Find B2B AI opportunities'); // project.goal from the mock
+    const systemPrompt = router.run.mock.calls[0]![0].messages[0].content;
+    expect(systemPrompt).toContain("FOUNDER'S STATED IDEA / GOAL");
+  });
+
+  describe('createFromIdea', () => {
+    it('rejects an idea shorter than 40 characters without calling the LLM', async () => {
+      const { prisma, evidence, router, nicheCreate } = makeDeps([]);
+      await expect(
+        new NichesService(prisma, evidence, router).createFromIdea('w1', 'p1', { founderIdea: 'Too short.' }),
+      ).rejects.toMatchObject({ response: { code: 'founder_idea_too_short' } });
+      expect(router.run).not.toHaveBeenCalled();
+      expect(nicheCreate).not.toHaveBeenCalled();
+    });
+
+    it('develops a real, LLM-scored opportunity from the founder idea (not a hardcoded placeholder)', async () => {
+      const { prisma, evidence, router, nicheCreate, nicheScoreCreate } = makeDeps([]);
+      const idea =
+        "A lifelong personal health companion app for women, with a personal AI agent that knows her from menarche to old age, tracks cycles, pregnancy, and relationships, and can share access with family or a doctor.";
+
+      const out = await new NichesService(prisma, evidence, router).createFromIdea('w1', 'p1', { founderIdea: idea });
+
+      expect(out.niches).toBe(1);
+      expect(router.run).toHaveBeenCalledTimes(1);
+      expect(prisma.niche.deleteMany).not.toHaveBeenCalled();
+
+      const nicheData = nicheCreate.mock.calls[0]![0].data;
+      expect(nicheData.intakeMode).toBe('founder_idea');
+      expect(nicheData.founderIdeaText).toBe(idea);
+
+      // Score/confidence come from the mocked LLM draft, not the old hardcoded 50/0.25 placeholder.
+      const scoreData = nicheScoreCreate.mock.calls[0]![0].data;
+      expect(scoreData.totalScore).toBe(71);
+      expect(scoreData.confidenceValue).toBeCloseTo(0.46, 2);
+      expect(scoreData.explanation).toContain('founder-supplied');
+
+      const prompt = router.run.mock.calls[0]![0].messages[1].content;
+      expect(prompt).toContain(idea);
+      expect(prompt).toContain("FOUNDER'S IDEA");
+    });
+
+    it('tells the model not to infer target market/audience from the output language (regression: Russian idea should not force a Russian-speaking audience)', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      const idea =
+        "A lifelong personal health companion app for women, with a personal AI agent that knows her from menarche to old age and can share access with family or a doctor.";
+
+      await new NichesService(prisma, evidence, router).createFromIdea('w1', 'p1', { founderIdea: idea, outputLanguage: 'ru' });
+
+      const systemPrompt = router.run.mock.calls[0]![0].messages[0].content;
+      const userPrompt = router.run.mock.calls[0]![0].messages[1].content;
+      expect(systemPrompt).toMatch(/output language is only|not evidence of the target market/i);
+      expect(userPrompt).toContain('this is only the language to write in');
+    });
+  });
 });

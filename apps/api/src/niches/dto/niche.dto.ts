@@ -96,3 +96,39 @@ export class CompareMarketsDto {
   @IsString({ each: true })
   countries?: string[];
 }
+
+export class CreateOpportunityFromIdeaDto {
+  @ApiPropertyOptional({ description: "Full founder idea text (required, min 40 characters — enforced in the service for a specific error code)." })
+  @IsString()
+  founderIdea!: string;
+
+  @ApiPropertyOptional({ description: 'Target market hint.' })
+  @IsOptional()
+  @IsString()
+  targetMarket?: string;
+
+  @ApiPropertyOptional({ description: 'Target audience hint.' })
+  @IsOptional()
+  @IsString()
+  targetAudience?: string;
+
+  @ApiPropertyOptional({ description: 'Product format hint.' })
+  @IsOptional()
+  @IsString()
+  productFormat?: string;
+
+  @ApiPropertyOptional({ description: 'Desired output language.' })
+  @IsOptional()
+  @IsString()
+  outputLanguage?: string;
+
+  @ApiPropertyOptional({ enum: ['starter_hypothesis', 'source_backed', 'deep_research'], description: 'Evidence mode.' })
+  @IsOptional()
+  @IsIn(['starter_hypothesis', 'source_backed', 'deep_research'])
+  evidenceMode?: 'starter_hypothesis' | 'source_backed' | 'deep_research';
+
+  @ApiPropertyOptional({ enum: ['low', 'medium', 'high'], description: 'Risk tolerance.' })
+  @IsOptional()
+  @IsIn(['low', 'medium', 'high'])
+  riskTolerance?: 'low' | 'medium' | 'high';
+}

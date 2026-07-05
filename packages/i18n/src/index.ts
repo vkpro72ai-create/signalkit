@@ -86,6 +86,13 @@ export { catalog, type MessageKey } from './catalogs/index.js';
 import { catalog } from './catalogs/index.js';
 import type { MessageKey } from './catalogs/index.js';
 
+export {
+  packContentCatalog,
+  createPackContentTranslator,
+  type PackContentKey,
+  type PackContentTranslator,
+} from './catalogs/pack-content/index.js';
+
 /** A translator bound to a locale, with type-checked keys and English fallback. */
 export type Translator = (key: MessageKey) => string;
 

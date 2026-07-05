@@ -70,8 +70,8 @@ export default function NewProjectPage() {
           <div style={sectionTitle}>1 · {t('pipeline.project')}</div>
           <input style={{ ...field, marginTop: spacing.sm }} placeholder="Project name" value={name} onChange={(e) => setName(e.target.value)} required />
           <textarea
-            style={{ ...field, marginTop: spacing.sm, minHeight: 64 }}
-            placeholder="Project goal"
+            style={{ ...field, marginTop: spacing.sm, minHeight: 140 }}
+            placeholder="Describe your idea in full — a whole concept, not just a category. Discovery will build opportunities inside it. (Or leave this blank for open, system-suggested discovery.)"
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
           />

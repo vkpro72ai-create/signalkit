@@ -57,6 +57,29 @@ describe('pack templates & context', () => {
   });
 });
 
+/**
+ * Genuinely Turkish niche content, tagged `language: 'tr'` — unlike `makeInput()`
+ * (English niche text tagged 'tr', which only exists to test structural gates
+ * independent of language). Used to prove the pack legitimately passes when the
+ * content really is in the requested language.
+ */
+function makeTurkishInput(): PackContextInput {
+  return makeInput({
+    niche: {
+      title: 'Klinik WhatsApp Asistanı', oneLiner: 'WhatsApp taleplerini randevuya dönüştürür.',
+      problem: 'Klinik personeli manuel WhatsApp yanıtlarıyla boğuluyor.', targetAudience: 'Türkiye\'deki özel klinikler',
+      whyNow: 'Mesajlaşmayı önceliklendiren hastalar ve ucuz yapay zeka.', useCases: ['WhatsApp üzerinden randevu alma', 'Sık sorulan sorulara otomatik yanıt', 'Gelmeme hatırlatmaları', 'Satış analitiği'],
+      competitors: ['Genel amaçlı sohbet botları'], monetization: 'Klinik başına aylık abonelik.', mvpConcept: 'WhatsApp gelen kutusu ve randevu sistemi.',
+      recommendedProductFormat: 'b2b_saas', riskLevel: 'medium',
+    },
+    score: { totalScore: 72, confidenceValue: 0.55, confidenceLevel: 'medium', explanation: 'Talep güçlü; güven düzeyi orta seviyede.', breakdown: [{ dimension: 'mvp_feasibility', score: 60, assumptionBased: true }] },
+    claims: [{ id: 'c1', text: 'Personel otomasyon istiyor', type: 'user_pain', confidenceLevel: 'high' }, { id: 'c2', text: 'Talep artıyor', type: 'market_demand', confidenceLevel: 'medium' }],
+    assumptions: [{ id: 'a1', text: 'Klinikler aylık ödeme yapmaya istekli olacak' }],
+    constraints: [{ id: 'k1', text: 'WhatsApp Business politikasına uygun olmalı' }],
+    unresolvedQuestions: [{ id: 'q1', text: 'Gerçek gelmeme oranı nedir?' }],
+  });
+}
+
 describe('quality gates', () => {
   function buildAll(over: Partial<PackContextInput> = {}) {
     const ctx = buildPackContext(makeInput(over));
@@ -64,8 +87,14 @@ describe('quality gates', () => {
     return { ctx, docs };
   }
 
-  it('passes (or warns) a complete, consistent, evidence-backed pack', () => {
-    const { ctx, docs } = buildAll();
+  function buildAllFromInput(input: PackContextInput) {
+    const ctx = buildPackContext(input);
+    const docs: DocForGate[] = DEPTH_DOCUMENTS.build_ready.map((docType) => ({ docType, body: buildDocument(docType, ctx).body, language: ctx.language }));
+    return { ctx, docs };
+  }
+
+  it('passes (or warns) a complete, consistent, evidence-backed pack that is genuinely in its tagged language', () => {
+    const { ctx, docs } = buildAllFromInput(makeTurkishInput());
     const gate = runQualityGates(docs, ctx, DEPTH_DOCUMENTS.build_ready);
     expect(gate.status).not.toBe('failed');
     expect(gate.checks.find((c) => c.id === 'mvp_included_excluded')!.status).toBe('pass');
@@ -103,5 +132,16 @@ describe('quality gates', () => {
     const { ctx, docs } = buildAll({ claims: [], sourceRefs: [], evidence: [] });
     const gate = runQualityGates(docs, ctx, DEPTH_DOCUMENTS.build_ready);
     expect(gate.checks.find((c) => c.id === 'evidence_backed')!.status).toBe('warn');
+  });
+
+  it('FAILS output_language when the body is actually English despite being tagged with a different language (regression: a mislabeled document must not silently pass)', () => {
+    // makeInput()'s niche/ICP copy is English prose, tagged language: 'tr' — this
+    // is exactly the bug real multilingualism was fixing: metadata said 'tr',
+    // the text was English. The gate must catch it by reading the text itself.
+    const { ctx, docs } = buildAll();
+    const gate = runQualityGates(docs, ctx, DEPTH_DOCUMENTS.build_ready);
+    const langCheck = gate.checks.find((c) => c.id === 'output_language')!;
+    expect(langCheck.status).toBe('fail');
+    expect(langCheck.documentTypes.length).toBeGreaterThan(0);
   });
 });

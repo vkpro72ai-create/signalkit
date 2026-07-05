@@ -403,6 +403,46 @@ describe('ExportRendererService — Evidence Appendix', () => {
     expect(appendix).toContain('url');
     expect(appendix).toContain('https://example.com');
   });
+
+  it('renders evidence appendix headings in Russian when the pack language is ru', () => {
+    const ev = makeEvidence();
+    const appendix = renderer.renderEvidenceAppendix(ev, 'ru');
+    expect(appendix).toContain('Утверждения'); // Claims
+    expect(appendix).toContain('Допущения'); // Assumptions
+    expect(appendix).toContain('Открытые вопросы'); // Unresolved Questions
+    expect(appendix).not.toContain('Claims');
+    expect(appendix).not.toContain('Assumptions');
+  });
+});
+
+describe('ExportRendererService — localized export bundle (real multilingualism regression)', () => {
+  const renderer = new ExportRendererService();
+
+  it('renders the ZIP README, DO_NOT_BUILD fallback and role brief in the pack language, not English', async () => {
+    const JSZip = (await import('jszip')).default;
+    const pack = makePack({ primaryLanguage: 'ru' });
+    const ev = makeEvidence();
+    const manifest = makeManifest({ outputLanguage: 'ru' });
+    // Deliberately omit do_not_build so the localized fallback text is exercised.
+    const docs = ALL_DOC_TYPES.filter((dt) => dt !== 'do_not_build').map((dt) => makeDoc(dt));
+
+    const zipBuf = await renderer.renderMarkdownZip(pack, docs, ev, manifest);
+    const zip = await JSZip.loadAsync(zipBuf);
+    const readme = await zip.file('product-pack/README.md')!.async('string');
+    expect(readme).toContain('Содержание'); // Contents
+    expect(readme).toContain('Папки'); // Folders
+    expect(readme).not.toContain('Contents');
+    expect(readme).not.toContain('Folders');
+
+    const agentBuf = await renderer.renderAiAgentBundle(pack, docs, ev, manifest);
+    const agentZip = await JSZip.loadAsync(agentBuf);
+    const doNotBuild = await agentZip.file('DO_NOT_BUILD.md')!.async('string');
+    expect(doNotBuild).toContain('ЧТО НЕ СТРОИТЬ');
+
+    const brief = renderer.renderRoleBrief('founder', pack, docs, ev);
+    expect(brief).toContain('Сводка для фаундера'); // Founder Summary
+    expect(brief).not.toContain('Founder Summary');
+  });
 });
 
 // ── ExportStorageService ──────────────────────────────────────────────────────

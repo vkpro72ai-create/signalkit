@@ -4,7 +4,14 @@
  * is fully testable without a database.
  */
 import type { DocumentType } from '@signalkit/shared';
+import { looksLikeWrongLanguage } from '@signalkit/llm';
+import { createPackContentTranslator } from '@signalkit/i18n';
 import type { PackContext } from './context';
+
+/** Escape a string for safe use inside a `RegExp` constructor. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 export interface GateCheck {
   id: string;
@@ -84,16 +91,24 @@ export function runQualityGates(
     documentTypes: generic,
   });
 
-  // 5) MVP scope includes Included/Excluded.
+  // 5) MVP scope includes Included/Excluded — in the pack's own language, since
+  // templates.ts renders these headings translated, not hardcoded English.
+  const t = createPackContentTranslator(ctx.language);
   if (has('mvp_scope')) {
-    const ok = /##\s*Included/i.test(body('mvp_scope')) && /##\s*Excluded/i.test(body('mvp_scope'));
+    const included = escapeRegExp(t('heading.included'));
+    const excluded = escapeRegExp(t('heading.excluded'));
+    const b = body('mvp_scope');
+    const ok = new RegExp(`##\\s*${included}`, 'i').test(b) && new RegExp(`##\\s*${excluded}`, 'i').test(b);
     checks.push(mk('mvp_included_excluded', 'MVP scope lists Included & Excluded', ok ? 'pass' : 'fail', ok ? 'Both present' : 'Missing Included/Excluded sections', ['mvp_scope']));
   }
 
-  // 6) Acceptance criteria use Given/When/Then.
+  // 6) Acceptance criteria use Given/When/Then — in the pack's own language.
   if (has('acceptance_criteria')) {
     const b = body('acceptance_criteria');
-    const ok = /given/i.test(b) && /when/i.test(b) && /then/i.test(b);
+    const given = escapeRegExp(t('gwt.given'));
+    const when = escapeRegExp(t('gwt.when'));
+    const then = escapeRegExp(t('gwt.then'));
+    const ok = new RegExp(given, 'i').test(b) && new RegExp(when, 'i').test(b) && new RegExp(then, 'i').test(b);
     checks.push(mk('acceptance_gwt', 'Acceptance criteria use Given/When/Then', ok ? 'pass' : 'fail', ok ? 'Given/When/Then present' : 'Not in Given/When/Then form', ['acceptance_criteria']));
   }
 
@@ -115,9 +130,10 @@ export function runQualityGates(
     checks.push(mk('consistency_api_frontend', 'Frontend consumes the API', missingEndpoints.length === 0 ? 'pass' : 'fail', missingEndpoints.length === 0 ? 'Endpoints consistent' : `Endpoints not consumed: ${missingEndpoints.map((e) => e.path).join(', ')}`, ['api_requirements', 'frontend_brd']));
   }
 
-  // 10) Risks have mitigations.
+  // 10) Risks have mitigations (checked against the pack's own language).
   if (has('risks_and_assumptions')) {
-    const ok = /mitigation/i.test(body('risks_and_assumptions'));
+    const mitigation = escapeRegExp(t('common.mitigation_label'));
+    const ok = new RegExp(mitigation, 'i').test(body('risks_and_assumptions'));
     checks.push(mk('risks_have_mitigations', 'Risks have mitigations', ok ? 'pass' : 'fail', ok ? 'Mitigations present' : 'No mitigations found', ['risks_and_assumptions']));
   }
 
@@ -131,8 +147,12 @@ export function runQualityGates(
     documentTypes: [],
   });
 
-  // 12) Output language present & non-empty per document.
-  const langBroken = docs.filter((d) => d.language !== ctx.language || d.body.trim().length === 0).map((d) => d.docType);
+  // 12) Output language present, non-empty, and the body text is actually in
+  // that language (not just tagged correctly — a mislabeled English document
+  // must fail here, not silently pass).
+  const langBroken = docs
+    .filter((d) => d.body.trim().length === 0 || d.language !== ctx.language || looksLikeWrongLanguage(d.body, ctx.language))
+    .map((d) => d.docType);
   checks.push({
     id: 'output_language',
     label: 'Output language correct',

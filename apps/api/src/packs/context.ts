@@ -13,6 +13,7 @@ import type {
   VentureScaleScoreResult,
   BuildBlueprint,
 } from '@signalkit/shared';
+import { createPackContentTranslator } from '@signalkit/i18n';
 
 export interface PackNiche {
   title: string;
@@ -26,6 +27,10 @@ export interface PackNiche {
   mvpConcept: string;
   recommendedProductFormat: string;
   riskLevel: string;
+  /** 'discovered' (default) | 'founder_idea' — set when the niche came from createFromIdea(). */
+  intakeMode?: string;
+  /** Verbatim founder-supplied idea text when intakeMode is 'founder_idea'. */
+  founderIdeaText?: string;
 }
 
 export interface PackScore {
@@ -88,25 +93,26 @@ function entityName(phrase: string): string {
 }
 
 export function buildPackContext(input: PackContextInput): PackContext {
+  const t = createPackContentTranslator(input.language);
   const useCases = input.niche.useCases.length
     ? input.niche.useCases
-    : [`Core workflow for ${input.niche.title}`];
+    : [t('derived.core_workflow_fallback', { title: input.niche.title })];
 
   // Features: first ~60% are MVP-included, the rest post-MVP.
   const cutoff = Math.max(1, Math.ceil(useCases.length * 0.6));
   const features: Feature[] = useCases.map((u, i) => ({
     name: u.length > 70 ? u.slice(0, 67) + '…' : u,
     included: i < cutoff,
-    rationale: i < cutoff ? 'Directly addresses the core problem.' : 'Valuable but deferrable past MVP.',
+    rationale: i < cutoff ? t('derived.rationale_mvp') : t('derived.rationale_post_mvp'),
   }));
-  features.push({ name: 'Account & access (auth, roles)', included: true, rationale: 'Required baseline.' });
+  features.push({ name: t('derived.auth_feature_name'), included: true, rationale: t('derived.rationale_auth') });
 
   // Screens follow features + standard shells.
   const screens = [
-    'Sign In',
-    'Home / Dashboard',
-    ...features.filter((f) => f.included).slice(0, 5).map((f) => `${entityName(f.name)} screen`),
-    'Settings',
+    t('derived.screen_sign_in'),
+    t('derived.screen_home_dashboard'),
+    ...features.filter((f) => f.included).slice(0, 5).map((f) => t('derived.screen_suffix', { entity: entityName(f.name) })),
+    t('derived.screen_settings'),
   ];
 
   // Entities: a primary domain entity + platform baseline.
@@ -127,7 +133,7 @@ export function buildPackContext(input: PackContextInput): PackContext {
   const icp = {
     segment: input.niche.targetAudience,
     pains,
-    jtbd: useCases.slice(0, 4).map((u) => `When ${input.niche.targetAudience.toLowerCase()}, they want to ${u.toLowerCase()}`),
+    jtbd: useCases.slice(0, 4).map((u) => t('derived.jtbd_template', { audience: input.niche.targetAudience, action: u })),
   };
 
   return { ...input, features, screens, entities, endpoints, icp };

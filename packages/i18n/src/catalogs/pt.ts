@@ -57,4 +57,20 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'label.estCost': 'Custo est.',
   'market.compare': 'Comparar mercados',
   'market.global': 'Global',
+
+  'export.language': 'Idioma de saída',
+
+  'opportunities.tabFind': 'Encontrar oportunidades',
+  'opportunities.tabDevelop': 'Desenvolver minha ideia',
+  'opportunities.ideaLabel': 'Descreva sua ideia',
+  'opportunities.ideaPlaceholder': 'Descreva sua ideia como fundador: para quem é, qual grande problema resolve e o que ela poderia se tornar em sua forma mais completa — mercados, ecossistema, cenários importantes.',
+  'opportunities.ideaMinLengthHint': 'Pelo menos 40 caracteres — detalhes suficientes para o sistema desenvolvê-la.',
+  'opportunities.targetMarketLabel': 'Mercado-alvo',
+  'opportunities.targetAudienceLabel': 'Público-alvo',
+  'opportunities.productFormatLabel': 'Formato do produto',
+  'opportunities.evidenceModeLabel': 'Modo de evidência',
+  'opportunities.developSubmit': 'Desenvolver esta ideia',
+  'opportunities.developing': 'Desenvolvendo sua ideia…',
+  'opportunities.developError': 'Não foi possível desenvolver esta ideia',
+  'opportunities.ideaTooShort': 'Escreva pelo menos 40 caracteres.',
 };

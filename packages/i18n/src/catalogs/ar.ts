@@ -58,4 +58,20 @@ export const ar: Partial<Record<MessageKey, string>> = {
   'label.estCost': 'التكلفة التقديرية',
   'market.compare': 'مقارنة الأسواق',
   'market.global': 'عالمي',
+
+  'export.language': 'لغة الإخراج',
+
+  'opportunities.tabFind': 'البحث عن الفرص',
+  'opportunities.tabDevelop': 'تطوير فكرتي',
+  'opportunities.ideaLabel': 'صف فكرتك',
+  'opportunities.ideaPlaceholder': 'صف فكرتك بصفتك مؤسسًا: لمن هي موجهة، وما المشكلة الكبرى التي تحلها، وما الذي يمكن أن تصبح عليه في أوسع نطاق — الأسواق، النظام البيئي، السيناريوهات المهمة.',
+  'opportunities.ideaMinLengthHint': '40 حرفًا على الأقل — تفاصيل كافية ليتمكن النظام من تطويرها.',
+  'opportunities.targetMarketLabel': 'السوق المستهدف',
+  'opportunities.targetAudienceLabel': 'الجمهور المستهدف',
+  'opportunities.productFormatLabel': 'صيغة المنتج',
+  'opportunities.evidenceModeLabel': 'وضع الأدلة',
+  'opportunities.developSubmit': 'تطوير هذه الفكرة',
+  'opportunities.developing': 'جارٍ تطوير فكرتك…',
+  'opportunities.developError': 'تعذّر تطوير هذه الفكرة',
+  'opportunities.ideaTooShort': 'يرجى كتابة 40 حرفًا على الأقل.',
 };

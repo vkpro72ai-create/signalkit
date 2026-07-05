@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { spacing, typography } from '@signalkit/ui';
-import type { ConfidenceLevel, RiskLevel } from '@signalkit/shared';
+import { SUPPORTED_LOCALES, LOCALE_LANGUAGE_NAMES, type ConfidenceLevel, type RiskLevel } from '@signalkit/shared';
 import {
   Card,
   PageHeader,
@@ -18,7 +18,7 @@ import {
   ErrorState,
   palette,
 } from '../../../components/ui';
-import { useT } from '../../../lib/i18n';
+import { useI18n, useT } from '../../../lib/i18n';
 import {
   firstWorkspaceId,
   workspaceApi,
@@ -51,8 +51,11 @@ const DIRECTION_OPTIONS = [
  'Detection / Monitoring / Intelligence',
 ];
 
+const IDEA_MIN_LENGTH = 40;
+
 export default function OpportunitiesPage() {
   const t = useT();
+  const { locale } = useI18n();
   const [state, setState] = useState<'loading' | 'error' | 'ready' | 'no_project'>('loading');
   const [ws, setWs] = useState<string | null>(null);
   const [pid, setPid] = useState<string | null>(null);
@@ -65,12 +68,16 @@ export default function OpportunitiesPage() {
   const [audienceInput, setAudienceInput] = useState('');
   const [productFormat, setProductFormat] = useState('');
   const [riskTolerance, setRiskTolerance] = useState<'low' | 'medium' | 'high'>('medium');
-  const [language, setLanguage] = useState(() => {
-    if (typeof window === 'undefined') return 'ru';
-    const browserLanguage = window.navigator.language.split('-')[0];
-    return browserLanguage === 'en' || browserLanguage === 'ru' ? browserLanguage : 'ru';
-  });
+  const [language, setLanguage] = useState<string>(locale);
   const [investorLens, setInvestorLens] = useState(true);
+
+  const [tab, setTab] = useState<'find' | 'develop'>('find');
+  const [founderIdea, setFounderIdea] = useState('');
+  const [ideaTargetMarket, setIdeaTargetMarket] = useState('');
+  const [ideaTargetAudience, setIdeaTargetAudience] = useState('');
+  const [ideaProductFormat, setIdeaProductFormat] = useState('');
+  const [ideaRiskTolerance, setIdeaRiskTolerance] = useState<'low' | 'medium' | 'high'>('medium');
+  const [ideaEvidenceMode, setIdeaEvidenceMode] = useState<'starter_hypothesis' | 'source_backed' | 'deep_research'>('starter_hypothesis');
 
   const load = useCallback(async () => {
     setState('loading');
@@ -129,6 +136,34 @@ export default function OpportunitiesPage() {
     }
   }
 
+  async function developIdea() {
+    if (!ws || !pid) return;
+    if (founderIdea.trim().length < IDEA_MIN_LENGTH) {
+      setError(t('opportunities.ideaTooShort'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await opportunityApi.createFromIdea(ws, pid, {
+        founderIdea: founderIdea.trim(),
+        targetMarket: ideaTargetMarket || undefined,
+        targetAudience: ideaTargetAudience || undefined,
+        productFormat: ideaProductFormat || undefined,
+        riskTolerance: ideaRiskTolerance,
+        evidenceMode: ideaEvidenceMode,
+        outputLanguage: language,
+      });
+      setLastRun(result.generation);
+      // Add alongside existing opportunities — createFromIdea does not replace them.
+      setOpportunities((prev) => [...result.opportunities, ...prev]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('opportunities.developError'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const sorted = [...opportunities].sort((a, b) => b.opportunityScore - a.opportunityScore);
 
   return (
@@ -136,7 +171,13 @@ export default function OpportunitiesPage() {
       <PageHeader
         title={t('nav.opportunities')}
         subtitle={`${opportunities.length} opportunit${opportunities.length === 1 ? 'y' : 'ies'} · evidence-backed, no fabricated market sizing`}
-        action={state === 'ready' ? <Button onClick={() => void discover()} disabled={busy}>{busy ? 'Finding…' : 'Find opportunities'}</Button> : undefined}
+        action={
+          state === 'ready'
+            ? tab === 'find'
+              ? <Button onClick={() => void discover()} disabled={busy}>{busy ? 'Finding…' : t('opportunities.tabFind')}</Button>
+              : <Button onClick={() => void developIdea()} disabled={busy}>{busy ? t('opportunities.developing') : t('opportunities.developSubmit')}</Button>
+            : undefined
+        }
       />
 
       {error && (
@@ -147,6 +188,124 @@ export default function OpportunitiesPage() {
       )}
 
       {state === 'ready' && (
+        <div style={{ display: 'flex', gap: spacing.xs, marginBottom: spacing.sm }}>
+          <button
+            type="button"
+            onClick={() => setTab('find')}
+            style={{
+              padding: `${spacing.xs}px ${spacing.md}px`,
+              borderRadius: 6,
+              border: `1px solid ${tab === 'find' ? palette.ink : '#d0d7de'}`,
+              background: tab === 'find' ? palette.ink : 'white',
+              color: tab === 'find' ? 'white' : palette.ink,
+              fontSize: typography.size.sm,
+              cursor: 'pointer',
+            }}
+          >
+            {t('opportunities.tabFind')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('develop')}
+            style={{
+              padding: `${spacing.xs}px ${spacing.md}px`,
+              borderRadius: 6,
+              border: `1px solid ${tab === 'develop' ? palette.ink : '#d0d7de'}`,
+              background: tab === 'develop' ? palette.ink : 'white',
+              color: tab === 'develop' ? 'white' : palette.ink,
+              fontSize: typography.size.sm,
+              cursor: 'pointer',
+            }}
+          >
+            {t('opportunities.tabDevelop')}
+          </button>
+        </div>
+      )}
+
+      {state === 'ready' && tab === 'develop' && (
+        <Card style={{ marginBottom: spacing.lg }}>
+          <div style={{ fontWeight: typography.weight.semibold, marginBottom: spacing.sm }}>{t('opportunities.tabDevelop')}</div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+            <span>{t('opportunities.ideaLabel')}</span>
+            <textarea
+              value={founderIdea}
+              onChange={(event) => setFounderIdea(event.target.value)}
+              placeholder={t('opportunities.ideaPlaceholder')}
+              style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', minHeight: 140, fontFamily: 'inherit', fontSize: typography.size.sm }}
+            />
+            <span style={{ color: palette.subtle, fontSize: typography.size.xs }}>{t('opportunities.ideaMinLengthHint')}</span>
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: spacing.sm, marginTop: spacing.sm }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>{t('opportunities.targetMarketLabel')}</span>
+              <input
+                value={ideaTargetMarket}
+                onChange={(event) => setIdeaTargetMarket(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>{t('opportunities.targetAudienceLabel')}</span>
+              <input
+                value={ideaTargetAudience}
+                onChange={(event) => setIdeaTargetAudience(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>{t('opportunities.productFormatLabel')}</span>
+              <input
+                value={ideaProductFormat}
+                onChange={(event) => setIdeaProductFormat(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>{t('label.risk')}</span>
+              <select
+                value={ideaRiskTolerance}
+                onChange={(event) => setIdeaRiskTolerance(event.target.value as 'low' | 'medium' | 'high')}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>{t('opportunities.evidenceModeLabel')}</span>
+              <select
+                value={ideaEvidenceMode}
+                onChange={(event) => setIdeaEvidenceMode(event.target.value as 'starter_hypothesis' | 'source_backed' | 'deep_research')}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                <option value="starter_hypothesis">Starter hypothesis</option>
+                <option value="source_backed">Source-backed</option>
+                <option value="deep_research">Deep research later</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
+              <span>{t('export.language')}</span>
+              <select
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+                style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
+              >
+                {SUPPORTED_LOCALES.map((code) => (
+                  <option key={code} value={code}>{LOCALE_LANGUAGE_NAMES[code]}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: spacing.sm }}>
+            <Button onClick={() => void developIdea()} disabled={busy || founderIdea.trim().length < IDEA_MIN_LENGTH}>
+              {busy ? t('opportunities.developing') : t('opportunities.developSubmit')}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {state === 'ready' && tab === 'find' && (
         <Card style={{ marginBottom: spacing.lg }}>
           <div style={{ fontWeight: typography.weight.semibold, marginBottom: spacing.sm }}>Search setup</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: spacing.sm }}>
@@ -213,14 +372,15 @@ export default function OpportunitiesPage() {
               </select>
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, fontSize: typography.size.sm }}>
-              <span>Output language</span>
+              <span>{t('export.language')}</span>
               <select
                 value={language}
                 onChange={(event) => setLanguage(event.target.value)}
                 style={{ border: '1px solid #d0d7de', borderRadius: 6, padding: '8px 10px', background: 'white' }}
               >
-                <option value="ru">Russian</option>
-                <option value="en">English</option>
+                {SUPPORTED_LOCALES.map((code) => (
+                  <option key={code} value={code}>{LOCALE_LANGUAGE_NAMES[code]}</option>
+                ))}
               </select>
             </label>
           </div>

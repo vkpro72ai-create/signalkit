@@ -4,10 +4,12 @@ import type {
   ExportManifest,
   RoleBriefType,
   DocumentType,
+  LocaleCode,
   ScreenContract,
   ApiToScreenMapEntry,
   DoNotBuildItem,
 } from '@signalkit/shared';
+import { createPackContentTranslator, type PackContentKey, type PackContentTranslator } from '@signalkit/i18n';
 import {
   DOCUMENT_FOLDER,
   DOCUMENT_FILENAME,
@@ -82,9 +84,10 @@ export class ExportRendererService {
   ): Promise<Buffer> {
     const zip = new JSZip();
     const root = zip.folder('product-pack')!;
+    const t = createPackContentTranslator(pack.primaryLanguage as LocaleCode);
 
     root.file('manifest.json', JSON.stringify(manifest, null, 2));
-    root.file('README.md', this.buildReadme(pack, documents, manifest));
+    root.file('README.md', this.buildReadme(pack, documents, manifest, t));
 
     for (const doc of documents) {
       const folder = DOCUMENT_FOLDER[doc.docType as DocumentType];
@@ -95,7 +98,7 @@ export class ExportRendererService {
 
     // Evidence folder
     const ev8 = root.folder('08_evidence')!;
-    ev8.file('evidence_map.md', this.buildEvidenceMapMd(ev));
+    ev8.file('evidence_map.md', this.buildEvidenceMapMd(ev, t));
     ev8.file('claims.json', JSON.stringify(ev.claims, null, 2));
     ev8.file('evidence.json', JSON.stringify(ev.evidence, null, 2));
     ev8.file('assumptions.json', JSON.stringify(ev.assumptions, null, 2));
@@ -104,18 +107,18 @@ export class ExportRendererService {
     ev8.file('contradictions.json', JSON.stringify([], null, 2));
 
     // Sources folder
-    root.folder('00_sources')!.file('source_appendix.md', this.buildSourceAppendix(ev.sourceRefs));
+    root.folder('00_sources')!.file('source_appendix.md', this.buildSourceAppendix(ev.sourceRefs, t));
     root.folder('00_sources')!.file('source_refs.json', JSON.stringify(ev.sourceRefs, null, 2));
 
     // Quality gates
     root.folder('06_ai_handoff')!.file('quality_gates.json', JSON.stringify(ev.qualityGate ?? {}, null, 2));
-    root.folder('06_ai_handoff')!.file('coding_constraints.md', this.buildCodingConstraints(ev.constraints));
+    root.folder('06_ai_handoff')!.file('coding_constraints.md', this.buildCodingConstraints(ev.constraints, t));
 
     // Governance
     const gov = root.folder('09_governance')!;
-    gov.file('research_updates.md', this.buildResearchUpdatesMd(ev.researchUpdates));
+    gov.file('research_updates.md', this.buildResearchUpdatesMd(ev.researchUpdates, t));
     gov.file('review_status.json', JSON.stringify({ status: 'not_reviewed', packs: [pack.id] }, null, 2));
-    gov.file('document_versions_summary.md', this.buildVersionSummary(pack, documents));
+    gov.file('document_versions_summary.md', this.buildVersionSummary(pack, documents, t));
 
     // Build Blueprint (structured) — implementation-ready artifacts.
     if (ev.blueprint) {
@@ -126,8 +129,8 @@ export class ExportRendererService {
       bp.file('COMPONENT_CONTRACTS.json', JSON.stringify(ev.blueprint.componentContracts, null, 2));
       bp.file('PERMISSION_MATRIX.json', JSON.stringify(ev.blueprint.permissionMatrix, null, 2));
       bp.file('ANALYTICS_EVENTS.json', JSON.stringify(ev.blueprint.analyticsEvents, null, 2));
-      bp.file('VALIDATION_RULES.md', this.blueprintValidationMd(ev.blueprint));
-      bp.file('EMPTY_LOADING_ERROR_STATES.md', this.blueprintStatesMd(ev.blueprint));
+      bp.file('VALIDATION_RULES.md', this.blueprintValidationMd(ev.blueprint, t));
+      bp.file('EMPTY_LOADING_ERROR_STATES.md', this.blueprintStatesMd(ev.blueprint, t));
       bp.file('build_readiness.json', JSON.stringify({ score: ev.blueprint.buildReadinessScore, level: ev.blueprint.buildReadinessLevel, breakdown: ev.blueprint.buildReadinessBreakdown, warnings: ev.blueprint.warnings }, null, 2));
     }
 
@@ -143,21 +146,22 @@ export class ExportRendererService {
     const zip = new JSZip();
 
     const docMap = new Map(documents.map((d) => [d.docType, d]));
+    const t = createPackContentTranslator(pack.primaryLanguage as LocaleCode);
 
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
     zip.file('README_FOR_AGENT.md', this.buildAgentReadme(pack));
-    zip.file('product_context.md', this.buildProductContext(pack, docMap));
-    zip.file('implementation_scope.md', docMap.get('mvp_scope')?.body ?? '# MVP Scope\n_Not generated._');
-    zip.file('feature_checklist.md', docMap.get('feature_checklist')?.body ?? '# Feature Checklist\n_Not generated._');
-    zip.file('ux_flow.md', docMap.get('ux_flow')?.body ?? '# UX Flow\n_Not generated._');
+    zip.file('product_context.md', this.buildProductContext(pack, docMap, t));
+    zip.file('implementation_scope.md', docMap.get('mvp_scope')?.body ?? `# ${t('export.mvp_scope_fallback_title')}\n_${t('export.not_generated')}_`);
+    zip.file('feature_checklist.md', docMap.get('feature_checklist')?.body ?? `# ${t('export.feature_checklist_fallback_title')}\n_${t('export.not_generated')}_`);
+    zip.file('ux_flow.md', docMap.get('ux_flow')?.body ?? `# ${t('export.ux_flow_fallback_title')}\n_${t('export.not_generated')}_`);
     zip.file('screen_map.json', this.extractJson(docMap.get('screen_map')?.body ?? ''));
-    zip.file('frontend_brd.md', docMap.get('frontend_brd')?.body ?? '# Frontend BRD\n_Not generated._');
-    zip.file('backend_brd.md', docMap.get('backend_brd')?.body ?? '# Backend BRD\n_Not generated._');
+    zip.file('frontend_brd.md', docMap.get('frontend_brd')?.body ?? `# ${t('export.frontend_brd_fallback_title')}\n_${t('export.not_generated')}_`);
+    zip.file('backend_brd.md', docMap.get('backend_brd')?.body ?? `# ${t('export.backend_brd_fallback_title')}\n_${t('export.not_generated')}_`);
     zip.file('data_model.json', this.extractJson(docMap.get('data_model')?.body ?? ''));
     zip.file('api_requirements.yaml', this.extractYaml(docMap.get('api_requirements')?.body ?? ''));
-    zip.file('integration_requirements.md', this.buildIntegrationRequirements(docMap));
-    zip.file('acceptance_criteria.md', docMap.get('acceptance_criteria')?.body ?? '# Acceptance Criteria\n_Not generated._');
-    zip.file('coding_constraints.md', this.buildCodingConstraints(ev.constraints));
+    zip.file('integration_requirements.md', this.buildIntegrationRequirements(docMap, t));
+    zip.file('acceptance_criteria.md', docMap.get('acceptance_criteria')?.body ?? `# ${t('export.acceptance_criteria_fallback_title')}\n_${t('export.not_generated')}_`);
+    zip.file('coding_constraints.md', this.buildCodingConstraints(ev.constraints, t));
     zip.file('evidence.json', JSON.stringify(ev.evidence, null, 2));
     zip.file('claims.json', JSON.stringify(ev.claims, null, 2));
     zip.file('assumptions.json', JSON.stringify(ev.assumptions, null, 2));
@@ -169,9 +173,9 @@ export class ExportRendererService {
     // Session 14 — Build Blueprint files. Markdown ones come from the pack
     // documents; structured ones from the blueprint. Agents implement screens
     // from SCREEN_CONTRACTS and never invent product logic.
-    zip.file('VENTURE_THESIS.md', docMap.get('venture_thesis')?.body ?? '# Venture Thesis\n_Not generated._');
-    zip.file('BUILD_BLUEPRINT.md', docMap.get('build_blueprint')?.body ?? '# Build Blueprint\n_Not generated._');
-    zip.file('DO_NOT_BUILD.md', docMap.get('do_not_build')?.body ?? this.blueprintDoNotBuildMd(ev.blueprint));
+    zip.file('VENTURE_THESIS.md', docMap.get('venture_thesis')?.body ?? `# ${t('export.venture_thesis_fallback_title')}\n_${t('export.not_generated')}_`);
+    zip.file('BUILD_BLUEPRINT.md', docMap.get('build_blueprint')?.body ?? `# ${t('export.build_blueprint_fallback_title')}\n_${t('export.not_generated')}_`);
+    zip.file('DO_NOT_BUILD.md', docMap.get('do_not_build')?.body ?? this.blueprintDoNotBuildMd(ev.blueprint, t));
     if (ev.blueprint) {
       zip.file('SCREEN_CONTRACTS.json', JSON.stringify(ev.blueprint.screenContracts, null, 2));
       zip.file('STATE_MATRIX.json', JSON.stringify(ev.blueprint.stateMatrix, null, 2));
@@ -179,8 +183,8 @@ export class ExportRendererService {
       zip.file('COMPONENT_CONTRACTS.json', JSON.stringify(ev.blueprint.componentContracts, null, 2));
       zip.file('PERMISSION_MATRIX.json', JSON.stringify(ev.blueprint.permissionMatrix, null, 2));
       zip.file('ANALYTICS_EVENTS.json', JSON.stringify(ev.blueprint.analyticsEvents, null, 2));
-      zip.file('VALIDATION_RULES.md', this.blueprintValidationMd(ev.blueprint));
-      zip.file('EMPTY_LOADING_ERROR_STATES.md', this.blueprintStatesMd(ev.blueprint));
+      zip.file('VALIDATION_RULES.md', this.blueprintValidationMd(ev.blueprint, t));
+      zip.file('EMPTY_LOADING_ERROR_STATES.md', this.blueprintStatesMd(ev.blueprint, t));
     }
 
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
@@ -210,9 +214,10 @@ export class ExportRendererService {
     const roleDocs = ROLE_BRIEF_DOCUMENTS[role];
     const docMap = new Map(documents.map((d) => [d.docType, d]));
     const lines: string[] = [];
+    const t = createPackContentTranslator(pack.primaryLanguage as LocaleCode);
 
-    lines.push(`# ${this.roleBriefTitle(role)} — ${pack.title}`);
-    lines.push(`\n_Language: ${pack.primaryLanguage} | Depth: ${pack.depth} | Generated: ${new Date().toISOString()}_\n`);
+    lines.push(`# ${this.roleBriefTitle(role, t)} — ${pack.title}`);
+    lines.push(`\n_${t('export.role_brief_meta_line', { language: pack.primaryLanguage, depth: pack.depth, date: new Date().toISOString() })}_\n`);
     lines.push('---\n');
 
     for (const docType of roleDocs) {
@@ -226,47 +231,52 @@ export class ExportRendererService {
 
     // Append evidence summary for roles that benefit from it
     if (['founder', 'pm', 'investor', 'growth'].includes(role)) {
-      lines.push('## Evidence & Assumptions Summary\n');
-      lines.push(this.buildEvidenceSummaryMd(ev));
+      lines.push(`## ${t('export.evidence_assumptions_summary_heading')}\n`);
+      lines.push(this.buildEvidenceSummaryMd(ev, t));
     }
 
     return lines.join('\n');
   }
 
-  renderEvidenceAppendix(ev: EvidenceData): string {
-    return this.buildEvidenceMapMd(ev);
+  renderEvidenceAppendix(ev: EvidenceData, language: LocaleCode = 'en'): string {
+    return this.buildEvidenceMapMd(ev, createPackContentTranslator(language));
   }
 
-  renderSourceAppendix(sourceRefs: EvidenceData['sourceRefs']): string {
-    return this.buildSourceAppendix(sourceRefs);
+  renderSourceAppendix(sourceRefs: EvidenceData['sourceRefs'], language: LocaleCode = 'en'): string {
+    return this.buildSourceAppendix(sourceRefs, createPackContentTranslator(language));
   }
 
   // ── Content builders ──────────────────────────────────────────────────────
 
-  private buildReadme(pack: PackRow, documents: PackDocumentRow[], manifest: ExportManifest): string {
+  private buildReadme(pack: PackRow, documents: PackDocumentRow[], manifest: ExportManifest, t: PackContentTranslator): string {
     return [
       `# ${pack.title}`,
-      `\n_Product Document Pack — ${pack.depth} depth | ${pack.verticalTemplate} vertical | Language: ${pack.primaryLanguage}_\n`,
-      '## Contents\n',
-      `This pack contains ${documents.length} structured product documents organized into thematic folders.\n`,
-      '### Folders',
-      '- `00_sources/` — source references and appendix',
-      '- `01_strategy/` — product vision, market context, market selection',
-      '- `02_user/` — ICP, JTBD, problem map, user scenarios',
-      '- `03_product/` — feature checklist, MVP scope, post-MVP scope',
-      '- `04_ux_design/` — UX flow, screen map, design BRD',
-      '- `05_engineering/` — frontend BRD, backend BRD, data model, API requirements',
-      '- `06_ai_handoff/` — AI agent instructions, acceptance criteria, quality gates',
-      '- `07_growth/` — monetization, GTM plan, analytics plan',
-      '- `08_evidence/` — evidence map, claims, assumptions, constraints, unresolved questions',
-      '- `09_roadmap/` — roadmap',
-      '- `09_governance/` — document versions, research updates, review status',
+      `\n_${t('export.readme_pack_intro', { depth: pack.depth, vertical: pack.verticalTemplate, language: pack.primaryLanguage })}_\n`,
+      `## ${t('export.readme_contents_heading')}\n`,
+      `${t('export.readme_pack_description', { count: documents.length })}\n`,
+      `### ${t('export.readme_folders_heading')}`,
+      `- \`00_sources/\` — ${t('export.readme_folder_sources')}`,
+      `- \`01_strategy/\` — ${t('export.readme_folder_strategy')}`,
+      `- \`02_user/\` — ${t('export.readme_folder_user')}`,
+      `- \`03_product/\` — ${t('export.readme_folder_product')}`,
+      `- \`04_ux_design/\` — ${t('export.readme_folder_ux')}`,
+      `- \`05_engineering/\` — ${t('export.readme_folder_engineering')}`,
+      `- \`06_ai_handoff/\` — ${t('export.readme_folder_ai_handoff')}`,
+      `- \`07_growth/\` — ${t('export.readme_folder_growth')}`,
+      `- \`08_evidence/\` — ${t('export.readme_folder_evidence')}`,
+      `- \`09_roadmap/\` — ${t('export.readme_folder_roadmap')}`,
+      `- \`09_governance/\` — ${t('export.readme_folder_governance')}`,
       '',
-      `**Quality Gate:** ${manifest.qualityGateSummary?.status ?? 'not_run'} | Passed: ${manifest.qualityGateSummary?.passedCount ?? 0} | Warnings: ${manifest.qualityGateSummary?.warnCount ?? 0} | Failed: ${manifest.qualityGateSummary?.failCount ?? 0}`,
+      `**${t('export.readme_quality_gate_line', {
+        status: manifest.qualityGateSummary?.status ?? 'not_run',
+        passed: manifest.qualityGateSummary?.passedCount ?? 0,
+        warnings: manifest.qualityGateSummary?.warnCount ?? 0,
+        failed: manifest.qualityGateSummary?.failCount ?? 0,
+      })}**`,
       '',
-      `**Evidence items:** ${manifest.evidenceSummary.count} | **Claims:** ${manifest.claimCount} | **Assumptions:** ${manifest.assumptionsSummary.count}`,
+      `**${t('export.readme_evidence_line', { evidence: manifest.evidenceSummary.count, claims: manifest.claimCount, assumptions: manifest.assumptionsSummary.count })}**`,
       '',
-      '_Generated by SignalKit. Do not treat assumptions as facts. Unresolved questions must remain open._',
+      `_${t('export.footer_generated_by')}_`,
     ].join('\n');
   }
 
@@ -330,30 +340,31 @@ export class ExportRendererService {
     ].join('\n');
   }
 
-  private buildProductContext(pack: PackRow, docMap: Map<string, PackDocumentRow>): string {
+  private buildProductContext(pack: PackRow, docMap: Map<string, PackDocumentRow>, t: PackContentTranslator): string {
     const vision = docMap.get('product_vision');
     const market = docMap.get('market_context');
     return [
-      `# Product Context — ${pack.title}`,
+      `# ${t('export.product_context_title', { title: pack.title })}`,
       '',
-      vision ? `## Product Vision\n\n${this.firstSection(vision.body)}` : '',
-      market ? `## Market Context\n\n${this.firstSection(market.body)}` : '',
+      vision ? `## ${vision.title}\n\n${this.firstSection(vision.body)}` : '',
+      market ? `## ${market.title}\n\n${this.firstSection(market.body)}` : '',
     ].filter(Boolean).join('\n\n');
   }
 
-  private buildIntegrationRequirements(docMap: Map<string, PackDocumentRow>): string {
+  private buildIntegrationRequirements(docMap: Map<string, PackDocumentRow>, t: PackContentTranslator): string {
+    const title = t('export.integration_requirements_title');
     const backend = docMap.get('backend_brd');
-    if (!backend) return '# Integration Requirements\n\n_See backend_brd.md for integration details._';
+    if (!backend) return `# ${title}\n\n_${t('export.integration_requirements_see_backend')}_`;
     const integSection = this.extractSection(backend.body, 'integration');
-    return `# Integration Requirements\n\n${integSection || '_Extracted from Backend BRD. See backend_brd.md._'}`;
+    return `# ${title}\n\n${integSection || `_${t('export.integration_requirements_extracted')}_`}`;
   }
 
-  private buildCodingConstraints(constraints: EvidenceData['constraints']): string {
-    const lines = ['# Coding Constraints', ''];
+  private buildCodingConstraints(constraints: EvidenceData['constraints'], t: PackContentTranslator): string {
+    const lines = [`# ${t('export.coding_constraints_title')}`, ''];
     if (!constraints.length) {
-      lines.push('_No explicit coding constraints defined for this pack._');
+      lines.push(`_${t('export.coding_constraints_empty')}_`);
     } else {
-      lines.push('The following technical constraints must be respected during implementation:\n');
+      lines.push(`${t('export.coding_constraints_intro')}\n`);
       for (const c of constraints) {
         lines.push(`- [${c.category.toUpperCase()}] ${c.text}`);
       }
@@ -361,34 +372,34 @@ export class ExportRendererService {
     return lines.join('\n');
   }
 
-  private buildEvidenceMapMd(ev: EvidenceData): string {
-    const lines = ['# Evidence Map', ''];
+  private buildEvidenceMapMd(ev: EvidenceData, t: PackContentTranslator): string {
+    const lines = [`# ${t('export.evidence_map_title')}`, ''];
 
-    lines.push(`## Claims (${ev.claims.length})\n`);
+    lines.push(`## ${t('export.pdf_claims', { n: ev.claims.length })}\n`);
     for (const claim of ev.claims) {
       lines.push(`### ${claim.text}`);
       lines.push(`- Type: ${claim.type} | Confidence: ${claim.confidenceLevel}`);
       const supporting = ev.evidence.filter((e) => e.sourceRefId);
-      if (supporting.length > 0) lines.push(`- Supporting evidence: ${supporting.length} items`);
+      if (supporting.length > 0) lines.push(`- ${t('export.evidence_map_supporting', { n: supporting.length })}`);
       lines.push('');
     }
 
-    lines.push(`## Evidence Items (${ev.evidence.length})\n`);
+    lines.push(`## ${t('export.evidence_map_evidence_items', { n: ev.evidence.length })}\n`);
     for (const e of ev.evidence) {
       lines.push(`- [${e.evidenceType}] ${e.summary} _(source: ${e.sourceRefId})_`);
     }
 
-    lines.push(`\n## Assumptions (${ev.assumptions.length})\n`);
+    lines.push(`\n## ${t('export.pdf_assumptions', { n: ev.assumptions.length })}\n`);
     for (const a of ev.assumptions) {
       lines.push(`- [${a.validationStatus}] ${a.text}`);
     }
 
-    lines.push(`\n## Constraints (${ev.constraints.length})\n`);
+    lines.push(`\n## ${t('export.pdf_constraints', { n: ev.constraints.length })}\n`);
     for (const c of ev.constraints) {
       lines.push(`- [${c.category}] ${c.text}`);
     }
 
-    lines.push(`\n## Unresolved Questions (${ev.unresolvedQuestions.length})\n`);
+    lines.push(`\n## ${t('export.pdf_unresolved_questions', { n: ev.unresolvedQuestions.length })}\n`);
     for (const q of ev.unresolvedQuestions) {
       lines.push(`- [${q.priority}/${q.status}] ${q.text}`);
     }
@@ -396,14 +407,14 @@ export class ExportRendererService {
     return lines.join('\n');
   }
 
-  private buildSourceAppendix(sourceRefs: EvidenceData['sourceRefs']): string {
-    const lines = ['# Source Appendix', ''];
+  private buildSourceAppendix(sourceRefs: EvidenceData['sourceRefs'], t: PackContentTranslator): string {
+    const lines = [`# ${t('export.source_appendix_title')}`, ''];
     if (!sourceRefs.length) {
-      lines.push('_No sources collected for this project._');
+      lines.push(`_${t('export.pdf_no_sources')}_`);
     } else {
-      lines.push(`${sourceRefs.length} source(s) referenced in this pack:\n`);
+      lines.push(`${t('export.source_appendix_intro', { n: sourceRefs.length })}\n`);
       for (const s of sourceRefs) {
-        lines.push(`## ${s.title ?? 'Untitled Source'}`);
+        lines.push(`## ${s.title ?? t('export.pdf_untitled_source')}`);
         lines.push(`- Adapter: \`${s.adapter}\``);
         if (s.url) lines.push(`- URL: ${s.url}`);
         lines.push(`- ID: \`${s.id}\``);
@@ -413,20 +424,21 @@ export class ExportRendererService {
     return lines.join('\n');
   }
 
-  private buildEvidenceSummaryMd(ev: EvidenceData): string {
+  private buildEvidenceSummaryMd(ev: EvidenceData, t: PackContentTranslator): string {
     return [
-      `**Evidence items:** ${ev.evidence.length} | **Claims:** ${ev.claims.length} | **Assumptions:** ${ev.assumptions.length}`,
+      `**${t('export.readme_evidence_line', { evidence: ev.evidence.length, claims: ev.claims.length, assumptions: ev.assumptions.length })}**`,
       '',
       ev.claims.map((c) => `- ${c.text} _(${c.type}, ${c.confidenceLevel} confidence)_`).join('\n'),
       '',
-      `**Open questions (${ev.unresolvedQuestions.length}):**`,
+      `**${t('export.evidence_open_questions', { n: ev.unresolvedQuestions.length })}**`,
       ev.unresolvedQuestions.map((q) => `- ${q.text}`).join('\n'),
     ].join('\n');
   }
 
-  private buildResearchUpdatesMd(updates: EvidenceData['researchUpdates']): string {
-    if (!updates.length) return '# Research Updates\n\n_No research updates recorded._';
-    const lines = ['# Research Updates\n'];
+  private buildResearchUpdatesMd(updates: EvidenceData['researchUpdates'], t: PackContentTranslator): string {
+    const title = t('export.research_updates_title');
+    if (!updates.length) return `# ${title}\n\n_${t('export.research_updates_empty')}_`;
+    const lines = [`# ${title}\n`];
     for (const u of updates) {
       lines.push(`## ${u.title} (${u.type})`);
       lines.push(`_${u.createdAt.toISOString()}_\n`);
@@ -436,13 +448,13 @@ export class ExportRendererService {
     return lines.join('\n');
   }
 
-  private buildVersionSummary(pack: PackRow, documents: PackDocumentRow[]): string {
+  private buildVersionSummary(pack: PackRow, documents: PackDocumentRow[], t: PackContentTranslator): string {
     return [
-      `# Document Versions Summary — ${pack.title}`,
+      `# ${t('export.version_summary_title', { title: pack.title })}`,
       '',
-      `Pack version: ${pack.version}`,
+      t('export.version_summary_pack_version', { version: pack.version }),
       '',
-      '| Document | Current Version |',
+      `| ${t('export.version_summary_col_document')} | ${t('export.version_summary_col_version')} |`,
       '|----------|----------------|',
       ...documents.map((d) => `| ${d.docType} | ${(d as unknown as { version?: number }).version ?? 1} |`),
     ].join('\n');
@@ -466,12 +478,12 @@ export class ExportRendererService {
     return lines.join('\n');
   }
 
-  private blueprintValidationMd(bp: BlueprintData): string {
-    return ['# Validation Rules', '', ...bp.validationRules.map((r) => `- ${r}`)].join('\n');
+  private blueprintValidationMd(bp: BlueprintData, t: PackContentTranslator): string {
+    return [`# ${t('export.validation_rules_title')}`, '', ...bp.validationRules.map((r) => `- ${r}`)].join('\n');
   }
 
-  private blueprintStatesMd(bp: BlueprintData): string {
-    const lines = ['# Empty / Loading / Error States', '', 'Every screen MUST implement empty, loading and error states.', ''];
+  private blueprintStatesMd(bp: BlueprintData, t: PackContentTranslator): string {
+    const lines = [`# ${t('export.states_title')}`, '', t('export.states_intro'), ''];
     for (const s of bp.screenContracts) {
       lines.push(`## ${s.name}`);
       for (const st of s.states) lines.push(`- **${st.kind}**: ${st.behavior}`);
@@ -480,11 +492,11 @@ export class ExportRendererService {
     return lines.join('\n');
   }
 
-  private blueprintDoNotBuildMd(bp: BlueprintData | null | undefined): string {
+  private blueprintDoNotBuildMd(bp: BlueprintData | null | undefined, t: PackContentTranslator): string {
     const items = bp?.doNotBuild ?? [];
-    const lines = ['# DO NOT BUILD', '', 'Do not implement the following without an explicit user request:', ''];
+    const lines = [`# ${t('export.do_not_build_title')}`, '', t('export.do_not_build_intro'), ''];
     for (const i of items) lines.push(`- **${i.item}** — ${i.reason}`);
-    if (items.length === 0) lines.push('_No exclusions captured._');
+    if (items.length === 0) lines.push(`_${t('export.do_not_build_empty')}_`);
     return lines.join('\n');
   }
 
@@ -521,18 +533,18 @@ export class ExportRendererService {
     return body.slice(idx, idx + 800).split('\n##')[0] ?? '';
   }
 
-  private roleBriefTitle(role: RoleBriefType): string {
-    const titles: Record<RoleBriefType, string> = {
-      founder: 'Founder Summary',
-      pm: 'Product Manager Brief',
-      designer: 'Designer BRD',
-      frontend: 'Frontend BRD',
-      backend: 'Backend BRD',
-      growth: 'Growth Brief',
-      sales: 'Sales Brief',
-      investor: 'Investor Memo',
-      ai_agent: 'AI Agent Engineering Brief',
+  private roleBriefTitle(role: RoleBriefType, t: PackContentTranslator): string {
+    const titles: Record<RoleBriefType, PackContentKey> = {
+      founder: 'export.role_title_founder',
+      pm: 'export.role_title_pm',
+      designer: 'export.role_title_designer',
+      frontend: 'export.role_title_frontend',
+      backend: 'export.role_title_backend',
+      growth: 'export.role_title_growth',
+      sales: 'export.role_title_sales',
+      investor: 'export.role_title_investor',
+      ai_agent: 'export.role_title_ai_agent',
     };
-    return titles[role];
+    return t(titles[role]);
   }
 }

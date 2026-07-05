@@ -115,6 +115,20 @@ export const en = {
   'export.selectPack': 'Select pack',
   'export.generating': 'Generating export…',
   'export.generatedAt': 'Generated',
+
+  'opportunities.tabFind': 'Find opportunities',
+  'opportunities.tabDevelop': 'Develop my idea',
+  'opportunities.ideaLabel': 'Describe your idea',
+  'opportunities.ideaPlaceholder': "Describe your idea as a founder: who it's for, the big problem it solves, and what it could become at its fullest — markets, ecosystem, scenarios that matter.",
+  'opportunities.ideaMinLengthHint': 'At least 40 characters — enough detail for the system to develop it.',
+  'opportunities.targetMarketLabel': 'Target market',
+  'opportunities.targetAudienceLabel': 'Target audience',
+  'opportunities.productFormatLabel': 'Product format',
+  'opportunities.evidenceModeLabel': 'Evidence mode',
+  'opportunities.developSubmit': 'Develop this idea',
+  'opportunities.developing': 'Developing your idea…',
+  'opportunities.developError': 'Could not develop this idea',
+  'opportunities.ideaTooShort': 'Please write at least 40 characters.',
 } as const;
 
 /** The canonical message key union. Every locale is a Partial of this. */

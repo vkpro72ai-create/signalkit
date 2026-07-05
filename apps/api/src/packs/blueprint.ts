@@ -21,6 +21,7 @@ import {
   type DoNotBuildItem,
   computeBuildReadiness,
 } from '@signalkit/shared';
+import { createPackContentTranslator } from '@signalkit/i18n';
 import type { PackContext, Endpoint } from './context';
 
 /** States every data-bearing screen specifies (covers the required three + UX). */
@@ -50,9 +51,27 @@ const AI_SCREEN_STATES: ScreenStateKind[] = [
   'failed',
 ];
 
-function statesFor(screen: string): ScreenStateKind[] {
+/**
+ * The fixed shell screens (sign-in, home/dashboard, settings) are rendered in
+ * `ctx.language`, so they can no longer be identified by matching hardcoded
+ * English substrings ("sign in", "dashboard", ...). `context.ts` always builds
+ * `ctx.screens` in this fixed order — sign-in, home/dashboard, feature screens,
+ * settings — so position is a language-independent way to identify them.
+ * Feature screens still embed the (untranslated) entity name verbatim via
+ * `derived.screen_suffix`, so matching by entity substring keeps working.
+ */
+type FixedScreenKind = 'sign_in' | 'home_dashboard' | 'settings' | 'feature';
+
+function screenKind(screens: string[], index: number): FixedScreenKind {
+  if (index === 0) return 'sign_in';
+  if (index === 1) return 'home_dashboard';
+  if (index === screens.length - 1) return 'settings';
+  return 'feature';
+}
+
+function statesFor(kind: FixedScreenKind, screen: string): ScreenStateKind[] {
+  if (kind === 'sign_in') return AUTH_SCREEN_STATES;
   const s = screen.toLowerCase();
-  if (s.includes('sign in') || s.includes('sign-in') || s.includes('login')) return AUTH_SCREEN_STATES;
   if (s.includes('ai') || s.includes('assistant') || s.includes('generate')) return AI_SCREEN_STATES;
   return DATA_SCREEN_STATES;
 }
@@ -75,26 +94,31 @@ function stateBehavior(kind: ScreenStateKind, screen: string): string {
 }
 
 /** Which endpoints relate to a given screen (by entity-name match; dashboard reads all). */
-function endpointsForScreen(screen: string, endpoints: Endpoint[]): Endpoint[] {
+function endpointsForScreen(kind: FixedScreenKind, screen: string, endpoints: Endpoint[]): Endpoint[] {
+  if (kind === 'home_dashboard') return endpoints.filter((e) => e.method === 'GET');
   const s = screen.toLowerCase();
-  if (s.includes('dashboard') || s.includes('home')) return endpoints.filter((e) => e.method === 'GET');
   return endpoints.filter((e) => s.includes(e.entity.toLowerCase()));
 }
 
-function buildScreenContract(screen: string, ctx: PackContext): ScreenContract {
-  const related = endpointsForScreen(screen, ctx.endpoints);
+function buildScreenContract(screen: string, kind: FixedScreenKind, ctx: PackContext): ScreenContract {
+  const t = createPackContentTranslator(ctx.language);
+  const related = endpointsForScreen(kind, screen, ctx.endpoints);
   const reads = related.filter((e) => e.method === 'GET');
   const writes = related.filter((e) => e.method !== 'GET');
-  const states: ScreenStateSpec[] = statesFor(screen).map((kind) => ({ kind, behavior: stateBehavior(kind, screen) }));
-  const isAuth = screen.toLowerCase().includes('sign in');
+  const states: ScreenStateSpec[] = statesFor(kind, screen).map((k) => ({ kind: k, behavior: stateBehavior(k, screen) }));
+  const isAuth = kind === 'sign_in';
 
   return {
     name: screen,
-    purpose: `Support the primary flow for ${ctx.niche.title} at the "${screen}" step.`,
+    purpose: t('blueprint.screen_purpose', { title: ctx.niche.title, screen }),
     userIntent: isAuth ? 'Authenticate and enter the workspace.' : `Complete the job tied to "${screen}".`,
     entryPoints: isAuth ? ['App launch', 'Sign-out redirect'] : ['Home / Dashboard navigation', 'Deep link'],
     exitPoints: isAuth ? ['Home / Dashboard on success'] : ['Back to Dashboard', 'Next step in the flow'],
-    primaryAction: writes.length ? `${writes[0]!.method} ${writes[0]!.path}` : reads.length ? `View ${reads[0]!.entity}` : 'Frontend-only navigation',
+    primaryAction: writes.length
+      ? `${writes[0]!.method} ${writes[0]!.path}`
+      : reads.length
+        ? t('blueprint.primary_action_view', { entity: reads[0]!.entity })
+        : t('blueprint.primary_action_frontend_only'),
     secondaryActions: writes.slice(1).map((e) => `${e.method} ${e.path}`),
     dataShown: reads.length ? reads.map((e) => `${e.entity} list/detail (${e.method} ${e.path})`) : ['Static content / form fields'],
     dataRequired: related.map((e) => `${e.entity} access`),
@@ -109,7 +133,7 @@ function buildScreenContract(screen: string, ctx: PackContext): ScreenContract {
     components: [`${entityToken(screen)}Header`, `${entityToken(screen)}List`, `${entityToken(screen)}Form`, 'EmptyState', 'ErrorState'],
     stateTransitions: ['loading → success | failed', 'empty → success (after first create)', 'success → locked_read_only (on lock)'],
     acceptanceCriteria: [
-      `Given a signed-in user with permission, When they open "${screen}", Then the data loads or a documented empty/error state is shown.`,
+      t('blueprint.acceptance_default', { given: t('gwt.given'), when: t('gwt.when'), then: t('gwt.then'), screen }),
       ...(writes.length ? [`Given valid input, When they ${writes[0]!.method} ${writes[0]!.path}, Then the result persists and the UI reflects success.`] : []),
     ],
   };
@@ -163,16 +187,17 @@ function componentContracts(ctx: PackContext): ComponentContract[] {
 }
 
 function doNotBuild(ctx: PackContext): DoNotBuildItem[] {
+  const t = createPackContentTranslator(ctx.language);
   const items: DoNotBuildItem[] = ctx.features
     .filter((f) => !f.included)
-    .map((f) => ({ item: f.name, reason: 'Out of MVP scope — deferred to post-MVP.' }));
+    .map((f) => ({ item: f.name, reason: t('blueprint.dnb_deferred_reason') }));
   items.push(
-    { item: 'App generation / "Generate App" CTA', reason: 'SignalKit produces document packs & blueprints, not generated apps. Product law.' },
-    { item: 'Gradients, glassmorphism, neon AI-dashboard styling', reason: 'UI law: premium flat 2D only.' },
-    { item: 'Chat-first UX as the primary interface', reason: 'UI law: not chat-first.' },
-    { item: 'Direct LLM provider calls from feature code', reason: 'All AI must go through LlmRouterService (BYOK).' },
-    { item: 'Inventing entities, endpoints or screens not in this blueprint', reason: 'Do not expand product scope; unresolved questions stay unresolved.' },
-    { item: 'Fabricated TAM / revenue / unicorn claims', reason: 'No fake market size; weak data stays an assumption.' },
+    { item: t('blueprint.dnb_app_generation_item'), reason: t('blueprint.dnb_app_generation_reason') },
+    { item: t('blueprint.dnb_styling_item'), reason: t('blueprint.dnb_styling_reason') },
+    { item: t('blueprint.dnb_chat_first_item'), reason: t('blueprint.dnb_chat_first_reason') },
+    { item: t('blueprint.dnb_direct_llm_item'), reason: t('blueprint.dnb_direct_llm_reason') },
+    { item: t('blueprint.dnb_inventing_item'), reason: t('blueprint.dnb_inventing_reason') },
+    { item: t('blueprint.dnb_fake_tam_item'), reason: t('blueprint.dnb_fake_tam_reason') },
   );
   return items;
 }
@@ -187,8 +212,8 @@ function validationRules(ctx: PackContext): string[] {
 
 function apiToScreenMap(ctx: PackContext): ApiToScreenMapEntry[] {
   return ctx.screens
-    .map((screen) => {
-      const related = endpointsForScreen(screen, ctx.endpoints);
+    .map((screen, i) => {
+      const related = endpointsForScreen(screenKind(ctx.screens, i), screen, ctx.endpoints);
       const reads = related.filter((e) => e.method === 'GET');
       const writes = related.filter((e) => e.method !== 'GET');
       const entry: ApiToScreenMapEntry = {
@@ -210,7 +235,7 @@ function apiToScreenMap(ctx: PackContext): ApiToScreenMapEntry[] {
  * Build the full Build Blueprint from a PackContext.
  */
 export function buildBuildBlueprint(ctx: PackContext): BuildBlueprint {
-  const screenContracts = ctx.screens.map((s) => buildScreenContract(s, ctx));
+  const screenContracts = ctx.screens.map((s, i) => buildScreenContract(s, screenKind(ctx.screens, i), ctx));
   const partial: Omit<BuildBlueprint, 'buildReadiness'> = {
     screenContracts,
     stateMatrix: screenContracts.map((s) => ({ screen: s.name, states: s.states.map((st) => st.kind) })),

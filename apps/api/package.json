@@ -32,6 +32,7 @@
     "@signalkit/config": "workspace:*",
     "@signalkit/evidence": "workspace:*",
     "@signalkit/exports": "workspace:*",
+    "@signalkit/i18n": "workspace:*",
     "@signalkit/llm": "workspace:*",
     "@signalkit/shared": "workspace:*",
     "bcryptjs": "^2.4.3",

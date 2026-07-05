@@ -57,4 +57,20 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'label.estCost': 'Tah. maliyet',
   'market.compare': 'Pazarları karşılaştır',
   'market.global': 'Küresel',
+
+  'export.language': 'Çıktı dili',
+
+  'opportunities.tabFind': 'Fırsat bul',
+  'opportunities.tabDevelop': 'Fikrimi geliştir',
+  'opportunities.ideaLabel': 'Fikrinizi anlatın',
+  'opportunities.ideaPlaceholder': 'Fikrinizi bir kurucu gibi anlatın: kimin için, hangi büyük sorunu çözüyor ve en geniş haliyle ne olabilir — pazarlar, ekosistem, önemli senaryolar.',
+  'opportunities.ideaMinLengthHint': 'En az 40 karakter — sistemin geliştirebilmesi için yeterli ayrıntı.',
+  'opportunities.targetMarketLabel': 'Hedef pazar',
+  'opportunities.targetAudienceLabel': 'Hedef kitle',
+  'opportunities.productFormatLabel': 'Ürün formatı',
+  'opportunities.evidenceModeLabel': 'Kanıt modu',
+  'opportunities.developSubmit': 'Bu fikri geliştir',
+  'opportunities.developing': 'Fikriniz geliştiriliyor…',
+  'opportunities.developError': 'Bu fikir geliştirilemedi',
+  'opportunities.ideaTooShort': 'Lütfen en az 40 karakter yazın.',
 };

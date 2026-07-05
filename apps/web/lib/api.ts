@@ -174,12 +174,24 @@ export interface DiscoverOpportunitiesResult {
   generation: AiRunMetadata;
 }
 
+export interface CreateOpportunityFromIdeaInput {
+  founderIdea: string;
+  targetMarket?: string;
+  targetAudience?: string;
+  productFormat?: string;
+  outputLanguage?: string;
+  evidenceMode?: 'starter_hypothesis' | 'source_backed' | 'deep_research';
+  riskTolerance?: 'low' | 'medium' | 'high';
+}
+
 export const opportunityApi = {
   list: (workspaceId: string, projectId: string) =>
     apiGet<NicheSummary[]>(`/workspaces/${workspaceId}/projects/${projectId}/niches`),
   listAll: (workspaceId: string) => apiGet<OpportunityCard[]>(`/workspaces/${workspaceId}/niches`),
   discover: (workspaceId: string, projectId: string, body?: DiscoverOpportunitiesInput) =>
     apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/discover-niches`, body ?? {}),
+  createFromIdea: (workspaceId: string, projectId: string, body: CreateOpportunityFromIdeaInput) =>
+    apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/niches/from-idea`, body),
 };
 
 export interface PackListItem {
