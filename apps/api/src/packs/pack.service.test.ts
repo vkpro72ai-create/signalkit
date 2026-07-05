@@ -373,6 +373,29 @@ describe('PackService', () => {
     expect(gateCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('self-heals a minor JSON syntax defect (trailing comma) without an extra LLM repair call', async () => {
+    // Large multi-thousand-token responses occasionally have one syntax slip
+    // even with the provider's JSON mode enabled — jsonrepair should fix
+    // this class of error locally instead of spending a repair round-trip.
+    // build_product has no extra top-level fields, so its JSON is exactly
+    // {"documents":[...]} — a known shape to inject a trailing comma into.
+    const { prisma, docCreateMany, gateCreate } = makePrisma();
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      const payload = JSON.stringify(makeStepPayload(step));
+      const withDefect = step.id === 'build_product' ? payload.replace(/\]\}$/, ',]}') : payload;
+      routerRun.mockResolvedValueOnce(makeLlmResult(withDefect));
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    expect(routerRun).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length); // no extra repair call needed
+    expect(createdDocRows(docCreateMany)).toHaveLength(PRODUCT_PACK_V2_SECTIONS.length);
+    expect(gateCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('normalizes preview wording and keeps missing-source packs as warnings with starter-hypothesis evidence', async () => {
     const { prisma, docCreateMany, tx } = makePrisma();
     const routerRun = mockAllStepsSucceed({

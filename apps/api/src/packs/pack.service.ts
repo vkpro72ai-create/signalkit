@@ -10,6 +10,7 @@ import {
   type VentureScaleScoreResult,
 } from '@signalkit/shared';
 import { baseContract, LLMError } from '@signalkit/llm';
+import { jsonrepair } from 'jsonrepair';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmRouterService } from '../llm/llm-router.service';
 import { buildPackContext, type PackContext, type PackContextInput, type PackScore } from './context';
@@ -1015,10 +1016,21 @@ function parseJsonLike(raw: string): unknown {
     } catch {
       const objectStart = fenced.indexOf('{');
       const objectEnd = fenced.lastIndexOf('}');
-      if (objectStart >= 0 && objectEnd > objectStart) {
-        return JSON.parse(fenced.slice(objectStart, objectEnd + 1));
+      const candidate = objectStart >= 0 && objectEnd > objectStart ? fenced.slice(objectStart, objectEnd + 1) : fenced;
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // Large multi-thousand-token JSON responses occasionally have one
+        // minor syntax slip (an unescaped control character, a stray comma)
+        // even with the provider's own JSON mode enabled. jsonrepair fixes
+        // that class of error without needing another expensive LLM call —
+        // only fall through to a full repair prompt if it can't either.
+        try {
+          return JSON.parse(jsonrepair(candidate));
+        } catch {
+          throw new Error('invalid_json');
+        }
       }
-      throw new Error('invalid_json');
     }
   }
 }
