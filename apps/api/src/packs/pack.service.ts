@@ -1503,7 +1503,7 @@ function buildProductPackV2QualityMetadata(packJson: ProductPackV2Json): Product
     evidenceGate: hasSources ? 'supported' : 'starter_hypothesis',
     safetyGate: hasSourceLabels || !hasSources ? 'needs_source_labels' : 'clear',
     buildabilityGate: buildableCount >= buildLayerKeys.length ? 'ready' : 'incomplete',
-    exportGate: normalizePackTitle(packJson.packTitle) === 'Build-Ready Product Pack' ? 'ready' : 'naming_issue',
+    exportGate: isExportSafePackTitle(packJson.packTitle) ? 'ready' : 'naming_issue',
     openQuestions,
     sourceNeeds,
     whatNotToBuildOrClaim,
@@ -1566,11 +1566,10 @@ function buildProductPackV2QualityGate(
     {
       id: 'export-gate',
       label: 'Export gate',
-      status: normalizePackTitle(packJson.packTitle) === 'Build-Ready Product Pack' ? 'pass' : 'fail',
-      message:
-        normalizePackTitle(packJson.packTitle) === 'Build-Ready Product Pack'
-          ? 'Pack naming is export-safe and uses Build-Ready Product Pack.'
-          : 'Pack title must be Build-Ready Product Pack.',
+      status: isExportSafePackTitle(packJson.packTitle) ? 'pass' : 'fail',
+      message: isExportSafePackTitle(packJson.packTitle)
+        ? 'Pack naming is export-safe (not a placeholder/preview title).'
+        : 'Pack title must not be empty or a preview placeholder.',
       documentTypes: [],
     },
   ];
@@ -1707,6 +1706,20 @@ function extractPackV2Metadata(
 function normalizePackTitle(title: string): string {
   const trimmed = title.trim();
   return trimmed && !/preview/i.test(trimmed) ? trimmed : 'Build-Ready Product Pack';
+}
+
+/**
+ * The export gate's real intent is "not a placeholder/preview title" — it
+ * was previously checking for exact equality with the literal string
+ * "Build-Ready Product Pack", which made it fail for every real pack once
+ * generation actually started producing genuine, idea-specific titles (the
+ * system prompt asks for a real product identity, not a generic label).
+ * normalizePackTitle already defensively rewrites empty/preview titles
+ * before anything is stored or shown, so grade the same normalized title
+ * we actually use — not the pre-correction raw one.
+ */
+function isExportSafePackTitle(title: string): boolean {
+  return normalizePackTitle(title).trim().length > 0;
 }
 
 function normalizeConfidenceScore(score: number): number {

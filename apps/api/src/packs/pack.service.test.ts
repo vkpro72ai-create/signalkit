@@ -466,6 +466,33 @@ describe('PackService', () => {
     expect(visionDocTypes.sort()).toEqual([...visionStep.sectionKeys].sort());
   });
 
+  it('passes the export gate for a genuine, idea-specific pack title (not just the literal placeholder string)', async () => {
+    // Regression: the export gate used to require packTitle to be exactly
+    // the literal string "Build-Ready Product Pack", which meant every real
+    // pack failed it once generation started producing genuine product
+    // names (the system prompt explicitly asks for a real product identity,
+    // e.g. "Экосистема «Спутница»: ...", not a generic placeholder).
+    const { prisma, docCreateMany, gateCreate, tx } = makePrisma();
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      const payload = makeStepPayload(step);
+      if (step.id === 'vision') payload.packTitle = 'Экосистема «Спутница»: от трекера до ИИ-ассистента';
+      routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(payload)));
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    expect(routerRun).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length); // no repair needed over naming alone
+    const gateArgs = gateCreate.mock.calls[0]![0].data;
+    expect(gateArgs.checks.find((check: { id: string }) => check.id === 'export-gate').status).toBe('pass');
+    const docRows = createdDocRows(docCreateMany);
+    expect(docRows[0]!.metadata.packMetadata.qualityGates.exportGate).toBe('ready');
+    const updatedPackArgs = tx.productDocumentPack.update.mock.calls[0]![0].data;
+    expect(updatedPackArgs.title).toBe('Экосистема «Спутница»: от трекера до ИИ-ассистента');
+  });
+
   it('normalizes preview wording and keeps missing-source packs as warnings with starter-hypothesis evidence', async () => {
     const { prisma, docCreateMany, tx } = makePrisma();
     const routerRun = mockAllStepsSucceed({
