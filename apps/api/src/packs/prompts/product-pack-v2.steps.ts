@@ -211,7 +211,9 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     id: 'execution',
     title: 'Execution Layer — Phasing & Handoff',
     sectionKeys: ['execution_phasing', 'team_handoff', 'deployment_operations_plan'],
-    maxOutputTokens: 20000,
+    // Live-tested: 20,000 truncated — deployment_operations_plan in
+    // particular tends to write extensive environment/config documentation.
+    maxOutputTokens: 32000,
     layerInstructions: EXECUTION_INSTRUCTIONS,
     extraFieldsContract: `{
   "executionPhases": [
