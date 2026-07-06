@@ -223,6 +223,10 @@ model WorkspaceSettings {
   clientName          String?
   preparedBy          String?
   agencyContact       String?
+  // Display name for the AI engine on customer-facing surfaces (dashboard,
+  // side panels) instead of the raw provider/model id. Null falls back to
+  // a translated default ("SignalKit AI") chosen in application code.
+  aiEngineName        String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

@@ -76,4 +76,9 @@ export class UpdateWorkspaceSettingsDto {
   @IsOptional()
   @IsBoolean()
   hideSignalKitBrand?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  aiEngineName?: string;
 }

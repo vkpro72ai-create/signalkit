@@ -650,9 +650,11 @@ export class NichesService {
     });
   }
 
-  async listAll(workspaceId: string) {
+  /** Optional projectId scopes this to one project's opportunities — same shape/fields either way, so the Radar (per-project) and Opportunities (workspace-wide) pages can't silently disagree on what "top opportunities" means. */
+  async listAll(workspaceId: string, projectId?: string) {
+    const scope = projectId ? { workspaceId, projectId } : { workspaceId };
     const niches = await this.prisma.niche.findMany({
-      where: { workspaceId },
+      where: scope,
       include: {
         scores: { orderBy: { createdAt: 'desc' }, take: 1 },
         ventureTheses: { orderBy: { createdAt: 'desc' }, take: 1 },
@@ -663,7 +665,7 @@ export class NichesService {
     const [evidenceCounts, blueprints] = await Promise.all([
       this.prisma.evidenceItem.groupBy({
         by: ['projectId'],
-        where: { workspaceId },
+        where: scope,
         _count: { _all: true },
       }),
       this.prisma.buildBlueprint.findMany({
@@ -686,6 +688,7 @@ export class NichesService {
         id: n.id,
         name: n.title,
         oneLiner: n.oneLiner,
+        whyNow: n.whyNow,
         riskLevel: n.riskLevel,
         projectId: n.projectId,
         targetMarket: n.project?.targetCountry ?? (n.project?.marketScope === 'global' ? 'Global' : null),
@@ -696,9 +699,91 @@ export class NichesService {
           value: score?.confidenceValue ?? 0,
         },
         ventureScaleScore: vt?.ventureScaleScore ?? null,
+        ventureScaleLevel: vt?.ventureScaleLevel ?? null,
         buildReadinessScore: blueprintByNiche.get(n.id) ?? null,
       };
     });
+  }
+
+  /**
+   * Real, honestly-derived headline metrics for the Radar dashboard — every
+   * field is computed from existing rows (Niche/NicheScore/VentureThesis/
+   * LLMUsageLog createdAt timestamps), not fabricated. There is no daily
+   * snapshot table, so week-over-week deltas compare *rows created* in the
+   * last 7 days vs. the 7 days before that (a proxy for "is discovery
+   * trending up/down"), not the historical state of existing rows.
+   */
+  async radarSummary(workspaceId: string, projectId: string) {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalNiches,
+      nichesThisWeek,
+      nichesPriorWeek,
+      scoresThisWeek,
+      scoresPriorWeek,
+      latestScores,
+      thesesThisWeek,
+      thesesPriorWeek,
+      latestTheses,
+      lastUsage,
+      settings,
+    ] = await Promise.all([
+      this.prisma.niche.count({ where: { projectId } }),
+      this.prisma.niche.count({ where: { projectId, createdAt: { gte: weekAgo } } }),
+      this.prisma.niche.count({ where: { projectId, createdAt: { gte: twoWeeksAgo, lt: weekAgo } } }),
+      this.prisma.nicheScore.findMany({ where: { niche: { projectId }, createdAt: { gte: weekAgo } }, select: { confidenceValue: true } }),
+      this.prisma.nicheScore.findMany({ where: { niche: { projectId }, createdAt: { gte: twoWeeksAgo, lt: weekAgo } }, select: { confidenceValue: true } }),
+      this.prisma.niche.findMany({
+        where: { projectId },
+        include: { scores: { orderBy: { createdAt: 'desc' }, take: 1 } },
+      }),
+      this.prisma.ventureThesis.findMany({ where: { niche: { projectId }, createdAt: { gte: weekAgo } }, select: { ventureScaleScore: true } }),
+      this.prisma.ventureThesis.findMany({ where: { niche: { projectId }, createdAt: { gte: twoWeeksAgo, lt: weekAgo } }, select: { ventureScaleScore: true } }),
+      this.prisma.niche.findMany({
+        where: { projectId },
+        include: { ventureTheses: { orderBy: { createdAt: 'desc' }, take: 1 } },
+      }),
+      this.prisma.lLMUsageLog.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+      this.prisma.workspaceSettings.findUnique({ where: { workspaceId }, select: { aiEngineName: true } }),
+    ]);
+
+    const currentAvgConfidence = avg(latestScores.map((n) => n.scores[0]?.confidenceValue).filter(isNumber));
+    const currentAvgVentureScale = avg(latestTheses.map((n) => n.ventureTheses[0]?.ventureScaleScore).filter(isNumber));
+
+    return {
+      opportunitiesFound: {
+        total: totalNiches,
+        deltaPct: percentDelta(nichesThisWeek, nichesPriorWeek),
+      },
+      avgConfidence: {
+        value: currentAvgConfidence,
+        level: bandOfScore(currentAvgConfidence),
+        deltaPct: percentDelta(
+          avg(scoresThisWeek.map((s) => s.confidenceValue)),
+          avg(scoresPriorWeek.map((s) => s.confidenceValue)),
+        ),
+      },
+      // "Investor interest" has no dedicated backend signal today — this is
+      // an honest relabeling of the existing Venture Scale Score/Level
+      // (apps/api/src/niches/venture.ts), not a new fabricated metric.
+      // ventureScaleScore is 0-100 (see computeVentureScaleScore), unlike
+      // confidenceValue which is already 0-1 — normalize before banding.
+      investorInterest: {
+        level: bandOfScore(currentAvgVentureScale / 100),
+        deltaPct: percentDelta(
+          avg(thesesThisWeek.map((t) => t.ventureScaleScore)),
+          avg(thesesPriorWeek.map((t) => t.ventureScaleScore)),
+        ),
+      },
+      aiEngine: {
+        displayName: settings?.aiEngineName ?? null,
+        active: Boolean(lastUsage && now.getTime() - lastUsage.createdAt.getTime() < 48 * 60 * 60 * 1000),
+        lastActiveAt: lastUsage?.createdAt ?? null,
+      },
+    };
   }
 
   async get(workspaceId: string, nicheId: string) {
@@ -1146,4 +1231,23 @@ function mapLlmError(error: unknown, fallbackMessage: string) {
 function avg(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function isNumber(value: number | null | undefined): value is number {
+  return typeof value === 'number';
+}
+
+/** Percent change from `previous` to `current`. Null when there's no prior-window data to compare against (not 0 — that would falsely read as "no change"). */
+function percentDelta(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
+/** Same low/medium/high/very_low/very_high banding as computeVentureScaleScore's bandOf (packages/shared/src/venture.ts) — scores here are already 0-1 normalized. */
+function bandOfScore(value: number): 'very_low' | 'low' | 'medium' | 'high' | 'very_high' {
+  if (value < 0.2) return 'very_low';
+  if (value < 0.4) return 'low';
+  if (value < 0.6) return 'medium';
+  if (value < 0.8) return 'high';
+  return 'very_high';
 }

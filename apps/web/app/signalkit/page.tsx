@@ -1,13 +1,14 @@
 'use client';
 
 /**
- * SignalKit product home — Opportunity Radar dashboard.
+ * SignalKit product home — the Opportunity Radar dashboard.
  * Self-starting: creates a workspace/project in one click, never a dead end.
  */
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { spacing, typography, border } from '@signalkit/ui';
-import { Card, Button, Badge, LoadingState, ErrorState, palette } from '../../components/ui';
+import { spacing, typography } from '@signalkit/ui';
+import { Card, Button, LoadingState, ErrorState, Table, palette } from '../../components/ui';
+import { StatTrendCard, HeroOpportunityCard, SidePanel, levelLabel, buildOpportunityColumns } from '../../components/dashboard';
 import { useT } from '../../lib/i18n';
 import {
   apiGet,
@@ -15,7 +16,8 @@ import {
   workspaceApi,
   opportunityApi,
   type ProjectView,
-  type NicheSummary,
+  type OpportunityCard as OpportunityCardData,
+  type RadarSummary,
   type MeWorkspaces,
 } from '../../lib/api';
 
@@ -28,7 +30,8 @@ export default function SignalKitHome() {
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [ws, setWs] = useState<{ id: string; name: string } | null>(null);
   const [project, setProject] = useState<ProjectView | null>(null);
-  const [niches, setNiches] = useState<NicheSummary[]>([]);
+  const [opportunities, setOpportunities] = useState<OpportunityCardData[]>([]);
+  const [summary, setSummary] = useState<RadarSummary | null>(null);
 
   const load = useCallback(async () => {
     setState('loading');
@@ -47,10 +50,18 @@ export default function SignalKitHome() {
       const p = projects[0] ?? null;
       setProject(p);
       if (p) {
-        const n = await opportunityApi.list(membership.workspace.id, p.id);
-        setNiches(n);
+        // Same call/shape the Opportunities page uses (scoped to this project) —
+        // previously Home and Opportunities used two different endpoints for
+        // what was meant to be the same "top opportunities" concept.
+        const [opps, radarSummary] = await Promise.all([
+          opportunityApi.listAll(membership.workspace.id, p.id),
+          opportunityApi.radarSummary(membership.workspace.id, p.id),
+        ]);
+        setOpportunities(opps);
+        setSummary(radarSummary);
       } else {
-        setNiches([]);
+        setOpportunities([]);
+        setSummary(null);
       }
       setState('ready');
     } catch {
@@ -98,8 +109,7 @@ export default function SignalKitHome() {
     setBusy(true);
     try {
       await opportunityApi.discover(ws.id, project.id);
-      const n = await opportunityApi.list(ws.id, project.id);
-      setNiches(n);
+      await load();
     } finally {
       setBusy(false);
     }
@@ -110,16 +120,19 @@ export default function SignalKitHome() {
     return <ErrorState title={t('state.error.title')} body={t('state.error.body')} action={<Button variant="secondary" onClick={() => void load()}>{t('action.retry')}</Button>} />;
   }
 
-  const topNiches = [...niches].sort((a, b) => (b.scores[0]?.totalScore ?? 0) - (a.scores[0]?.totalScore ?? 0)).slice(0, 5);
+  const ranked = [...opportunities].sort((a, b) => b.opportunityScore - a.opportunityScore);
+  const top = ranked[0] ?? null;
+  const rest = ranked.slice(0, 5);
+  const columns = buildOpportunityColumns(t, (row) => ranked.indexOf(row) + 1);
 
   return (
-    <div style={{ maxWidth: 980 }}>
+    <div style={{ maxWidth: 1180 }}>
       <div style={{ marginBottom: spacing.xl }}>
         <p style={{ color: palette.subtle, fontSize: typography.size.sm, margin: 0 }}>
-          {displayName ? `${greeting()}, ${displayName}` : greeting()}
+          {displayName ? `${greeting(t)}, ${displayName}` : greeting(t)}
         </p>
         <h1 style={{ fontSize: typography.size['2xl'], fontWeight: typography.weight.bold, margin: `${spacing.xs}px 0 0` }}>
-          Opportunity Radar
+          {t('radar.title')}
         </h1>
       </div>
 
@@ -127,13 +140,13 @@ export default function SignalKitHome() {
       {!ws && (
         <Card style={{ textAlign: 'center', padding: spacing['2xl'] }}>
           <div style={{ fontSize: typography.size.lg, fontWeight: typography.weight.semibold, marginBottom: spacing.xs }}>
-            Create your product lab
+            {t('radar.onboarding.createLab.title')}
           </div>
           <p style={{ color: palette.subtle, maxWidth: 460, margin: `0 auto ${spacing.lg}px` }}>
-            A private workspace for evidence-backed opportunity discovery, Venture Theses and build-ready Product Packs.
+            {t('radar.onboarding.createLab.body')}
           </p>
           <Button onClick={() => void createWorkspace()} disabled={busy}>
-            {busy ? 'Setting up…' : 'Create your product lab'}
+            {busy ? t('radar.onboarding.createLab.busy') : t('radar.onboarding.createLab.cta')}
           </Button>
         </Card>
       )}
@@ -142,13 +155,13 @@ export default function SignalKitHome() {
       {ws && !project && (
         <Card style={{ textAlign: 'center', padding: spacing['2xl'] }}>
           <div style={{ fontSize: typography.size.lg, fontWeight: typography.weight.semibold, marginBottom: spacing.xs }}>
-            Start your Opportunity Radar
+            {t('radar.onboarding.startRadar.title')}
           </div>
           <p style={{ color: palette.subtle, maxWidth: 460, margin: `0 auto ${spacing.lg}px` }}>
-            {ws.name} is ready. Start a radar to begin scanning markets for opportunities worth building.
+            {ws.name} — {t('radar.onboarding.startRadar.body')}
           </p>
           <Button onClick={() => void startRadar()} disabled={busy}>
-            {busy ? 'Starting…' : 'Start Opportunity Radar'}
+            {busy ? t('radar.onboarding.startRadar.busy') : t('radar.onboarding.startRadar.cta')}
           </Button>
         </Card>
       )}
@@ -156,90 +169,124 @@ export default function SignalKitHome() {
       {/* Full dashboard */}
       {ws && project && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: spacing.lg, marginBottom: spacing.xl }}>
-            <StatCard label="Workspace" value={ws.name} />
-            <StatCard label="Project" value={project.name} />
-            <StatCard label="Opportunities found" value={String(niches.length)} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: spacing.lg, marginBottom: spacing.xl }}>
+            <StatTrendCard
+              label={t('radar.stat.opportunitiesFound')}
+              value={String(summary?.opportunitiesFound.total ?? opportunities.length)}
+              deltaPct={summary?.opportunitiesFound.deltaPct ?? null}
+              deltaSuffix={t('radar.stat.deltaWeek')}
+            />
+            <StatTrendCard
+              label={t('radar.stat.avgConfidence')}
+              value={summary ? `${Math.round(summary.avgConfidence.value * 100)}%` : '—'}
+              deltaPct={summary?.avgConfidence.deltaPct ?? null}
+              deltaSuffix={t('radar.stat.deltaWeek')}
+            />
+            <StatTrendCard
+              label={t('radar.stat.investorInterest')}
+              value={summary ? levelLabel(summary.investorInterest.level, t) : '—'}
+              deltaPct={summary?.investorInterest.deltaPct ?? null}
+              deltaSuffix={t('radar.stat.deltaWeek')}
+            />
+            <StatTrendCard
+              label={t('radar.stat.aiEngine')}
+              value={summary?.aiEngine.displayName ?? t('aiEngine.defaultName')}
+              deltaPct={null}
+              deltaSuffix={summary?.aiEngine.active ? t('radar.stat.aiEngineActive') : t('radar.stat.aiEngineIdle')}
+            />
           </div>
 
-          {niches.length === 0 ? (
+          {opportunities.length === 0 ? (
             <Card style={{ textAlign: 'center', padding: spacing['2xl'] }}>
               <div style={{ fontSize: typography.size.lg, fontWeight: typography.weight.semibold, marginBottom: spacing.xs }}>
-                Find your first opportunities
+                {t('radar.empty.title')}
               </div>
-              <p style={{ color: palette.subtle, maxWidth: 460, margin: `0 auto ${spacing.lg}px` }}>
-                SignalKit scans real signals and evidence — no fabricated market sizing, no hype.
-              </p>
+              <p style={{ color: palette.subtle, maxWidth: 460, margin: `0 auto ${spacing.lg}px` }}>{t('radar.empty.body')}</p>
               <Button onClick={() => void findOpportunities()} disabled={busy}>
-                {busy ? 'Scanning…' : 'Find opportunities'}
+                {busy ? t('radar.empty.busy') : t('radar.empty.cta')}
               </Button>
             </Card>
           ) : (
-            <Card>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
-                <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>Top opportunities</h2>
-                <div style={{ display: 'flex', gap: spacing.sm }}>
-                  <Button variant="ghost" onClick={() => void findOpportunities()} disabled={busy}>
-                    {busy ? 'Scanning…' : 'Rescan'}
-                  </Button>
-                  <Link href="/signalkit/opportunities" style={{ textDecoration: 'none' }}>
-                    <Button variant="secondary">View all</Button>
-                  </Link>
-                </div>
-              </div>
-              {topNiches.map((n) => {
-                const s = n.scores[0];
-                return (
-                  <Link key={n.id} href={`/signalkit/opportunities/${n.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: `${spacing.sm}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
-                      <div>
-                        <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm }}>{n.title}</div>
-                        <div style={{ color: palette.subtle, fontSize: typography.size.xs, marginTop: 2 }}>{n.oneLiner}</div>
-                      </div>
-                      {s ? <Badge variant="confidence">{Math.round(s.totalScore)}</Badge> : null}
-                    </div>
-                  </Link>
-                );
-              })}
-            </Card>
-          )}
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: spacing.xl, alignItems: 'start' }}>
+              <div>
+                {top ? (
+                  <div style={{ marginBottom: spacing.lg }}>
+                    <HeroOpportunityCard
+                      eyebrow={t('radar.hero.eyebrow')}
+                      title={top.name}
+                      description={top.oneLiner}
+                      tags={[top.targetMarket, `${t('radar.hero.riskTag')}: ${levelLabel(top.riskLevel, t)}`].filter((tag): tag is string => Boolean(tag))}
+                      score={top.opportunityScore}
+                      whyNowLabel={t('radar.table.whyNow')}
+                      whyNow={top.whyNow || '—'}
+                      cta={t('radar.hero.cta')}
+                      onCtaClick={() => {
+                        window.location.href = `/signalkit/opportunities/${top.id}`;
+                      }}
+                    />
+                  </div>
+                ) : null}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginTop: spacing.lg }}>
-            <QuickLink href="/signalkit/packs" title="Product Packs" body="Build-ready document collections generated from your opportunities." />
-            <QuickLink href="/signalkit/sources" title="Sources & Evidence" body="The evidence graph behind every score and thesis." />
-          </div>
+                <Card>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+                    <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>{t('radar.table.title')}</h2>
+                    <div style={{ display: 'flex', gap: spacing.sm }}>
+                      <Button variant="ghost" onClick={() => void findOpportunities()} disabled={busy}>
+                        {busy ? t('radar.empty.busy') : t('radar.table.rescan')}
+                      </Button>
+                      <Link href="/signalkit/opportunities" style={{ textDecoration: 'none' }}>
+                        <Button variant="secondary">{t('radar.table.viewAll')}</Button>
+                      </Link>
+                    </div>
+                  </div>
+                  <Table columns={columns} rows={rest} />
+                </Card>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
+                <SidePanel title={t('radar.side.nextAction.title')}>
+                  <div style={{ fontWeight: typography.weight.medium, marginBottom: spacing.xs }}>
+                    {t('radar.side.nextAction.headline')}
+                  </div>
+                  <p style={{ color: palette.subtle, fontSize: typography.size.sm, marginBottom: spacing.md }}>
+                    {t('radar.side.nextAction.body')}
+                  </p>
+                  {top ? (
+                    <Link href={`/signalkit/opportunities/${top.id}`} style={{ textDecoration: 'none' }}>
+                      <Button>{t('radar.side.nextAction.cta')}</Button>
+                    </Link>
+                  ) : null}
+                </SidePanel>
+
+                <SidePanel title={t('radar.side.investorSignal.title')}>
+                  {summary ? (
+                    <>
+                      <div style={{ fontSize: typography.size.xl, fontWeight: typography.weight.bold, marginBottom: 2 }}>
+                        {levelLabel(summary.investorInterest.level, t)}
+                      </div>
+                      {typeof summary.investorInterest.deltaPct === 'number' ? (
+                        <div style={{ fontSize: typography.size.xs, color: summary.investorInterest.deltaPct >= 0 ? '#13502B' : '#6A1B1B', marginBottom: spacing.sm }}>
+                          {summary.investorInterest.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(summary.investorInterest.deltaPct).toFixed(0)}% {t('radar.stat.deltaWeek')}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: typography.size.xs, color: palette.subtle, marginBottom: spacing.sm }}>{t('radar.side.investorSignal.noHistory')}</div>
+                      )}
+                      <p style={{ color: palette.subtle, fontSize: typography.size.sm, margin: 0 }}>{t('radar.side.investorSignal.body')}</p>
+                    </>
+                  ) : null}
+                </SidePanel>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
   );
 }
 
-function greeting(): string {
+function greeting(t: ReturnType<typeof useT>): string {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 18) return 'Good afternoon';
-  return 'Good evening';
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <div style={{ color: palette.subtle, fontSize: typography.size.xs, marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: typography.size.lg, fontWeight: typography.weight.semibold, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
-    </Card>
-  );
-}
-
-function QuickLink({ href, title, body }: { href: string; title: string; body: string }) {
-  return (
-    <Link href={href as '/'} style={{ textDecoration: 'none', color: 'inherit' }}>
-      <Card>
-        <div style={{ fontWeight: typography.weight.semibold, marginBottom: 4 }}>{title}</div>
-        <div style={{ color: palette.subtle, fontSize: typography.size.sm }}>{body}</div>
-        <div style={{ marginTop: spacing.sm, fontSize: typography.size.xs, color: palette.ink, fontWeight: typography.weight.medium }}>
-          Open →
-        </div>
-      </Card>
-    </Link>
-  );
+  if (h < 12) return t('radar.greeting.morning');
+  if (h < 18) return t('radar.greeting.afternoon');
+  return t('radar.greeting.evening');
 }

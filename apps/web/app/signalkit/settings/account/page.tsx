@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { spacing, typography, border } from '@signalkit/ui';
-import { Badge, Card, ErrorState, LoadingState, PageHeader, palette } from '../../../../components/ui';
+import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, palette } from '../../../../components/ui';
 import { useT } from '../../../../lib/i18n';
-import { accountApi, apiGet, type EntitlementsView, type MeWorkspaces } from '../../../../lib/api';
+import { accountApi, apiGet, workspaceApi, type EntitlementsView, type MeWorkspaces } from '../../../../lib/api';
 
 const PLAN_LABEL: Record<string, string> = {
   free: 'Free',
@@ -42,6 +42,9 @@ export default function AccountSettingsPage() {
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
   const [me, setMe] = useState<MeWorkspaces | null>(null);
   const [entitlements, setEntitlements] = useState<EntitlementsView | null>(null);
+  const [aiEngineName, setAiEngineName] = useState('');
+  const [aiEngineSaving, setAiEngineSaving] = useState(false);
+  const [aiEngineSaved, setAiEngineSaved] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -52,12 +55,30 @@ export default function AccountSettingsPage() {
         ]);
         setMe(meRes);
         setEntitlements(ent);
+        const workspaceId = meRes.memberships[0]?.workspace.id;
+        if (workspaceId) {
+          const settings = await workspaceApi.getSettings(workspaceId);
+          setAiEngineName(settings.aiEngineName ?? '');
+        }
         setState('ready');
       } catch {
         setState('error');
       }
     })();
   }, []);
+
+  async function saveAiEngineName() {
+    const workspaceId = me?.memberships[0]?.workspace.id;
+    if (!workspaceId) return;
+    setAiEngineSaving(true);
+    setAiEngineSaved(false);
+    try {
+      await workspaceApi.updateSettings(workspaceId, { aiEngineName: aiEngineName.trim() || null });
+      setAiEngineSaved(true);
+    } finally {
+      setAiEngineSaving(false);
+    }
+  }
 
   if (state === 'loading') return <LoadingState label={t('state.loading')} />;
   if (state === 'error' || !me) return <ErrorState title={t('state.error.title')} body={t('state.error.body')} />;
@@ -84,6 +105,28 @@ export default function AccountSettingsPage() {
             </span>
           }
         />
+      </Card>
+
+      <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>{t('settings.aiEngine.title')}</h2>
+      <Card style={{ marginBottom: spacing.xl }}>
+        <p style={{ color: palette.subtle, fontSize: typography.size.sm, marginTop: 0, marginBottom: spacing.sm }}>
+          {t('settings.aiEngine.description')}
+        </p>
+        <div style={{ display: 'flex', gap: spacing.sm, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            value={aiEngineName}
+            onChange={(event) => {
+              setAiEngineName(event.target.value);
+              setAiEngineSaved(false);
+            }}
+            placeholder={t('settings.aiEngine.placeholder')}
+            style={{ flex: '1 1 240px', border: `${border.hairline}px solid ${palette.line}`, borderRadius: 6, padding: '8px 10px', fontSize: typography.size.sm }}
+          />
+          <Button variant="secondary" onClick={() => void saveAiEngineName()} disabled={aiEngineSaving}>
+            {aiEngineSaving ? t('action.saving') : t('action.save')}
+          </Button>
+          {aiEngineSaved ? <Badge variant="success">{t('settings.aiEngine.saved')}</Badge> : null}
+        </div>
       </Card>
 
       <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>Entitlements</h2>

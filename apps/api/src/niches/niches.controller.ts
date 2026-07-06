@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.service';
@@ -44,9 +44,16 @@ export class NichesController {
 
   @Get('niches')
   @RequirePermissions('niche:read')
-  @ApiOperation({ summary: 'List all niches in the workspace (across all projects) — mobile feed' })
-  listAll(@Param('workspaceId') ws: string) {
-    return this.niches.listAll(ws);
+  @ApiOperation({ summary: 'List all niches in the workspace, or one project if ?projectId= is given — mobile feed / Radar dashboard' })
+  listAll(@Param('workspaceId') ws: string, @Query('projectId') projectId?: string) {
+    return this.niches.listAll(ws, projectId);
+  }
+
+  @Get('projects/:projectId/radar-summary')
+  @RequirePermissions('niche:read')
+  @ApiOperation({ summary: 'Real, honestly-derived headline metrics for the Radar dashboard (opportunities found, avg confidence, investor interest, AI-engine status), each with a week-over-week delta' })
+  radarSummary(@Param('workspaceId') ws: string, @Param('projectId') pid: string) {
+    return this.niches.radarSummary(ws, pid);
   }
 
   @Get('niches/:nicheId')

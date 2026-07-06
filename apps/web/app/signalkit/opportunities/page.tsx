@@ -3,21 +3,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { spacing, typography } from '@signalkit/ui';
-import { SUPPORTED_LOCALES, LOCALE_LANGUAGE_NAMES, type ConfidenceLevel, type RiskLevel } from '@signalkit/shared';
+import { SUPPORTED_LOCALES, LOCALE_LANGUAGE_NAMES } from '@signalkit/shared';
 import {
   Card,
   PageHeader,
   Badge,
   Button,
-  ScoreBadge,
   ConfidenceBadge,
-  RiskBadge,
   EvidenceBadge,
   EmptyState,
   LoadingState,
   ErrorState,
+  Table,
   palette,
 } from '../../../components/ui';
+import { buildOpportunityColumns } from '../../../components/dashboard';
 import { useI18n, useT } from '../../../lib/i18n';
 import {
   firstWorkspaceId,
@@ -429,34 +429,12 @@ export default function OpportunitiesPage() {
           action={<Button variant="secondary" onClick={() => void discover()} disabled={busy}>{busy ? 'Finding…' : 'Find opportunities'}</Button>}
         />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
-          {sorted.map((n) => (
-            <Link key={n.id} href={`/signalkit/opportunities/${n.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-              <Card>
-                <div style={{ fontWeight: typography.weight.semibold }}>{n.name}</div>
-                <div style={{ color: palette.subtle, fontSize: typography.size.sm, margin: `${spacing.xs}px 0 ${spacing.sm}px` }}>{n.oneLiner}</div>
-                {n.targetMarket && (
-                  <div style={{ color: palette.subtle, fontSize: typography.size.xs, marginBottom: spacing.sm }}>
-                    Target market: {n.targetMarket}
-                  </div>
-                )}
-                {n.assumptions && n.assumptions.length > 0 && (
-                  <div style={{ color: palette.subtle, fontSize: typography.size.xs, marginBottom: spacing.sm }}>
-                    Assumption: {n.assumptions[0]}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: spacing.xs, flexWrap: 'wrap' }}>
-                  <ScoreBadge score={n.opportunityScore} label={t('label.score')} />
-                  <ConfidenceBadge level={n.confidence.level as ConfidenceLevel} label={t('label.confidence')} />
-                  {n.ventureScaleScore != null && <ScoreBadge score={n.ventureScaleScore} label="Venture scale" />}
-                  {n.buildReadinessScore != null && <ScoreBadge score={n.buildReadinessScore} label="Build readiness" />}
-                  <EvidenceBadge count={n.evidenceCount} label={t('label.evidence')} />
-                  <RiskBadge level={n.riskLevel as RiskLevel} label={t('label.risk')} />
-                </div>
-              </Card>
-            </Link>
-          ))}
-        </div>
+        <Card>
+          <Table
+            columns={buildOpportunityColumns(t, (row) => sorted.indexOf(row) + 1)}
+            rows={sorted}
+          />
+        </Card>
       ))}
     </div>
   );

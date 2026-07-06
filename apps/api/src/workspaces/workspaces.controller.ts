@@ -35,6 +35,13 @@ export class WorkspacesController {
     return this.workspaces.getById(id);
   }
 
+  @Get(':id/settings')
+  @RequirePermissions('workspace:read')
+  @ApiOperation({ summary: 'Get workspace settings (creating defaults if this workspace never had a settings row)' })
+  getSettings(@Param('id') id: string) {
+    return this.settings.getWorkspaceSettings(id);
+  }
+
   @Put(':id/settings')
   @RequirePermissions('workspace:update')
   @ApiOperation({ summary: 'Update workspace settings' })

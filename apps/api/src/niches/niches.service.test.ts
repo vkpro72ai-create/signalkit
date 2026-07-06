@@ -209,3 +209,106 @@ describe('NichesService', () => {
     });
   });
 });
+
+describe('radarSummary', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  function makeRadarPrisma(overrides: {
+    nicheCountTotal?: number;
+    nicheCountThisWeek?: number;
+    nicheCountPriorWeek?: number;
+    scoresThisWeek?: number[];
+    scoresPriorWeek?: number[];
+    latestConfidenceValues?: number[];
+    thesesThisWeek?: number[];
+    thesesPriorWeek?: number[];
+    latestVentureScaleScores?: number[];
+    lastUsageAt?: Date | null;
+    aiEngineName?: string | null;
+  }) {
+    const nicheCount = vi
+      .fn()
+      .mockResolvedValueOnce(overrides.nicheCountTotal ?? 0)
+      .mockResolvedValueOnce(overrides.nicheCountThisWeek ?? 0)
+      .mockResolvedValueOnce(overrides.nicheCountPriorWeek ?? 0);
+    const nicheScoreFindMany = vi
+      .fn()
+      .mockResolvedValueOnce((overrides.scoresThisWeek ?? []).map((confidenceValue) => ({ confidenceValue })))
+      .mockResolvedValueOnce((overrides.scoresPriorWeek ?? []).map((confidenceValue) => ({ confidenceValue })));
+    const nicheFindMany = vi
+      .fn()
+      .mockResolvedValueOnce(
+        (overrides.latestConfidenceValues ?? []).map((confidenceValue) => ({ scores: [{ confidenceValue }] })),
+      )
+      .mockResolvedValueOnce(
+        (overrides.latestVentureScaleScores ?? []).map((ventureScaleScore) => ({ ventureTheses: [{ ventureScaleScore }] })),
+      );
+    const ventureThesisFindMany = vi
+      .fn()
+      .mockResolvedValueOnce((overrides.thesesThisWeek ?? []).map((ventureScaleScore) => ({ ventureScaleScore })))
+      .mockResolvedValueOnce((overrides.thesesPriorWeek ?? []).map((ventureScaleScore) => ({ ventureScaleScore })));
+    const prisma = {
+      niche: { count: nicheCount, findMany: nicheFindMany },
+      nicheScore: { findMany: nicheScoreFindMany },
+      ventureThesis: { findMany: ventureThesisFindMany },
+      lLMUsageLog: { findFirst: vi.fn().mockResolvedValue(overrides.lastUsageAt ? { createdAt: overrides.lastUsageAt } : null) },
+      workspaceSettings: { findUnique: vi.fn().mockResolvedValue({ aiEngineName: overrides.aiEngineName ?? null }) },
+    } as unknown as PrismaService;
+    return prisma;
+  }
+
+  it('computes week-over-week deltas as real percent change, not fabricated numbers', async () => {
+    const prisma = makeRadarPrisma({
+      nicheCountTotal: 20,
+      nicheCountThisWeek: 6,
+      nicheCountPriorWeek: 4, // +50%
+      scoresThisWeek: [0.8, 0.8], // avg 0.8
+      scoresPriorWeek: [0.4, 0.4], // avg 0.4 -> +100%
+      latestConfidenceValues: [0.6, 0.8], // current overall avg 0.7
+      thesesThisWeek: [80, 80], // avg 80
+      thesesPriorWeek: [40, 40], // avg 40 -> +100%
+      latestVentureScaleScores: [60, 80], // current overall avg 70/100 -> 0.7 -> 'high'
+    });
+    const svc = new NichesService(prisma, {} as EvidenceService, {} as LlmRouterService);
+
+    const out = await svc.radarSummary('w1', 'p1');
+
+    expect(out.opportunitiesFound).toEqual({ total: 20, deltaPct: 50 });
+    expect(out.avgConfidence.value).toBeCloseTo(0.7, 5);
+    expect(out.avgConfidence.level).toBe('high');
+    expect(out.avgConfidence.deltaPct).toBeCloseTo(100, 5);
+    expect(out.investorInterest.level).toBe('high');
+    expect(out.investorInterest.deltaPct).toBeCloseTo(100, 5);
+  });
+
+  it('returns a null delta (not 0, not a divide-by-zero NaN) when there is no prior-week data to compare against', async () => {
+    const prisma = makeRadarPrisma({
+      nicheCountTotal: 3,
+      nicheCountThisWeek: 3,
+      nicheCountPriorWeek: 0,
+      scoresThisWeek: [0.5],
+      scoresPriorWeek: [],
+    });
+    const svc = new NichesService(prisma, {} as EvidenceService, {} as LlmRouterService);
+
+    const out = await svc.radarSummary('w1', 'p1');
+
+    expect(out.opportunitiesFound.deltaPct).toBeNull();
+    expect(out.avgConfidence.deltaPct).toBeNull();
+    expect(Number.isNaN(out.opportunitiesFound.deltaPct as unknown as number)).toBe(false);
+  });
+
+  it('reports the AI engine as active only within the last 48h, and surfaces the configured display name honestly (no fabricated brand)', async () => {
+    const activePrisma = makeRadarPrisma({ lastUsageAt: new Date(Date.now() - 1 * DAY), aiEngineName: 'Acme AI' });
+    const svcActive = new NichesService(activePrisma, {} as EvidenceService, {} as LlmRouterService);
+    const outActive = await svcActive.radarSummary('w1', 'p1');
+    expect(outActive.aiEngine.active).toBe(true);
+    expect(outActive.aiEngine.displayName).toBe('Acme AI');
+
+    const stalePrisma = makeRadarPrisma({ lastUsageAt: new Date(Date.now() - 10 * DAY), aiEngineName: null });
+    const svcStale = new NichesService(stalePrisma, {} as EvidenceService, {} as LlmRouterService);
+    const outStale = await svcStale.radarSummary('w1', 'p1');
+    expect(outStale.aiEngine.active).toBe(false);
+    expect(outStale.aiEngine.displayName).toBeNull(); // frontend applies the translated default, not the backend
+  });
+});

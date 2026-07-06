@@ -93,6 +93,16 @@ export interface ProjectView {
   createdAt: string;
 }
 
+export interface WorkspaceSettingsView {
+  id: string;
+  workspaceId: string;
+  defaultLocale: string;
+  whiteLabelEnabled: boolean;
+  brandName: string | null;
+  hideSignalKitBrand: boolean;
+  aiEngineName: string | null;
+}
+
 export const workspaceApi = {
   create: (name: string) =>
     apiPost<{ id: string; name: string }>('/workspaces', {
@@ -102,6 +112,9 @@ export const workspaceApi = {
   listProjects: (workspaceId: string) => apiGet<ProjectView[]>(`/workspaces/${workspaceId}/projects`),
   createProject: (workspaceId: string, name: string, goal?: string) =>
     apiPost<ProjectView>(`/workspaces/${workspaceId}/projects`, { name, goal, marketScope: 'global' }),
+  getSettings: (workspaceId: string) => apiGet<WorkspaceSettingsView>(`/workspaces/${workspaceId}/settings`),
+  updateSettings: (workspaceId: string, body: Partial<Pick<WorkspaceSettingsView, 'aiEngineName'>>) =>
+    apiPut<WorkspaceSettingsView>(`/workspaces/${workspaceId}/settings`, body),
 };
 
 export interface NicheSummary {
@@ -118,6 +131,7 @@ export interface OpportunityCard {
   id: string;
   name: string;
   oneLiner: string;
+  whyNow: string;
   riskLevel: string;
   projectId: string;
   targetMarket: string | null;
@@ -125,6 +139,7 @@ export interface OpportunityCard {
   opportunityScore: number;
   confidence: { level: string; value: number };
   ventureScaleScore: number | null;
+  ventureScaleLevel: string | null;
   buildReadinessScore: number | null;
 }
 
@@ -184,14 +199,24 @@ export interface CreateOpportunityFromIdeaInput {
   riskTolerance?: 'low' | 'medium' | 'high';
 }
 
+export interface RadarSummary {
+  opportunitiesFound: { total: number; deltaPct: number | null };
+  avgConfidence: { value: number; level: string; deltaPct: number | null };
+  investorInterest: { level: string; deltaPct: number | null };
+  aiEngine: { displayName: string | null; active: boolean; lastActiveAt: string | null };
+}
+
 export const opportunityApi = {
   list: (workspaceId: string, projectId: string) =>
     apiGet<NicheSummary[]>(`/workspaces/${workspaceId}/projects/${projectId}/niches`),
-  listAll: (workspaceId: string) => apiGet<OpportunityCard[]>(`/workspaces/${workspaceId}/niches`),
+  listAll: (workspaceId: string, projectId?: string) =>
+    apiGet<OpportunityCard[]>(`/workspaces/${workspaceId}/niches${projectId ? `?projectId=${projectId}` : ''}`),
   discover: (workspaceId: string, projectId: string, body?: DiscoverOpportunitiesInput) =>
     apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/discover-niches`, body ?? {}),
   createFromIdea: (workspaceId: string, projectId: string, body: CreateOpportunityFromIdeaInput) =>
     apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/niches/from-idea`, body),
+  radarSummary: (workspaceId: string, projectId: string) =>
+    apiGet<RadarSummary>(`/workspaces/${workspaceId}/projects/${projectId}/radar-summary`),
 };
 
 export interface PackListItem {
