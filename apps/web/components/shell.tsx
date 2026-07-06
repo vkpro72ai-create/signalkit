@@ -10,7 +10,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { spacing, radius, border, typography } from '@signalkit/ui';
+import { spacing, radius, border, typography, colorFor } from '@signalkit/ui';
 import { SUPPORTED_LOCALES, type LocaleCode } from '@signalkit/i18n';
 import { useI18n } from '../lib/i18n';
 import { palette } from './ui';
@@ -106,6 +106,7 @@ function Sidebar() {
       </div>
       {NAV.map((item) => {
         const active = item.href === '/signalkit' ? pathname === '/signalkit' : pathname.startsWith(item.href);
+        const accent = colorFor('opportunity');
         return (
           <Link
             key={item.href}
@@ -113,10 +114,11 @@ function Sidebar() {
             style={{
               padding: `${spacing.sm}px ${spacing.md}px`,
               borderRadius: radius.md,
+              borderInlineStart: `3px solid ${active ? accent.border : 'transparent'}`,
               fontSize: typography.size.sm,
               fontWeight: active ? typography.weight.semibold : typography.weight.regular,
               color: active ? palette.ink : palette.subtle,
-              background: active ? palette.canvas : 'transparent',
+              background: active ? accent.bg : 'transparent',
               textDecoration: 'none',
             }}
           >

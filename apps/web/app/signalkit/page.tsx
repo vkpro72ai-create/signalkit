@@ -207,75 +207,72 @@ export default function SignalKitHome() {
               </Button>
             </Card>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: spacing.xl, alignItems: 'start' }}>
-              <div>
-                {top ? (
-                  <div style={{ marginBottom: spacing.lg }}>
-                    <HeroOpportunityCard
-                      eyebrow={t('radar.hero.eyebrow')}
-                      title={top.name}
-                      description={top.oneLiner}
-                      tags={[top.targetMarket, `${t('radar.hero.riskTag')}: ${levelLabel(top.riskLevel, t)}`].filter((tag): tag is string => Boolean(tag))}
-                      score={top.opportunityScore}
-                      whyNowLabel={t('radar.table.whyNow')}
-                      whyNow={top.whyNow || '—'}
-                      cta={t('radar.hero.cta')}
-                      onCtaClick={() => {
-                        window.location.href = `/signalkit/opportunities/${top.id}`;
-                      }}
-                    />
-                  </div>
-                ) : null}
+            <div>
+              {top ? (
+                <div style={{ marginBottom: spacing.lg }}>
+                  <HeroOpportunityCard
+                    eyebrow={t('radar.hero.eyebrow')}
+                    title={top.name}
+                    description={top.oneLiner}
+                    tags={[top.targetMarket, `${t('radar.hero.riskTag')}: ${levelLabel(top.riskLevel, t)}`].filter((tag): tag is string => Boolean(tag))}
+                    score={top.opportunityScore}
+                    whyNowLabel={t('radar.table.whyNow')}
+                    whyNow={top.whyNow || '—'}
+                    cta={t('radar.hero.cta')}
+                    onCtaClick={() => {
+                      window.location.href = `/signalkit/opportunities/${top.id}`;
+                    }}
+                    aside={
+                      <>
+                        <SidePanel title={t('radar.side.nextAction.title')}>
+                          <div style={{ fontWeight: typography.weight.medium, marginBottom: spacing.xs }}>
+                            {t('radar.side.nextAction.headline')}
+                          </div>
+                          <p style={{ color: palette.subtle, fontSize: typography.size.sm, marginBottom: spacing.md }}>
+                            {t('radar.side.nextAction.body')}
+                          </p>
+                          <Link href={`/signalkit/opportunities/${top.id}`} style={{ textDecoration: 'none' }}>
+                            <Button>{t('radar.side.nextAction.cta')}</Button>
+                          </Link>
+                        </SidePanel>
 
-                <Card>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
-                    <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>{t('radar.table.title')}</h2>
-                    <div style={{ display: 'flex', gap: spacing.sm }}>
-                      <Button variant="ghost" onClick={() => void findOpportunities()} disabled={busy}>
-                        {busy ? t('radar.empty.busy') : t('radar.table.rescan')}
-                      </Button>
-                      <Link href="/signalkit/opportunities" style={{ textDecoration: 'none' }}>
-                        <Button variant="secondary">{t('radar.table.viewAll')}</Button>
-                      </Link>
-                    </div>
-                  </div>
-                  <Table columns={columns} rows={rest} />
-                </Card>
-              </div>
+                        <SidePanel title={t('radar.side.investorSignal.title')}>
+                          {summary ? (
+                            <>
+                              <div style={{ fontSize: typography.size.xl, fontWeight: typography.weight.bold, marginBottom: 2 }}>
+                                {levelLabel(summary.investorInterest.level, t)}
+                              </div>
+                              {typeof summary.investorInterest.deltaPct === 'number' ? (
+                                <div style={{ fontSize: typography.size.xs, color: summary.investorInterest.deltaPct >= 0 ? '#13502B' : '#6A1B1B', marginBottom: spacing.sm }}>
+                                  {summary.investorInterest.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(summary.investorInterest.deltaPct).toFixed(0)}% {t('radar.stat.deltaWeek')}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: typography.size.xs, color: palette.subtle, marginBottom: spacing.sm }}>{t('radar.side.investorSignal.noHistory')}</div>
+                              )}
+                              <p style={{ color: palette.subtle, fontSize: typography.size.sm, margin: 0 }}>{t('radar.side.investorSignal.body')}</p>
+                            </>
+                          ) : null}
+                        </SidePanel>
+                      </>
+                    }
+                  />
+                </div>
+              ) : null}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
-                <SidePanel title={t('radar.side.nextAction.title')}>
-                  <div style={{ fontWeight: typography.weight.medium, marginBottom: spacing.xs }}>
-                    {t('radar.side.nextAction.headline')}
-                  </div>
-                  <p style={{ color: palette.subtle, fontSize: typography.size.sm, marginBottom: spacing.md }}>
-                    {t('radar.side.nextAction.body')}
-                  </p>
-                  {top ? (
-                    <Link href={`/signalkit/opportunities/${top.id}`} style={{ textDecoration: 'none' }}>
-                      <Button>{t('radar.side.nextAction.cta')}</Button>
+              <Card>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+                  <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>{t('radar.table.title')}</h2>
+                  <div style={{ display: 'flex', gap: spacing.sm }}>
+                    <Button variant="ghost" onClick={() => void findOpportunities()} disabled={busy}>
+                      {busy ? t('radar.empty.busy') : t('radar.table.rescan')}
+                    </Button>
+                    <Link href="/signalkit/opportunities" style={{ textDecoration: 'none' }}>
+                      <Button variant="secondary">{t('radar.table.viewAll')}</Button>
                     </Link>
-                  ) : null}
-                </SidePanel>
-
-                <SidePanel title={t('radar.side.investorSignal.title')}>
-                  {summary ? (
-                    <>
-                      <div style={{ fontSize: typography.size.xl, fontWeight: typography.weight.bold, marginBottom: 2 }}>
-                        {levelLabel(summary.investorInterest.level, t)}
-                      </div>
-                      {typeof summary.investorInterest.deltaPct === 'number' ? (
-                        <div style={{ fontSize: typography.size.xs, color: summary.investorInterest.deltaPct >= 0 ? '#13502B' : '#6A1B1B', marginBottom: spacing.sm }}>
-                          {summary.investorInterest.deltaPct >= 0 ? '▲' : '▼'} {Math.abs(summary.investorInterest.deltaPct).toFixed(0)}% {t('radar.stat.deltaWeek')}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: typography.size.xs, color: palette.subtle, marginBottom: spacing.sm }}>{t('radar.side.investorSignal.noHistory')}</div>
-                      )}
-                      <p style={{ color: palette.subtle, fontSize: typography.size.sm, margin: 0 }}>{t('radar.side.investorSignal.body')}</p>
-                    </>
-                  ) : null}
-                </SidePanel>
-              </div>
+                  </div>
+                </div>
+                <Table columns={columns} rows={rest} />
+              </Card>
             </div>
           )}
         </>

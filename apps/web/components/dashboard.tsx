@@ -187,6 +187,7 @@ export function HeroOpportunityCard({
   whyNow,
   cta,
   onCtaClick,
+  aside,
 }: {
   eyebrow: string;
   title: string;
@@ -197,6 +198,9 @@ export function HeroOpportunityCard({
   whyNow: string;
   cta: string;
   onCtaClick?: () => void;
+  /** Inner cards (e.g. next-action / investor-signal) rendered inside this
+   * colored block rather than as a separate page-level side column. */
+  aside?: ReactNode;
 }) {
   const c = colorFor('opportunity');
   return (
@@ -223,37 +227,44 @@ export function HeroOpportunityCard({
           opacity: 0.3,
         }}
       />
-      <div style={{ position: 'relative' }}>
-        <Badge variant="opportunity">{eyebrow}</Badge>
-        <h2 style={{ fontSize: typography.size.xl, fontWeight: typography.weight.bold, margin: `${spacing.sm}px 0`, maxWidth: 560 }}>{title}</h2>
-        <p style={{ color: palette.subtle, maxWidth: 520, margin: 0 }}>{description}</p>
-        {tags.length > 0 ? (
-          <div style={{ display: 'flex', gap: spacing.xs, marginTop: spacing.sm, flexWrap: 'wrap' }}>
-            {tags.map((tag) => (
-              <Badge key={tag} variant="muted">
-                {tag}
-              </Badge>
-            ))}
+      <div style={{ position: 'relative', display: 'flex', gap: spacing['2xl'], alignItems: 'stretch', flexWrap: 'wrap' }}>
+        <div style={{ flex: '2 1 420px', minWidth: 280 }}>
+          <Badge variant="opportunity">{eyebrow}</Badge>
+          <h2 style={{ fontSize: typography.size.xl, fontWeight: typography.weight.bold, margin: `${spacing.sm}px 0`, maxWidth: 560 }}>{title}</h2>
+          <p style={{ color: palette.subtle, maxWidth: 520, margin: 0 }}>{description}</p>
+          {tags.length > 0 ? (
+            <div style={{ display: 'flex', gap: spacing.xs, marginTop: spacing.sm, flexWrap: 'wrap' }}>
+              {tags.map((tag) => (
+                <Badge key={tag} variant="muted">
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+          <div style={{ display: 'flex', alignItems: 'center', gap: spacing['2xl'], marginTop: spacing.lg, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: typography.size['3xl'], fontWeight: typography.weight.bold, lineHeight: 1 }}>
+                {Math.round(score)}
+                <span style={{ fontSize: typography.size.sm, color: palette.subtle, fontWeight: typography.weight.regular }}>/100</span>
+              </div>
+              <div style={{ marginTop: spacing.xs }}>
+                <ConfidenceDots value={score} />
+              </div>
+            </div>
+            <div style={{ maxWidth: 320 }}>
+              <div style={{ fontSize: typography.size.xs, color: palette.subtle, marginBottom: 2 }}>{whyNowLabel}</div>
+              <div style={{ fontSize: typography.size.sm }}>{whyNow}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: spacing.lg }}>
+            <Button onClick={onCtaClick}>{cta}</Button>
+          </div>
+        </div>
+        {aside ? (
+          <div style={{ flex: '1 1 260px', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: spacing.md }}>
+            {aside}
           </div>
         ) : null}
-        <div style={{ display: 'flex', alignItems: 'center', gap: spacing['2xl'], marginTop: spacing.lg, flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: typography.size['3xl'], fontWeight: typography.weight.bold, lineHeight: 1 }}>
-              {Math.round(score)}
-              <span style={{ fontSize: typography.size.sm, color: palette.subtle, fontWeight: typography.weight.regular }}>/100</span>
-            </div>
-            <div style={{ marginTop: spacing.xs }}>
-              <ConfidenceDots value={score} />
-            </div>
-          </div>
-          <div style={{ maxWidth: 320 }}>
-            <div style={{ fontSize: typography.size.xs, color: palette.subtle, marginBottom: 2 }}>{whyNowLabel}</div>
-            <div style={{ fontSize: typography.size.sm }}>{whyNow}</div>
-          </div>
-        </div>
-        <div style={{ marginTop: spacing.lg }}>
-          <Button onClick={onCtaClick}>{cta}</Button>
-        </div>
       </div>
     </div>
   );
