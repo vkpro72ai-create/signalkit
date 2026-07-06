@@ -118,6 +118,9 @@ export const en = {
   'radar.side.investorSignal.title': 'Investor signal',
   'radar.side.investorSignal.body': "Derived from the Venture Scale Score across this project's opportunities.",
   'radar.side.investorSignal.noHistory': 'Not enough history yet',
+  'radar.quicklink.packsBody': 'Build-ready document collections generated from your opportunities.',
+  'radar.quicklink.sourcesBody': 'The evidence graph behind every score and thesis.',
+  'radar.quicklink.cta': 'Open →',
 
   'label.confidence': 'Confidence',
   'label.risk': 'Risk',

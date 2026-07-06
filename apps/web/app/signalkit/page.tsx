@@ -275,9 +275,28 @@ export default function SignalKitHome() {
               </Card>
             </div>
           )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginTop: spacing.lg }}>
+            <QuickLink href="/signalkit/packs" title={t('nav.packs')} body={t('radar.quicklink.packsBody')} cta={t('radar.quicklink.cta')} />
+            <QuickLink href="/signalkit/sources" title={t('nav.sources')} body={t('radar.quicklink.sourcesBody')} cta={t('radar.quicklink.cta')} />
+          </div>
         </>
       )}
     </div>
+  );
+}
+
+function QuickLink({ href, title, body, cta }: { href: string; title: string; body: string; cta: string }) {
+  return (
+    <Link href={href as '/'} style={{ textDecoration: 'none', color: 'inherit' }}>
+      <Card>
+        <div style={{ fontWeight: typography.weight.semibold, marginBottom: 4 }}>{title}</div>
+        <div style={{ color: palette.subtle, fontSize: typography.size.sm }}>{body}</div>
+        <div style={{ marginTop: spacing.sm, fontSize: typography.size.xs, color: palette.ink, fontWeight: typography.weight.medium }}>
+          {cta}
+        </div>
+      </Card>
+    </Link>
   );
 }
 
