@@ -79,7 +79,7 @@ export default function NewProjectPage() {
 
         <Card>
           <div style={sectionTitle}>2 · {t('pipeline.market')}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginTop: spacing.sm }}>
+          <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginTop: spacing.sm }}>
             {MARKET_SCOPES.map((s) => {
               const active = s === scope;
               return (

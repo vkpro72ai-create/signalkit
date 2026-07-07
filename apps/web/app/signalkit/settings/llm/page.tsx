@@ -212,7 +212,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
       <div style={{ marginBottom: spacing.xl }}>
         <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>Platform AI</h2>
         <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', gap: spacing.md }}>
             <div>
               <div style={{ fontSize: typography.size.sm, fontWeight: typography.weight.medium }}>
                 {settings?.mode === 'platform' ? 'Using SignalKit-hosted models' : 'Using your own API keys (BYOK)'}
@@ -235,7 +235,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
       <div style={{ marginBottom: spacing.xl }}>
         <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>Routing & smoke test</h2>
         <Card>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.sm, alignItems: 'end' }}>
+          <div className="grid-form-row" style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.sm, alignItems: 'end' }}>
             <div>
               <label style={{ fontSize: typography.size.xs, color: palette.subtle }}>Default model</label>
               <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} style={selectStyle}>
@@ -267,7 +267,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
 
       {/* Connections */}
       <div style={{ marginBottom: spacing.xl }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.sm }}>
           <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>Connected providers</h2>
           <Button variant="secondary" onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'Cancel' : '+ Add provider'}</Button>
         </div>
@@ -323,7 +323,7 @@ function ConnectionsSection({ workspaceId }: { workspaceId: string }) {
               <div
                 key={c.id}
                 style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center',
                   padding: spacing.lg,
                   borderBottom: i < connections.length - 1 ? `${border.hairline}px solid ${palette.line}` : 'none',
                 }}
@@ -377,7 +377,7 @@ function ModelCatalog() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.md }}>
         <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>Model catalog</h2>
         <select value={depth} onChange={(e) => setDepth(e.target.value as typeof depth)} style={{ ...selectStyle, width: 'auto' }}>
           {PACK_DEPTHS.map((d) => <option key={d} value={d}>{d.replace(/_/g, ' ')}</option>)}
@@ -398,7 +398,7 @@ function ModelCatalog() {
           {models.length === 0 ? (
             <EmptyState title={t('state.empty.title')} body={t('state.empty.body')} />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
+            <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
               {models.map((m) => <ModelCard key={m.id} model={m} depth={depth} t={t} />)}
             </div>
           )}
@@ -420,7 +420,7 @@ function ModelCard({
   const estCost = estimatePackCostUsd(model, depth);
   return (
     <Card>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div>
           <div style={{ fontWeight: typography.weight.semibold }}>{model.displayName}</div>
           <div style={{ color: palette.subtle, fontSize: typography.size.xs }}>{model.provider}</div>

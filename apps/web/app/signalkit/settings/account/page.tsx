@@ -16,7 +16,7 @@ const PLAN_LABEL: Record<string, string> = {
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: `${spacing.md}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', padding: `${spacing.md}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
       <span style={{ fontSize: typography.size.sm, color: palette.subtle }}>{label}</span>
       <span style={{ fontSize: typography.size.sm, fontWeight: typography.weight.medium }}>{value}</span>
     </div>
@@ -135,7 +135,7 @@ export default function AccountSettingsPage() {
           <div
             key={f.key}
             style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center',
               padding: `${spacing.sm}px 0`,
               borderBottom: i < FEATURE_LABELS.length - 1 ? `${border.hairline}px solid ${palette.line}` : 'none',
             }}

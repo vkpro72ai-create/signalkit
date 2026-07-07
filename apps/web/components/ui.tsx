@@ -205,8 +205,8 @@ export interface Column<T> {
 }
 export function Table<T>({ columns, rows }: { columns: Column<T>[]; rows: T[] }) {
   return (
-    <div style={{ border: `${border.hairline}px solid ${line}`, borderRadius: radius.lg, overflow: 'hidden' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: typography.size.sm }}>
+    <div className="table-scroll" style={{ border: `${border.hairline}px solid ${line}`, borderRadius: radius.lg }}>
+      <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse', fontSize: typography.size.sm }}>
         <thead>
           <tr style={{ background: canvas }}>
             {columns.map((c) => (
@@ -299,7 +299,7 @@ export function AuditEventRow({ action, actor, at }: { action: string; actor: st
     <div
       style={{
         display: 'flex',
-        justifyContent: 'space-between',
+        justifyContent: 'space-between', flexWrap: 'wrap',
         gap: spacing.md,
         padding: `${spacing.sm}px 0`,
         borderBottom: `${border.hairline}px solid ${line}`,
@@ -316,7 +316,7 @@ export function AuditEventRow({ action, actor, at }: { action: string; actor: st
 /* ── PageHeader ──────────────────────────────────────────────────────────── */
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: spacing.lg, marginBottom: spacing.xl }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: spacing.lg, marginBottom: spacing.xl }}>
       <div>
         <h1 style={{ fontSize: typography.size['2xl'], fontWeight: typography.weight.bold, margin: 0 }}>{title}</h1>
         {subtitle ? <p style={{ color: subtle, marginTop: spacing.xs, marginBottom: 0 }}>{subtitle}</p> : null}
