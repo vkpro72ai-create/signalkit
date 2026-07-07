@@ -351,7 +351,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
               rows={score.breakdown}
             />
             {scenarios ? (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: spacing.md, marginTop: spacing.lg }}>
+              <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: spacing.md, marginTop: spacing.lg }}>
                 {scenarios.scenarios.map((s) => (
                   <Card key={s.kind}>
                     <div style={{ textTransform: 'capitalize', fontWeight: typography.weight.semibold }}>{s.kind}</div>
@@ -368,7 +368,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
           venture ? (
             <>
               {/* Four scores, kept strictly separate. */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: spacing.md, marginBottom: spacing.lg }}>
+              <div className="grid-4" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: spacing.md, marginBottom: spacing.lg }}>
                 <ScoreCard label={l.opportunity} value={score ? `${score.totalScore}/100` : 'n/a'} hint={l.goodOpportunity} />
                 <ScoreCard label={t('label.confidence')} value={score ? `${Math.round(score.confidenceValue * 100)}%` : 'n/a'} hint={l.howSupported} />
                 <ScoreCard label={l.ventureScale} value={`${venture.ventureScaleScore}/100`} hint={l.couldItBeLarge} />
@@ -393,7 +393,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
                 <Field label={l.marketConstraints} value={venture.thesis.marketConstraints} />
               </Card>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginBottom: spacing.lg }}>
+              <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginBottom: spacing.lg }}>
                 <ListCard title={l.risks} items={venture.thesis.killReasons} variant="risk" emptyLabel={l.noneCaptured} />
                 <ListCard title={l.whatMustBeTrue} items={venture.whatMustBeTrue.length ? venture.whatMustBeTrue : venture.thesis.whatMustBeTrue} variant="warning" emptyLabel={l.noneCaptured} />
                 <ListCard title={l.validationPlan} items={venture.thesis.firstValidationExperiments} variant="evidence" emptyLabel={l.noneCaptured} />
@@ -427,7 +427,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
 
         {tab === 'markets' && (
           <Card>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.md }}>
               <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>{t('market.compare')}</h2>
               <Button variant="secondary" onClick={() => void compare()}>{l.compareMarkets}</Button>
             </div>

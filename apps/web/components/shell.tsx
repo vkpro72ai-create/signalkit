@@ -8,7 +8,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { Route } from 'next';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { spacing, radius, border, typography, colorFor } from '@signalkit/ui';
 import { SUPPORTED_LOCALES, type LocaleCode } from '@signalkit/i18n';
@@ -85,11 +85,12 @@ export function MarketSelector({ market }: { market?: string }) {
   );
 }
 
-function Sidebar() {
+function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
   const pathname = usePathname();
   const { t } = useI18n();
   return (
     <nav
+      className={`app-sidebar${open ? ' is-open' : ''}`}
       style={{
         width: 248,
         flexShrink: 0,
@@ -111,6 +112,7 @@ function Sidebar() {
           <Link
             key={item.href}
             href={item.href}
+            onClick={onNavigate}
             style={{
               padding: `${spacing.sm}px ${spacing.md}px`,
               borderRadius: radius.md,
@@ -130,24 +132,57 @@ function Sidebar() {
   );
 }
 
-function TopBar() {
+function Hamburger({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={open ? 'Close menu' : 'Open menu'}
+      aria-expanded={open}
+      onClick={onClick}
+      className="app-hamburger"
+      style={{
+        display: 'none',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 36,
+        height: 36,
+        flexShrink: 0,
+        borderRadius: radius.md,
+        border: `${border.hairline}px solid ${palette.line}`,
+        background: palette.surface,
+        color: palette.ink,
+        fontSize: typography.size.lg,
+        cursor: 'pointer',
+      }}
+    >
+      {open ? '✕' : '☰'}
+    </button>
+  );
+}
+
+function TopBar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <header
+      className="app-topbar"
       style={{
-        height: 56,
+        minHeight: 56,
         flexShrink: 0,
         borderBottom: `${border.hairline}px solid ${palette.line}`,
         background: palette.surface,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: `0 ${spacing.xl}px`,
-        gap: spacing.lg,
+        flexWrap: 'wrap',
+        padding: `${spacing.sm}px ${spacing.xl}px`,
+        gap: spacing.md,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.lg }}>
-        <ProjectSwitcher />
-        <MarketSelector />
+      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.md, minWidth: 0 }}>
+        <Hamburger open={open} onClick={onToggle} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: spacing.lg, flexWrap: 'wrap', minWidth: 0 }}>
+          <ProjectSwitcher />
+          <MarketSelector />
+        </div>
       </div>
       <LanguageSwitcher />
     </header>
@@ -156,6 +191,8 @@ function TopBar() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // No token stored for THIS origin (localStorage is origin-scoped — a token
   // saved while testing another domain/port does not carry over) → every
@@ -166,12 +203,23 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!token) router.replace('/login');
   }, [router]);
 
+  // Close the off-canvas sidebar whenever the route changes so back/forward
+  // navigation and deep links never leave it stuck open on mobile.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: palette.canvas }}>
-      <Sidebar />
+    <div className="app-shell" style={{ display: 'flex', minHeight: '100vh', background: palette.canvas }}>
+      <div
+        className={`app-sidebar-backdrop${sidebarOpen ? ' is-open' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+        aria-hidden
+      />
+      <Sidebar open={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <TopBar />
-        <main style={{ flex: 1, padding: spacing['2xl'], maxWidth: 1200, width: '100%' }}>{children}</main>
+        <TopBar open={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
+        <main className="app-main" style={{ flex: 1, padding: spacing['2xl'], maxWidth: 1200, width: '100%' }}>{children}</main>
       </div>
     </div>
   );

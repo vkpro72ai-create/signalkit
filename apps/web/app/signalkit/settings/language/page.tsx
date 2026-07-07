@@ -39,7 +39,7 @@ function LocaleSelect({ value, onChange }: { value: LocaleCode; onChange: (l: Lo
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: spacing.lg, padding: `${spacing.md}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', gap: spacing.lg, padding: `${spacing.md}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
       <span style={{ fontSize: typography.size.sm, color: palette.ink }}>{label}</span>
       {children}
     </div>
@@ -156,7 +156,7 @@ export default function LanguageRegionSettingsPage() {
         </Field>
 
         <div style={{ paddingTop: spacing.md }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: typography.size.sm }}>Current location permission</span>
             <Badge variant={consent === 'granted' ? 'success' : 'muted'}>{consent}</Badge>
           </div>
