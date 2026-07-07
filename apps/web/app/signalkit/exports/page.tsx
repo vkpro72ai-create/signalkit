@@ -81,7 +81,7 @@ function ExportTypeCard({
         cursor: 'pointer', marginBottom: 5,
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: 12, fontWeight: selected ? 700 : 400, color: '#111' }}>{type.label}</span>
         <span style={{ fontSize: 10, fontWeight: 600, color: '#888', letterSpacing: 0.5 }}>{formatLabel}</span>
       </div>
@@ -95,7 +95,7 @@ function ManifestViewer({ manifest, onClose }: { manifest: ManifestView; onClose
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: '#fff', border: '1.5px solid #111', borderRadius: 8, maxWidth: 680, width: '90%', maxHeight: '80vh', overflow: 'auto', padding: 32 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>Export Manifest</h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: '1px solid #ddd', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }}>Close</button>
         </div>
@@ -354,7 +354,7 @@ function ExportsPageInner() {
         subtitle="Generate production-grade exports from your Product Document Pack."
       />
 
-      <div className="grid-sidebar-a" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24, marginTop: 24, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24, marginTop: 24, alignItems: 'start' }}>
 
         {/* ── Left: configure ── */}
         <div>
@@ -471,7 +471,7 @@ function ExportsPageInner() {
 
         {/* ── Right: history ── */}
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Export History</h2>
             <button type="button" onClick={() => void loadJobs()} style={{ background: 'transparent', border: '1px solid #ddd', borderRadius: 4, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}>
               Refresh

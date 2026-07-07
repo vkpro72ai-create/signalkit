@@ -59,7 +59,7 @@ export default function LoginPage() {
       }}
     >
       <Card style={{ width: 380, maxWidth: '100%' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.lg }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg }}>
           <strong style={{ fontSize: typography.size.lg }}>{t('app.name')}</strong>
           <LanguageSwitcher />
         </div>

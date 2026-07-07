@@ -169,7 +169,7 @@ export default function SignalKitHome() {
       {/* Full dashboard */}
       {ws && project && (
         <>
-          <div className="grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: spacing.lg, marginBottom: spacing.xl }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: spacing.lg, marginBottom: spacing.xl }}>
             <StatTrendCard
               label={t('radar.stat.opportunitiesFound')}
               value={String(summary?.opportunitiesFound.total ?? opportunities.length)}
@@ -260,7 +260,7 @@ export default function SignalKitHome() {
               ) : null}
 
               <Card>
-                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.md }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
                   <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>{t('radar.table.title')}</h2>
                   <div style={{ display: 'flex', gap: spacing.sm }}>
                     <Button variant="ghost" onClick={() => void findOpportunities()} disabled={busy}>
@@ -276,7 +276,7 @@ export default function SignalKitHome() {
             </div>
           )}
 
-          <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginTop: spacing.lg }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg, marginTop: spacing.lg }}>
             <QuickLink href="/signalkit/packs" title={t('nav.packs')} body={t('radar.quicklink.packsBody')} cta={t('radar.quicklink.cta')} />
             <QuickLink href="/signalkit/sources" title={t('nav.sources')} body={t('radar.quicklink.sourcesBody')} cta={t('radar.quicklink.cta')} />
           </div>

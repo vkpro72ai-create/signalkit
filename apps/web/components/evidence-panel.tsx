@@ -72,7 +72,7 @@ export function EvidencePanel({ ws, projectId }: { ws: string; projectId: string
   return (
     <>
       <Card style={{ marginBottom: spacing.lg }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.md }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
           <h2 style={{ fontSize: typography.size.lg, margin: 0 }}>Evidence & claims</h2>
           <Button variant="secondary" onClick={() => void synthesize()}>Build evidence from signals</Button>
         </div>
@@ -122,7 +122,7 @@ export function EvidencePanel({ ws, projectId }: { ws: string; projectId: string
         )}
       </Card>
 
-      <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
         <Card>
           <h2 style={{ fontSize: typography.size.lg, marginTop: 0 }}>Assumptions</h2>
           <div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>

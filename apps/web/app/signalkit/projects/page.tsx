@@ -62,7 +62,7 @@ export default function ProjectsPage() {
             <div
               key={p.id}
               style={{
-                display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 padding: spacing.lg,
                 borderBottom: i < projects.length - 1 ? `${border.hairline}px solid ${palette.line}` : 'none',
               }}

@@ -547,7 +547,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
           )}
 
           {!showBlueprint && (
-          <div className="grid-sidebar-b" style={{ display: 'grid', gridTemplateColumns: '200px 1fr 240px', gap: spacing.lg, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr 240px', gap: spacing.lg, alignItems: 'start' }}>
 
             {/* LEFT — Document navigation */}
             <Card style={{ padding: `${spacing.sm}px 0`, maxHeight: '80vh', overflow: 'auto' }}>
@@ -610,7 +610,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {/* Version history panel */}
               {showHistory && (
                 <Card style={{ padding: spacing.md }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: spacing.sm }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: spacing.sm }}>
                     <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm }}>{t('pack.history.title')}</span>
                     <button onClick={() => setShowHistory(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: palette.subtle, fontSize: typography.size.sm }}>✕</button>
                   </div>
@@ -799,7 +799,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {/* Research updates tab */}
               {rightTab === 'research' && (
                 <Card style={{ padding: spacing.md }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', alignItems: 'center', marginBottom: spacing.sm }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
                     <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs }}>{t('pack.research.title')}</span>
                     <Button variant="ghost" onClick={() => setShowAddResearch(!showAddResearch)}>{t('pack.research.addToggle')}</Button>
                   </div>
@@ -950,7 +950,7 @@ function groupDocsForNavigation(documents: DocView[], t: Translator) {
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: spacing.sm }}>
       <span style={{ color: palette.subtle }}>{k}</span>
       <span>{v}</span>
     </div>

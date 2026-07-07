@@ -77,7 +77,7 @@ export default function PacksListPage() {
       )}
 
       {state === 'ready' && packs.length > 0 && (
-        <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.lg }}>
           {packs.map((p) => (
             <Link key={p.id} href={`/signalkit/packs/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
               <Card>

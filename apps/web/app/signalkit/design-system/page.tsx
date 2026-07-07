@@ -114,7 +114,7 @@ export default function DesignSystemPage() {
       </Section>
 
       <Section title="States">
-        <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: spacing.md, width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: spacing.md, width: '100%' }}>
           <EmptyState title={t('state.empty.title')} body={t('state.empty.body')} />
           <LoadingState label={t('state.loading')} />
           <ErrorState title={t('state.error.title')} body={t('state.error.body')} />

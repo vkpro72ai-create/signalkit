@@ -138,7 +138,7 @@ export function Markdown({
                 }}
               >
                 <div style={{ fontSize: typography.size.sm, color: cc.fg }}>{c.body}</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                   <span style={{ fontSize: 10, color: cc.fg }}>{new Date(c.createdAt).toLocaleDateString()}</span>
                   {c.status === 'open' && onResolveComment && (
                     <button onClick={() => onResolveComment(c.id)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: cc.fg, textDecoration: 'underline' }}>
