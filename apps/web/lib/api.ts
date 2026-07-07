@@ -233,6 +233,38 @@ export const packListApi = {
     apiGet<PackListItem[]>(`/workspaces/${workspaceId}/niches/${nicheId}/packs`),
 };
 
+export interface DocumentCommentView {
+  id: string;
+  authorId: string;
+  body: string;
+  status: string;
+  sectionHeading: string | null;
+  createdAt: string;
+}
+
+export const commentApi = {
+  list: (workspaceId: string, packId: string, documentId: string) =>
+    apiGet<DocumentCommentView[]>(`/workspaces/${workspaceId}/packs/${packId}/documents/${documentId}/comments`),
+  create: (workspaceId: string, packId: string, documentId: string, body: string, sectionHeading?: string) =>
+    apiPost<DocumentCommentView>(`/workspaces/${workspaceId}/packs/${packId}/documents/${documentId}/comments`, { body, sectionHeading }),
+  resolve: (workspaceId: string, commentId: string) =>
+    apiPost<DocumentCommentView>(`/workspaces/${workspaceId}/comments/${commentId}/resolve`),
+  openSummary: (workspaceId: string, packId: string) =>
+    apiGet<{ documentsAffected: number }>(`/workspaces/${workspaceId}/packs/${packId}/comments/open-summary`),
+};
+
+export interface ApplyCommentsResult {
+  documentsAffected: number;
+  documentsUpdated: number;
+  documentsFailed: number;
+  results: Array<{ documentId: string; status: 'updated' | 'failed'; title?: string; commentsResolved?: number; error?: string }>;
+}
+
+export const packApi = {
+  applyComments: (workspaceId: string, packId: string) =>
+    apiPost<ApplyCommentsResult>(`/workspaces/${workspaceId}/packs/${packId}/apply-comments`),
+};
+
 // ── LLM connections (AI Engine) ──────────────────────────────────────────────
 
 export interface LlmConnectionView {

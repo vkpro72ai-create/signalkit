@@ -11,10 +11,11 @@ export class CommentsService {
     documentId: string,
     authorId: string,
     body: string,
+    sectionHeading?: string,
   ) {
     await this.resolvePack(workspaceId, packId);
     return this.prisma.documentComment.create({
-      data: { workspaceId, packId, documentId, authorId, body, status: 'open' },
+      data: { workspaceId, packId, documentId, authorId, body, sectionHeading, status: 'open' },
     });
   }
 
@@ -24,6 +25,16 @@ export class CommentsService {
       where: { packId, documentId },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  /** How many distinct documents in this pack have at least one open comment — drives the "apply comments" button count without fetching every document's comment list. */
+  async openSummary(workspaceId: string, packId: string) {
+    await this.resolvePack(workspaceId, packId);
+    const comments = await this.prisma.documentComment.findMany({
+      where: { packId, workspaceId, status: 'open', documentId: { not: null } },
+      select: { documentId: true },
+    });
+    return { documentsAffected: new Set(comments.map((c) => c.documentId)).size };
   }
 
   async resolve(workspaceId: string, commentId: string, userId: string) {

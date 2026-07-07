@@ -78,7 +78,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'why the idea matters',
       'why now',
       'why this can become a category or defensible company',
-      'why users or customers may switch from current alternatives',
+      'why users or customers may switch from current alternatives, at a headline level only — the detailed switching strategy belongs in Competitive Attack & Switching Strategy, not here',
       'what makes the idea bigger than a feature',
       'what could make investors care',
       'what must be true for this to become a large outcome',
@@ -876,14 +876,13 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
     title: 'Growth & Monetization Pack',
     audience: ['founder', 'growth lead', 'sales lead', 'investor'],
     purpose:
-      'Define positioning, pricing, paywall moments, acquisition channels, retention loops, and switching strategy.',
+      'Define positioning, pricing, paywall moments, acquisition channels, and retention loops. Do not re-derive the switching strategy — it is already defined in Competitive Attack & Switching Strategy; reference it by name instead of repeating it.',
     mustExplain: [
       'who pays',
       'why they pay',
       'when they pay',
       'how users are acquired',
       'what drives retention',
-      'how to steal users from alternatives',
       'how monetization can expand',
     ],
     mustInclude: [
@@ -894,7 +893,6 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'activation moment',
       'retention loops',
       'channels',
-      'switching strategy',
       'expansion revenue',
     ],
   },

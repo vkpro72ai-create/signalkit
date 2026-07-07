@@ -129,7 +129,7 @@ ${input.existingPackNotes || 'None'}
 
 ${
   priorSummary
-    ? `PRIOR LAYERS (already decided in earlier steps of this same pack — stay consistent with them; do not contradict, shrink, or silently repeat them):\n${priorSummary}`
+    ? `PRIOR LAYERS (already decided in earlier steps of this same pack — stay consistent with them; do not contradict, shrink, or silently repeat them). If this step's sections would otherwise re-explain something a listed document already covers, reference that document by its exact title instead of re-deriving the same content:\n${priorSummary}`
     : 'This is the first step of this pack — nothing has been decided yet.'
 }
 
@@ -185,6 +185,67 @@ ${buildStepOutputContract(step)}
 
 REQUIRED SECTION DEFINITIONS FOR THIS STEP:
 ${stableJson(sectionsForStep(step))}
+
+RAW OUTPUT:
+${rawOutput.slice(0, 120000)}
+`,
+  };
+}
+
+/**
+ * Amend ONE already-generated document, incorporating reviewer feedback
+ * (`instructions`, e.g. open comment bodies) while otherwise preserving it.
+ * Used both for the "apply comments" flow and as the V2-aware replacement
+ * for the old (V1-only, broken-for-V2) single-document "Regenerate" button —
+ * called with an empty `instructions` array in that case.
+ */
+export function buildProductPackV2AmendPrompt(
+  document: unknown,
+  instructions: string[],
+): { system: string; user: string } {
+  const feedback =
+    instructions.length > 0
+      ? instructions.map((item, i) => `${i + 1}. ${item}`).join('\n')
+      : 'No specific feedback — just re-confirm this document is internally consistent and well-written; do not change anything unless it is actually wrong or unclear.';
+
+  const user = `
+Amend ONE existing document from a SignalKit Build-Ready Product Pack, in place. Do not turn this into a new document about something else, and do not shrink it.
+
+CURRENT DOCUMENT (JSON):
+${stableJson(document)}
+
+REVIEWER FEEDBACK TO INCORPORATE:
+${feedback}
+
+RULES:
+1. Preserve everything in the current document that the feedback does not require changing — same headings, same order, same level of detail, unless a change is specifically needed.
+2. Only edit the parts the feedback is actually about. Do not rewrite unrelated sections "for consistency" on your own initiative.
+3. Never call this a Preview. It stays part of a Build-Ready Product Pack.
+4. Keep "type" and "layer" exactly as given in the current document.
+5. Every document must keep whatThisIs, whyItExists, howToUse, connections, doneDefinition populated.
+
+Return JSON only, no markdown fences, no commentary, in exactly this shape (the full, updated document):
+${PRODUCT_PACK_V2_DOCUMENT_CONTRACT}
+`;
+
+  return {
+    system: PRODUCT_PACK_V2_SYSTEM_PROMPT,
+    user,
+  };
+}
+
+export function buildProductPackV2AmendRepairPrompt(
+  document: unknown,
+  rawOutput: string,
+): { system: string; user: string } {
+  return {
+    system: PRODUCT_PACK_V2_JSON_REPAIR_SYSTEM_PROMPT,
+    user: `
+Repair this invalid JSON — it should be one amended document from a SignalKit Build-Ready Product Pack, matching this contract:
+${PRODUCT_PACK_V2_DOCUMENT_CONTRACT}
+
+ORIGINAL DOCUMENT BEFORE AMENDMENT (for reference, in case the raw output is unusable and you need to fall back to it with only the smallest necessary fix):
+${stableJson(document)}
 
 RAW OUTPUT:
 ${rawOutput.slice(0, 120000)}

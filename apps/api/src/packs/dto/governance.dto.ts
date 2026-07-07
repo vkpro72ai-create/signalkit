@@ -164,6 +164,11 @@ export class CreateCommentDto {
   @IsString()
   @MinLength(1)
   body!: string;
+
+  @ApiPropertyOptional({ description: 'The `### heading` text of the section this comment is about. Omit for a whole-document comment.' })
+  @IsOptional()
+  @IsString()
+  sectionHeading?: string;
 }
 
 export class RegenerateAffectedDto {

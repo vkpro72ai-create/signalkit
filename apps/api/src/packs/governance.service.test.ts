@@ -45,6 +45,10 @@ function makePrisma(docOverrides: Record<string, unknown> = {}) {
     },
     unresolvedQuestion: { create: vi.fn().mockResolvedValue({ id: 'q1' }) },
     researchUpdate: { findFirst: vi.fn().mockResolvedValue({ id: 'ru1', packId: 'pack1', workspaceId: 'ws1', linkedDocumentIds: ['doc1'] }) },
+    documentComment: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
   };
 }
 
@@ -52,6 +56,8 @@ function makePacks() {
   return {
     runGates: vi.fn().mockResolvedValue({ status: 'passed', passedCount: 5, warnCount: 0, failCount: 0 }),
     regenerateOne: vi.fn().mockResolvedValue('Regenerated body'),
+    isV2Document: vi.fn().mockReturnValue(false),
+    amendDocumentV2: vi.fn().mockResolvedValue({ body: 'Amended body', document: { type: 'product_vision', title: 'Amended' } }),
   };
 }
 
@@ -185,6 +191,86 @@ describe('GovernanceService.regenerateDocument', () => {
   it('refuses regeneration on a locked document', async () => {
     const { svc } = makeService({ status: 'locked' });
     await expect(svc.regenerateDocument('ws1', 'pack1', 'doc1', 'user1')).rejects.toThrow(ForbiddenException);
+  });
+
+  it('amends V2 documents via amendDocumentV2 instead of the legacy regenerateOne, and syncs metadata.document', async () => {
+    const { svc, prisma, packs } = makeService();
+    packs.isV2Document.mockReturnValue(true);
+    await svc.regenerateDocument('ws1', 'pack1', 'doc1', 'user1', ['Please clarify the pricing section']);
+    expect(packs.amendDocumentV2).toHaveBeenCalledWith('ws1', 'pack1', 'doc1', ['Please clarify the pricing section']);
+    expect(packs.regenerateOne).not.toHaveBeenCalled();
+    expect(prisma.productPackDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          body: 'Amended body',
+          metadata: expect.objectContaining({ document: { type: 'product_vision', title: 'Amended' } }),
+        }),
+      }),
+    );
+  });
+});
+
+// ── GovernanceService.applyPackComments ──────────────────────────────────────
+
+describe('GovernanceService.applyPackComments', () => {
+  function makeTwoDocPrisma() {
+    const prisma = makePrisma();
+    const docs: Record<string, ReturnType<typeof makeDoc>> = {
+      doc1: makeDoc({ id: 'doc1' }),
+      doc2: makeDoc({ id: 'doc2', title: 'Market Context' }),
+    };
+    prisma.productPackDocument.findFirst = vi.fn().mockImplementation(({ where }: { where: { id: string } }) =>
+      Promise.resolve(docs[where.id] ?? null),
+    );
+    prisma.documentComment.findMany = vi.fn().mockResolvedValue([
+      { id: 'com1', documentId: 'doc1', body: 'Fix the tone here', sectionHeading: 'Overview', status: 'open' },
+      { id: 'com2', documentId: 'doc2', body: 'Add a competitor', sectionHeading: null, status: 'open' },
+    ]);
+    return prisma;
+  }
+
+  it('groups open comments by document and resolves them after a successful amend', async () => {
+    const prisma = makeTwoDocPrisma();
+    const router = makeRouter();
+    const packs = makePacks();
+    packs.isV2Document.mockReturnValue(true);
+    const svc = new GovernanceService(prisma as unknown as PrismaService, router as unknown as LlmRouterService, packs as unknown as PackService);
+
+    const result = await svc.applyPackComments('ws1', 'pack1', 'user1');
+
+    expect(packs.amendDocumentV2).toHaveBeenCalledWith('ws1', 'pack1', 'doc1', ['On section "Overview": Fix the tone here']);
+    expect(packs.amendDocumentV2).toHaveBeenCalledWith('ws1', 'pack1', 'doc2', ['Add a competitor']);
+    expect(prisma.documentComment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['com1'] } }, data: expect.objectContaining({ status: 'resolved' }) }),
+    );
+    expect(result.documentsAffected).toBe(2);
+    expect(result.documentsUpdated).toBe(2);
+    expect(result.documentsFailed).toBe(0);
+  });
+
+  it('keeps the previous version and continues to the next document when one amend fails', async () => {
+    const prisma = makeTwoDocPrisma();
+    const router = makeRouter();
+    const packs = makePacks();
+    packs.isV2Document.mockReturnValue(true);
+    packs.amendDocumentV2.mockImplementation((_ws: string, _packId: string, documentId: string) =>
+      documentId === 'doc1' ? Promise.reject(new Error('llm_timeout')) : Promise.resolve({ body: 'Amended body', document: { type: 'market_context', title: 'Amended' } }),
+    );
+    const svc = new GovernanceService(prisma as unknown as PrismaService, router as unknown as LlmRouterService, packs as unknown as PackService);
+
+    const result = await svc.applyPackComments('ws1', 'pack1', 'user1');
+
+    // doc1 failed — its comment must NOT be marked resolved, and its body must not have been overwritten.
+    expect(prisma.documentComment.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['com1'] } } }),
+    );
+    expect(prisma.documentComment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['com2'] } }, data: expect.objectContaining({ status: 'resolved' }) }),
+    );
+    expect(result.documentsAffected).toBe(2);
+    expect(result.documentsUpdated).toBe(1);
+    expect(result.documentsFailed).toBe(1);
+    expect(result.results).toContainEqual(expect.objectContaining({ documentId: 'doc1', status: 'failed' }));
   });
 });
 

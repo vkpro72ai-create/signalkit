@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { spacing, typography, radius, border } from '@signalkit/ui';
+import { spacing, typography, radius, border, colorFor } from '@signalkit/ui';
 import type { DocumentStatus } from '@signalkit/shared';
 import {
   Card,
@@ -17,7 +17,17 @@ import {
 } from '../../../../components/ui';
 import { Markdown } from '../../../../components/markdown';
 import { useT } from '../../../../lib/i18n';
-import { apiGet, apiPost, apiPut, firstWorkspaceId } from '../../../../lib/api';
+import {
+  apiGet,
+  apiPost,
+  apiPut,
+  firstWorkspaceId,
+  commentApi,
+  packApi,
+  type DocumentCommentView,
+  type ApplyCommentsResult,
+} from '../../../../lib/api';
+import type { Translator } from '@signalkit/i18n';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -120,14 +130,6 @@ interface ResearchUpdate {
   linkedDocumentIds: string[];
 }
 
-interface DocumentComment {
-  id: string;
-  authorId: string;
-  body: string;
-  status: string;
-  createdAt: string;
-}
-
 interface Assumption {
   id: string;
   text: string;
@@ -188,7 +190,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   const originalBodyRef = useRef('');
 
   // Right panel tabs
-  const [rightTab, setRightTab] = useState<'info' | 'handoff' | 'research' | 'comments'>('info');
+  const [rightTab, setRightTab] = useState<'info' | 'handoff' | 'research'>('info');
 
   // Version history
   const [showHistory, setShowHistory] = useState(false);
@@ -202,10 +204,14 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   const [newResearchType, setNewResearchType] = useState('customer_interview');
   const [newResearchContent, setNewResearchContent] = useState('');
 
-  // Comments
-  const [comments, setComments] = useState<DocumentComment[]>([]);
-  const [newComment, setNewComment] = useState('');
+  // Comments — rendered inline in the reading pane (see Markdown), not a separate tab.
+  const [comments, setComments] = useState<DocumentCommentView[]>([]);
   const [commentBusy, setCommentBusy] = useState(false);
+  const [openCommentsSummary, setOpenCommentsSummary] = useState<{ documentsAffected: number }>({ documentsAffected: 0 });
+
+  // Apply-comments (pack-level, resilient to per-document failure)
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyResult, setApplyResult] = useState<ApplyCommentsResult | null>(null);
 
   // Assumptions
   const [assumptions, setAssumptions] = useState<Assumption[]>([]);
@@ -240,6 +246,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   async function openPack(workspaceId: string, pid: string) {
     const p = await apiGet<Pack>(`/workspaces/${workspaceId}/packs/${pid}`);
     setPack(p);
+    void loadOpenCommentsSummary(workspaceId, pid);
     const firstDoc = p.documents[0];
     if (firstDoc) {
       setSelected(firstDoc.id);
@@ -247,6 +254,12 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
       originalBodyRef.current = firstDoc.body;
       await loadSidePanelData(workspaceId, pid, firstDoc.id);
     }
+  }
+
+  async function loadOpenCommentsSummary(workspaceId: string, pid: string) {
+    try {
+      setOpenCommentsSummary(await commentApi.openSummary(workspaceId, pid));
+    } catch { /* non-fatal */ }
   }
 
   async function loadSidePanelData(workspaceId: string, packId: string, docId: string) {
@@ -259,8 +272,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
       setAssumptions(ass);
     } catch { /* non-fatal */ }
     try {
-      const coms = await apiGet<DocumentComment[]>(`/workspaces/${workspaceId}/packs/${packId}/documents/${docId}/comments`);
-      setComments(coms);
+      setComments(await commentApi.list(workspaceId, packId, docId));
     } catch { /* non-fatal */ }
   }
 
@@ -284,7 +296,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   const doc = pack?.documents.find((d) => d.id === selected) ?? null;
   const isDirty = editBody !== originalBodyRef.current;
   const displayTitle = pack ? normalizePackTitle(pack.metadata?.packTitle || pack.title) : t('nav.packs');
-  const groupedDocs = pack ? groupDocsForNavigation(pack.documents) : [];
+  const groupedDocs = pack ? groupDocsForNavigation(pack.documents, t) : [];
   const qualityGates = pack?.metadata?.qualityGates ?? null;
   const handoff = pack?.metadata?.executionHandoff ?? null;
 
@@ -376,6 +388,31 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
     }
   }
 
+  /** Pack-level: reprocess only the documents that have open comments. Resilient — a
+   * failed document keeps its previous version, and the batch continues past it. */
+  async function applyComments() {
+    if (!ws || !pack) return;
+    setApplyBusy(true);
+    setApplyResult(null);
+    try {
+      const result = await packApi.applyComments(ws, pack.id);
+      setApplyResult(result);
+      const updated = await apiGet<Pack>(`/workspaces/${ws}/packs/${pack.id}`);
+      setPack(updated);
+      if (doc) {
+        const fresh = updated.documents.find((d) => d.id === doc.id);
+        if (fresh) {
+          setEditBody(fresh.body);
+          originalBodyRef.current = fresh.body;
+        }
+        await loadSidePanelData(ws, pack.id, doc.id);
+      }
+      void loadOpenCommentsSummary(ws, pack.id);
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
   // ── Research updates ───────────────────────────────────────────────────────
 
   async function addResearchUpdate() {
@@ -400,24 +437,24 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
   // ── Comments ───────────────────────────────────────────────────────────────
 
-  async function addComment() {
-    if (!ws || !pack || !doc || !newComment.trim()) return;
+  async function addComment(sectionHeading: string, body: string) {
+    if (!ws || !pack || !doc) return;
     setCommentBusy(true);
     try {
-      await apiPost(`/workspaces/${ws}/packs/${pack.id}/documents/${doc.id}/comments`, { body: newComment });
-      const updated = await apiGet<DocumentComment[]>(`/workspaces/${ws}/packs/${pack.id}/documents/${doc.id}/comments`);
-      setComments(updated);
-      setNewComment('');
+      await commentApi.create(ws, pack.id, doc.id, body, sectionHeading);
+      setComments(await commentApi.list(ws, pack.id, doc.id));
+      void loadOpenCommentsSummary(ws, pack.id);
     } finally {
       setCommentBusy(false);
     }
   }
 
   async function resolveComment(id: string) {
-    if (!ws) return;
+    if (!ws || !pack) return;
     try {
-      await apiPost(`/workspaces/${ws}/comments/${id}/resolve`);
+      await commentApi.resolve(ws, id);
       setComments((prev) => prev.map((c) => c.id === id ? { ...c, status: 'resolved' } : c));
+      void loadOpenCommentsSummary(ws, pack.id);
     } catch { /* non-fatal */ }
   }
 
@@ -438,14 +475,18 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ maxWidth: 1400 }}>
+    <div style={{ maxWidth: 1500 }}>
       <PageHeader
         title={displayTitle}
-        subtitle={pack ? `Build-Ready Product Pack · ${pack.depth.replace(/_/g, ' ')} · ${pack.documents.length} documents` : 'Build-Ready Product Pack.'}
+        subtitle={
+          pack
+            ? t('pack.subtitle').replace('{depth}', pack.depth.replace(/_/g, ' ')).replace('{count}', String(pack.documents.length))
+            : t('pack.subtitleFallback')
+        }
         action={
           pack ? (
             <Button variant="secondary" onClick={() => router.push(`/signalkit/exports?packId=${pack.id}`)}>
-              Export pack
+              {t('pack.export')}
             </Button>
           ) : undefined
         }
@@ -455,43 +496,58 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
       {state === 'error' && <ErrorState title={t('state.error.title')} body={t('state.error.body')} action={<Button variant="secondary" onClick={() => void load()}>{t('action.retry')}</Button>} />}
       {state === 'not_found' && (
         <EmptyState
-          title="Pack not found"
-          body="Open an opportunity and generate its Product Pack."
-          action={<Button variant="secondary" onClick={() => router.push('/signalkit/opportunities')}>Go to Opportunities</Button>}
+          title={t('pack.notFound.title')}
+          body={t('pack.notFound.body')}
+          action={<Button variant="secondary" onClick={() => router.push('/signalkit/opportunities')}>{t('pack.notFound.cta')}</Button>}
         />
       )}
 
       {state === 'ready' && pack && (
         <>
           {/* Quality gate row */}
-          <div style={{ display: 'flex', gap: spacing.xs, marginBottom: spacing.md, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: spacing.xs, marginBottom: spacing.md, alignItems: 'center', flexWrap: 'wrap' }}>
             {pack.qualityGate && (
               <>
-                <Badge variant={gateVariant}>Quality gate: {pack.qualityGate.status}</Badge>
-                <Badge variant="success">{pack.qualityGate.passedCount} pass</Badge>
-                {pack.qualityGate.warnCount > 0 && <Badge variant="warning">{pack.qualityGate.warnCount} warn</Badge>}
-                {pack.qualityGate.failCount > 0 && <Badge variant="failed">{pack.qualityGate.failCount} fail</Badge>}
+                <Badge variant={gateVariant}>{t('pack.gate.label')}: {pack.qualityGate.status}</Badge>
+                <Badge variant="success">{pack.qualityGate.passedCount} {t('pack.gate.pass')}</Badge>
+                {pack.qualityGate.warnCount > 0 && <Badge variant="warning">{pack.qualityGate.warnCount} {t('pack.gate.warn')}</Badge>}
+                {pack.qualityGate.failCount > 0 && <Badge variant="failed">{pack.qualityGate.failCount} {t('pack.gate.fail')}</Badge>}
                 {qualityGates && (
                   <>
-                    <Badge variant={qualityGates.structureGate === 'complete' ? 'success' : 'failed'}>Structure: {qualityGates.structureGate}</Badge>
-                    <Badge variant={qualityGates.evidenceGate === 'supported' ? 'success' : 'warning'}>Evidence: {qualityGates.evidenceGate}</Badge>
-                    <Badge variant={qualityGates.safetyGate === 'clear' ? 'success' : 'warning'}>Safety: {qualityGates.safetyGate}</Badge>
+                    <Badge variant={qualityGates.structureGate === 'complete' ? 'success' : 'failed'}>{t('pack.gate.structure')}: {qualityGates.structureGate}</Badge>
+                    <Badge variant={qualityGates.evidenceGate === 'supported' ? 'success' : 'warning'}>{t('pack.gate.evidence')}: {qualityGates.evidenceGate}</Badge>
+                    <Badge variant={qualityGates.safetyGate === 'clear' ? 'success' : 'warning'}>{t('pack.gate.safety')}: {qualityGates.safetyGate}</Badge>
                   </>
                 )}
               </>
             )}
             <div style={{ flex: 1 }} />
+            <Button
+              variant="secondary"
+              onClick={() => void applyComments()}
+              disabled={applyBusy || openCommentsSummary.documentsAffected === 0}
+            >
+              {applyBusy ? t('pack.applyComments.busy') : t('pack.applyComments.button').replace('{count}', String(openCommentsSummary.documentsAffected))}
+            </Button>
             <Button variant={showBlueprint ? 'secondary' : 'ghost'} onClick={() => (showBlueprint ? setShowBlueprint(false) : void loadBlueprint())}>
-              {showBlueprint ? 'Back to documents' : 'Build Blueprint'}
+              {showBlueprint ? t('pack.blueprint.back') : t('pack.blueprint.open')}
             </Button>
           </div>
 
+          {applyResult && (
+            <Card style={{ padding: spacing.sm, marginBottom: spacing.md, background: colorFor('evidence').bg, border: `${border.hairline}px solid ${colorFor('evidence').border}` }}>
+              <span style={{ fontSize: typography.size.sm, color: colorFor('evidence').fg }}>
+                {t('pack.applyComments.resultSummary').replace('{updated}', String(applyResult.documentsUpdated)).replace('{failed}', String(applyResult.documentsFailed))}
+              </span>
+            </Card>
+          )}
+
           {showBlueprint && (
-            <BlueprintPanel blueprint={blueprint} />
+            <BlueprintPanel blueprint={blueprint} t={t} />
           )}
 
           {!showBlueprint && (
-          <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 280px', gap: spacing.lg, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr 240px', gap: spacing.lg, alignItems: 'start' }}>
 
             {/* LEFT — Document navigation */}
             <Card style={{ padding: `${spacing.sm}px 0`, maxHeight: '80vh', overflow: 'auto' }}>
@@ -534,18 +590,18 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {doc && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, padding: `${spacing.xs}px 0` }}>
                   {!editMode ? (
-                    <Button variant="secondary" onClick={enterEdit}>Edit</Button>
+                    <Button variant="secondary" onClick={enterEdit}>{t('pack.toolbar.edit')}</Button>
                   ) : (
                     <>
-                      <Button onClick={() => void saveDocument()} disabled={!isDirty || busy}>Save</Button>
-                      <Button variant="ghost" onClick={cancelEdit}>Cancel</Button>
+                      <Button onClick={() => void saveDocument()} disabled={!isDirty || busy}>{t('action.save')}</Button>
+                      <Button variant="ghost" onClick={cancelEdit}>{t('action.cancel')}</Button>
                     </>
                   )}
-                  <Button variant="ghost" onClick={() => void loadHistory()} disabled={historyBusy}>History</Button>
-                  <Button variant="ghost" onClick={() => void regenerateDoc()} disabled={busy}>Regenerate</Button>
+                  <Button variant="ghost" onClick={() => void loadHistory()} disabled={historyBusy}>{t('pack.toolbar.history')}</Button>
+                  <Button variant="ghost" onClick={() => void regenerateDoc()} disabled={busy}>{t('pack.toolbar.regenerate')}</Button>
                   <div style={{ flex: 1 }} />
                   <span style={{ fontSize: typography.size.xs, color: palette.subtle }}>
-                    {isDirty && editMode ? 'Unsaved changes' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString()}` : `v${doc.version}`}
+                    {isDirty && editMode ? t('pack.toolbar.unsaved') : lastSaved ? t('pack.toolbar.saved').replace('{time}', lastSaved.toLocaleTimeString()) : `v${doc.version}`}
                   </span>
                   <DocumentStatusPill status={doc.status as DocumentStatus} label={doc.status.replace(/_/g, ' ')} />
                 </div>
@@ -555,18 +611,18 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {showHistory && (
                 <Card style={{ padding: spacing.md }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: spacing.sm }}>
-                    <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm }}>Version history</span>
+                    <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm }}>{t('pack.history.title')}</span>
                     <button onClick={() => setShowHistory(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: palette.subtle, fontSize: typography.size.sm }}>✕</button>
                   </div>
                   {versions.length === 0 ? (
-                    <span style={{ color: palette.subtle, fontSize: typography.size.xs }}>No versions yet.</span>
+                    <span style={{ color: palette.subtle, fontSize: typography.size.xs }}>{t('pack.history.empty')}</span>
                   ) : versions.map((v) => (
                     <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, padding: `${spacing.xs}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: typography.size.xs, fontWeight: typography.weight.medium }}>v{v.version} — {v.changeSummary || 'No summary'}</div>
+                        <div style={{ fontSize: typography.size.xs, fontWeight: typography.weight.medium }}>v{v.version} — {v.changeSummary || '—'}</div>
                         <div style={{ fontSize: 10, color: palette.subtle }}>{new Date(v.createdAt).toLocaleString()} · {v.generatedBy}</div>
                       </div>
-                      <Button variant="secondary" onClick={() => void restoreVersion(v.id)}>Restore</Button>
+                      <Button variant="secondary" onClick={() => void restoreVersion(v.id)}>{t('pack.history.restore')}</Button>
                     </div>
                   ))}
                 </Card>
@@ -574,8 +630,18 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
               {/* Editor or Reader */}
               <Card style={{ minHeight: 400 }}>
-                {!doc && <EmptyState title="Select a document" />}
-                {doc && !editMode && <div style={{ padding: spacing.lg }}><Markdown source={doc.body} /></div>}
+                {!doc && <EmptyState title={t('pack.reader.selectDocument')} />}
+                {doc && !editMode && (
+                  <div style={{ padding: spacing.lg }}>
+                    <Markdown
+                      source={doc.body}
+                      comments={comments}
+                      onAddComment={addComment}
+                      onResolveComment={resolveComment}
+                      t={t}
+                    />
+                  </div>
+                )}
                 {doc && editMode && (
                   <textarea
                     value={editBody}
@@ -608,7 +674,6 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                   'info',
                   ...(handoff ? (['handoff'] as const) : []),
                   'research',
-                  'comments',
                 ] as const).map((tab) => (
                   <button
                     key={tab}
@@ -624,11 +689,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                       fontWeight: rightTab === tab ? typography.weight.medium : undefined,
                     }}
                   >
-                    {tab === 'comments'
-                      ? `Comments (${comments.filter(c => c.status === 'open').length})`
-                      : tab === 'handoff'
-                        ? 'Execution Handoff'
-                        : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    {tab === 'handoff' ? t('pack.tabs.handoff') : tab === 'research' ? t('pack.tabs.research') : t('pack.tabs.info')}
                   </button>
                 ))}
               </div>
@@ -637,41 +698,41 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {rightTab === 'info' && doc && (
                 <Card style={{ padding: spacing.md }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm, fontSize: typography.size.xs }}>
-                    <Row k="Status" v={<DocumentStatusPill status={doc.status as DocumentStatus} label={doc.status.replace(/_/g, ' ')} />} />
-                    <Row k="Quality gate" v={doc.qualityGateStatus} />
-                    <Row k="Language" v={doc.language} />
-                    <Row k="Market" v={doc.metadata.market.country ?? 'global'} />
-                    <Row k="Depth" v={doc.metadata.packDepth.replace(/_/g, ' ')} />
-                    <Row k="Vertical" v={doc.metadata.verticalTemplate.replace(/_/g, ' ')} />
-                    <Row k="Confidence" v={doc.metadata.confidence?.level ?? '—'} />
-                    <Row k="Claims" v={String(doc.metadata.claimIds.length)} />
-                    <Row k="Assumptions" v={String(doc.metadata.assumptionIds.length)} />
-                    <Row k="Sources" v={String(doc.metadata.sourceRefIds.length)} />
-                    <Row k="Open questions" v={String(doc.metadata.unresolvedQuestionIds.length)} />
+                    <Row k={t('pack.info.status')} v={<DocumentStatusPill status={doc.status as DocumentStatus} label={doc.status.replace(/_/g, ' ')} />} />
+                    <Row k={t('pack.info.qualityGate')} v={doc.qualityGateStatus} />
+                    <Row k={t('pack.info.language')} v={doc.language} />
+                    <Row k={t('pack.info.market')} v={doc.metadata.market.country ?? t('market.global')} />
+                    <Row k={t('pack.info.depth')} v={doc.metadata.packDepth.replace(/_/g, ' ')} />
+                    <Row k={t('pack.info.vertical')} v={doc.metadata.verticalTemplate.replace(/_/g, ' ')} />
+                    <Row k={t('pack.info.confidence')} v={doc.metadata.confidence?.level ?? '—'} />
+                    <Row k={t('pack.info.claims')} v={String(doc.metadata.claimIds.length)} />
+                    <Row k={t('pack.info.assumptions')} v={String(doc.metadata.assumptionIds.length)} />
+                    <Row k={t('pack.info.sources')} v={String(doc.metadata.sourceRefIds.length)} />
+                    <Row k={t('pack.info.openQuestions')} v={String(doc.metadata.unresolvedQuestionIds.length)} />
                     {qualityGates && (
                       <>
-                        <Row k="Structure gate" v={qualityGates.structureGate} />
-                        <Row k="Evidence gate" v={qualityGates.evidenceGate} />
-                        <Row k="Safety gate" v={qualityGates.safetyGate} />
-                        <Row k="Buildability gate" v={qualityGates.buildabilityGate} />
-                        <Row k="Export gate" v={qualityGates.exportGate} />
+                        <Row k={t('pack.info.structureGate')} v={qualityGates.structureGate} />
+                        <Row k={t('pack.info.evidenceGate')} v={qualityGates.evidenceGate} />
+                        <Row k={t('pack.info.safetyGate')} v={qualityGates.safetyGate} />
+                        <Row k={t('pack.info.buildabilityGate')} v={qualityGates.buildabilityGate} />
+                        <Row k={t('pack.info.exportGate')} v={qualityGates.exportGate} />
                       </>
                     )}
-                    <Row k="Version" v={String(doc.version)} />
+                    <Row k={t('pack.info.version')} v={String(doc.version)} />
                     <div style={{ height: border.hairline, background: palette.line, margin: `${spacing.xs}px 0` }} />
-                    <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs, color: palette.subtle }}>Review</span>
+                    <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs, color: palette.subtle }}>{t('pack.info.review')}</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs }}>
                       {doc.status === 'draft' || doc.status === 'changes_requested' ? (
-                        <Button variant="secondary" onClick={() => void reviewAction('request-review')} disabled={busy}>Request review</Button>
+                        <Button variant="secondary" onClick={() => void reviewAction('request-review')} disabled={busy}>{t('pack.review.requestReview')}</Button>
                       ) : null}
                       {doc.status === 'in_review' ? (
                         <>
-                          <Button variant="secondary" onClick={() => void reviewAction('approve')} disabled={busy}>Approve</Button>
-                          <Button variant="ghost" onClick={() => void reviewAction('request-changes')} disabled={busy}>Request changes</Button>
+                          <Button variant="secondary" onClick={() => void reviewAction('approve')} disabled={busy}>{t('pack.review.approve')}</Button>
+                          <Button variant="ghost" onClick={() => void reviewAction('request-changes')} disabled={busy}>{t('pack.review.requestChanges')}</Button>
                         </>
                       ) : null}
                       {doc.status === 'approved' ? (
-                        <Button variant="secondary" onClick={() => void reviewAction('lock')} disabled={busy}>Lock</Button>
+                        <Button variant="secondary" onClick={() => void reviewAction('lock')} disabled={busy}>{t('pack.review.lock')}</Button>
                       ) : null}
                     </div>
                   </div>
@@ -681,11 +742,11 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {/* Assumptions tracker (shown inside Info tab) */}
               {rightTab === 'info' && assumptions.length > 0 && (
                 <Card style={{ padding: spacing.md }}>
-                  <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs, marginBottom: spacing.xs }}>Assumptions</div>
+                  <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs, marginBottom: spacing.xs }}>{t('pack.assumptions.title')}</div>
                   {assumptions.slice(0, 8).map((a) => (
                     <div key={a.id} style={{ marginBottom: spacing.sm, paddingBottom: spacing.xs, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
                       <div style={{ fontSize: 10, color: VALIDATION_COLOR[a.validationStatus] ?? palette.subtle, marginBottom: 2 }}>
-                        {a.validationStatus.replace(/_/g, ' ')} · {a.impactIfWrong} impact
+                        {a.validationStatus.replace(/_/g, ' ')} · {a.impactIfWrong} {t('pack.assumptions.impact')}
                       </div>
                       <div style={{ fontSize: typography.size.xs, marginBottom: spacing.xs }}>{a.text}</div>
                       <select
@@ -705,14 +766,15 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {rightTab === 'handoff' && handoff && (
                 <Card style={{ padding: spacing.md }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm, fontSize: typography.size.xs }}>
-                    <Row k="Mode" v={handoff.mode} />
-                    <Row k="Qira draft" v={`${handoff.qiraBacklogDraft.epics.length} epics · ${handoff.qiraBacklogDraft.sprints.length} sprints · ${handoff.qiraBacklogDraft.tasks.length} tasks`} />
-                    <Row k="AI prompts" v={String(handoff.aiAgentPromptBundleDraft.length)} />
+                    <p style={{ color: palette.subtle, margin: 0 }}>{t('pack.handoff.description')}</p>
+                    <Row k={t('pack.handoff.mode')} v={handoff.mode} />
+                    <Row k={t('pack.handoff.qiraDraft')} v={`${handoff.qiraBacklogDraft.epics.length} · ${handoff.qiraBacklogDraft.sprints.length} sprints · ${handoff.qiraBacklogDraft.tasks.length}`} />
+                    <Row k={t('pack.handoff.aiPrompts')} v={String(handoff.aiAgentPromptBundleDraft.length)} />
                     <div style={{ height: border.hairline, background: palette.line, margin: `${spacing.xs}px 0` }} />
-                    <div style={{ fontWeight: typography.weight.medium }}>Qira Draft</div>
+                    <div style={{ fontWeight: typography.weight.medium }}>{t('pack.handoff.qiraHeading')}</div>
                     <div style={{ color: palette.subtle }}>{handoff.qiraBacklogDraft.projectDescription}</div>
                     <div>
-                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>Epics</div>
+                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>{t('pack.handoff.epicsHeading')}</div>
                       {handoff.qiraBacklogDraft.epics.map((epic) => (
                         <div key={epic.title} style={{ marginBottom: spacing.xs }}>
                           <div>{epic.title}</div>
@@ -721,7 +783,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                       ))}
                     </div>
                     <div>
-                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>AI Agent Prompts</div>
+                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>{t('pack.handoff.aiPromptsHeading')}</div>
                       {handoff.aiAgentPromptBundleDraft.map((prompt) => (
                         <details key={prompt.title} style={{ marginBottom: spacing.xs }}>
                           <summary style={{ cursor: 'pointer' }}>{prompt.title}</summary>
@@ -738,39 +800,39 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
               {rightTab === 'research' && (
                 <Card style={{ padding: spacing.md }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
-                    <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs }}>Research updates</span>
-                    <Button variant="ghost" onClick={() => setShowAddResearch(!showAddResearch)}>+ Add</Button>
+                    <span style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs }}>{t('pack.research.title')}</span>
+                    <Button variant="ghost" onClick={() => setShowAddResearch(!showAddResearch)}>{t('pack.research.addToggle')}</Button>
                   </div>
 
                   {showAddResearch && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, marginBottom: spacing.md, padding: spacing.sm, background: palette.canvas, borderRadius: radius.sm }}>
                       <input
-                        placeholder="Title"
+                        placeholder={t('pack.research.titlePlaceholder')}
                         value={newResearchTitle}
                         onChange={(e) => setNewResearchTitle(e.target.value)}
                         style={{ ...inputStyle }}
                       />
                       <select value={newResearchType} onChange={(e) => setNewResearchType(e.target.value)} style={{ ...sel }}>
-                        {['customer_interview', 'competitor_note', 'landing_result', 'survey_result', 'pricing_feedback', 'legal_note', 'local_market_note', 'investor_feedback', 'internal_team_note', 'ai_agent_implementation_feedback'].map((t) => (
-                          <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+                        {['customer_interview', 'competitor_note', 'landing_result', 'survey_result', 'pricing_feedback', 'legal_note', 'local_market_note', 'investor_feedback', 'internal_team_note', 'ai_agent_implementation_feedback'].map((rt) => (
+                          <option key={rt} value={rt}>{rt.replace(/_/g, ' ')}</option>
                         ))}
                       </select>
                       <textarea
-                        placeholder="Content"
+                        placeholder={t('pack.research.contentPlaceholder')}
                         value={newResearchContent}
                         onChange={(e) => setNewResearchContent(e.target.value)}
                         rows={3}
                         style={{ ...inputStyle, fontFamily: 'inherit', resize: 'vertical' }}
                       />
                       <div style={{ display: 'flex', gap: spacing.xs }}>
-                        <Button onClick={() => void addResearchUpdate()} disabled={commentBusy || !newResearchTitle.trim()}>Add</Button>
-                        <Button variant="ghost" onClick={() => setShowAddResearch(false)}>Cancel</Button>
+                        <Button onClick={() => void addResearchUpdate()} disabled={commentBusy || !newResearchTitle.trim()}>{t('pack.research.addButton')}</Button>
+                        <Button variant="ghost" onClick={() => setShowAddResearch(false)}>{t('pack.research.cancelButton')}</Button>
                       </div>
                     </div>
                   )}
 
                   {researchUpdates.length === 0 && !showAddResearch && (
-                    <span style={{ fontSize: typography.size.xs, color: palette.subtle }}>No research updates yet.</span>
+                    <span style={{ fontSize: typography.size.xs, color: palette.subtle }}>{t('pack.research.empty')}</span>
                   )}
                   {researchUpdates.map((ru) => (
                     <div key={ru.id} style={{ marginBottom: spacing.sm, paddingBottom: spacing.sm, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
@@ -779,37 +841,6 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                       {ru.content && <div style={{ fontSize: typography.size.xs, marginTop: spacing.xs, color: palette.subtle }}>{ru.content.slice(0, 120)}{ru.content.length > 120 ? '…' : ''}</div>}
                     </div>
                   ))}
-                </Card>
-              )}
-
-              {/* Comments tab */}
-              {rightTab === 'comments' && (
-                <Card style={{ padding: spacing.md }}>
-                  <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.xs, marginBottom: spacing.sm }}>Comments</div>
-                  {comments.map((c) => (
-                    <div key={c.id} style={{ marginBottom: spacing.sm, paddingBottom: spacing.sm, borderBottom: `${border.hairline}px solid ${palette.line}`, opacity: c.status === 'resolved' ? 0.5 : 1 }}>
-                      <div style={{ fontSize: typography.size.xs }}>{c.body}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                        <span style={{ fontSize: 10, color: palette.subtle }}>{new Date(c.createdAt).toLocaleDateString()}</span>
-                        {c.status === 'open' && (
-                          <button onClick={() => void resolveComment(c.id)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: palette.subtle }}>Resolve</button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {comments.filter(c => c.status === 'open').length === 0 && (
-                    <span style={{ fontSize: typography.size.xs, color: palette.subtle, display: 'block', marginBottom: spacing.sm }}>No open comments.</span>
-                  )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs }}>
-                    <textarea
-                      placeholder="Add a comment…"
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      rows={2}
-                      style={{ ...inputStyle, fontFamily: 'inherit', resize: 'vertical' }}
-                    />
-                    <Button onClick={() => void addComment()} disabled={commentBusy || !newComment.trim()}>Add comment</Button>
-                  </div>
                 </Card>
               )}
             </div>
@@ -823,13 +854,13 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
 // ── Build Blueprint panel ───────────────────────────────────────────────────
 
-function BlueprintPanel({ blueprint }: { blueprint: BlueprintView | null }) {
-  if (!blueprint) return <LoadingState label="Loading build blueprint…" />;
+function BlueprintPanel({ blueprint, t }: { blueprint: BlueprintView | null; t: Translator }) {
+  if (!blueprint) return <LoadingState label={t('pack.blueprint.loading')} />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
       <Card style={{ padding: spacing.lg }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: spacing.sm }}>
-          <div style={{ color: palette.subtle, fontSize: typography.size.xs }}>Build Readiness (separate score)</div>
+          <div style={{ color: palette.subtle, fontSize: typography.size.xs }}>{t('pack.blueprint.readiness')}</div>
           <div style={{ fontSize: typography.size.xl, fontWeight: typography.weight.bold }}>{blueprint.buildReadinessScore}/100</div>
           <Badge variant={blueprint.buildReadinessScore >= 70 ? 'success' : 'warning'}>{blueprint.buildReadinessLevel}</Badge>
         </div>
@@ -848,7 +879,7 @@ function BlueprintPanel({ blueprint }: { blueprint: BlueprintView | null }) {
       </Card>
 
       <Card style={{ padding: spacing.lg }}>
-        <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm, marginBottom: spacing.sm }}>Screen contracts ({blueprint.screenContracts.length})</div>
+        <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm, marginBottom: spacing.sm }}>{t('pack.blueprint.screenContracts')} ({blueprint.screenContracts.length})</div>
         {blueprint.screenContracts.map((s) => {
           const kinds = s.states.map((st) => st.kind);
           const hasStates = ['empty', 'loading', 'failed'].every((r) => kinds.includes(r));
@@ -856,11 +887,11 @@ function BlueprintPanel({ blueprint }: { blueprint: BlueprintView | null }) {
             <div key={s.name} style={{ padding: `${spacing.sm}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
               <div style={{ display: 'flex', gap: spacing.xs, alignItems: 'center' }}>
                 <span style={{ fontSize: typography.size.sm, fontWeight: typography.weight.medium }}>{s.name}</span>
-                <Badge variant={hasStates ? 'success' : 'failed'}>{hasStates ? 'states ✓' : 'missing states'}</Badge>
+                <Badge variant={hasStates ? 'success' : 'failed'}>{hasStates ? t('pack.blueprint.statesOk') : t('pack.blueprint.statesMissing')}</Badge>
                 <span style={{ fontSize: typography.size.xs, color: palette.subtle }}>→ {s.primaryAction}</span>
               </div>
               <div style={{ fontSize: typography.size.xs, color: palette.subtle, marginTop: 2 }}>
-                Backend: {s.backendDependencies.join(', ') || 'frontend-only'}
+                {t('pack.blueprint.backend')}: {s.backendDependencies.join(', ') || t('pack.blueprint.frontendOnly')}
               </div>
             </div>
           );
@@ -868,18 +899,18 @@ function BlueprintPanel({ blueprint }: { blueprint: BlueprintView | null }) {
       </Card>
 
       <Card style={{ padding: spacing.lg }}>
-        <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm, marginBottom: spacing.sm }}>API → Screen map</div>
+        <div style={{ fontWeight: typography.weight.medium, fontSize: typography.size.sm, marginBottom: spacing.sm }}>{t('pack.blueprint.apiScreenMap')}</div>
         {blueprint.apiToScreenMap.map((m, i) => (
           <div key={i} style={{ fontSize: typography.size.xs, padding: `${spacing.xs}px 0`, borderBottom: `${border.hairline}px solid ${palette.line}` }}>
-            <strong>{m.screen}</strong>: reads {m.endpoints.map((e) => `${e.method} ${e.path}`).join(', ') || '—'}; writes {m.actions.map((a) => `${a.method} ${a.path}`).join(', ') || '—'}
+            <strong>{m.screen}</strong>: {t('pack.blueprint.reads')} {m.endpoints.map((e) => `${e.method} ${e.path}`).join(', ') || '—'}; {t('pack.blueprint.writes')} {m.actions.map((a) => `${a.method} ${a.path}`).join(', ') || '—'}
           </div>
         ))}
       </Card>
 
       <Card style={{ padding: spacing.lg }}>
         <div style={{ display: 'flex', gap: spacing.xs, alignItems: 'center', marginBottom: spacing.sm }}>
-          <Badge variant="risk">DO NOT BUILD</Badge>
-          <span style={{ fontSize: typography.size.xs, color: palette.subtle }}>AI agents & developers must not implement these.</span>
+          <Badge variant="risk">{t('pack.blueprint.doNotBuild')}</Badge>
+          <span style={{ fontSize: typography.size.xs, color: palette.subtle }}>{t('pack.blueprint.doNotBuildCaption')}</span>
         </div>
         <ul style={{ margin: 0, paddingLeft: spacing.md, fontSize: typography.size.xs }}>
           {blueprint.doNotBuild.map((d, i) => <li key={i} style={{ marginBottom: spacing.xs }}><strong>{d.item}</strong> — {d.reason}</li>)}
@@ -895,16 +926,16 @@ function normalizePackTitle(title: string): string {
   return /preview/i.test(title) ? 'Build-Ready Product Pack' : title;
 }
 
-function groupDocsForNavigation(documents: DocView[]) {
+function groupDocsForNavigation(documents: DocView[], t: Translator) {
   const order: Array<{ key: 'vision' | 'build' | 'execution' | 'evidence'; title: string }> = [
-    { key: 'vision', title: 'Vision' },
-    { key: 'build', title: 'Build' },
-    { key: 'execution', title: 'Execution' },
-    { key: 'evidence', title: 'Evidence' },
+    { key: 'vision', title: t('pack.groups.vision') },
+    { key: 'build', title: t('pack.groups.build') },
+    { key: 'execution', title: t('pack.groups.execution') },
+    { key: 'evidence', title: t('pack.groups.evidence') },
   ];
   const fallback = documents.every((doc) => !doc.metadata?.layer);
   if (fallback) {
-    return [{ key: 'build', title: 'Documents', documents, startIndex: 0 }] as const;
+    return [{ key: 'build', title: t('pack.groups.documents'), documents, startIndex: 0 }] as const;
   }
   let startIndex = 0;
   return order

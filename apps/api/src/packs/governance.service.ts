@@ -142,12 +142,19 @@ export class GovernanceService {
     });
   }
 
-  /** Regenerate document via LLM, creating a version for the old content first. */
+  /**
+   * Regenerate document via LLM, creating a version for the old content
+   * first. V2 documents (the current pipeline) are amended in place via
+   * `PackService.amendDocumentV2` with no specific feedback — `regenerateOne`
+   * only understands the legacy V1 template system and throws for V2
+   * section keys, so it's kept only for any pre-V2 legacy packs.
+   */
   async regenerateDocument(
     workspaceId: string,
     packId: string,
     documentId: string,
     userId: string,
+    instructions: string[] = [],
   ) {
     const doc = await this.resolveDocument(workspaceId, packId, documentId);
 
@@ -155,7 +162,9 @@ export class GovernanceService {
       throw new ForbiddenException('Document is locked.');
     }
 
-    const newBody = await this.packs.regenerateOne(workspaceId, packId, documentId);
+    const isV2 = this.packs.isV2Document(doc);
+    const amendResult = isV2 ? await this.packs.amendDocumentV2(workspaceId, packId, documentId, instructions) : null;
+    const newBody = amendResult ? amendResult.body : await this.packs.regenerateOne(workspaceId, packId, documentId);
 
     const nextVersion = (doc.version ?? 0) + 1;
     await this.prisma.documentVersion.create({
@@ -165,7 +174,7 @@ export class GovernanceService {
         workspaceId,
         version: nextVersion,
         body: newBody,
-        changeSummary: 'Regenerated',
+        changeSummary: instructions.length > 0 ? 'Regenerated with reviewer feedback' : 'Regenerated',
         authorId: userId,
         generatedBy: 'llm',
         affectedClaimIds: [] as unknown as Prisma.InputJsonValue,
@@ -173,13 +182,63 @@ export class GovernanceService {
       },
     });
 
+    // Keep metadata.document in sync with the new body for V2 docs — otherwise
+    // a second amend would re-read the pre-amendment JSON as "current" and
+    // silently discard the first amendment's changes.
+    const nextMetadata = amendResult ? { ...(doc.metadata as Record<string, unknown>), document: amendResult.document } : doc.metadata;
+
     const updated = await this.prisma.productPackDocument.update({
       where: { id: documentId },
-      data: { body: newBody, version: nextVersion, updatedAt: new Date() },
+      data: { body: newBody, version: nextVersion, updatedAt: new Date(), metadata: nextMetadata as unknown as Prisma.InputJsonValue },
     });
 
     await this.refreshQualityGates(workspaceId, packId);
     return updated;
+  }
+
+  /**
+   * Reprocess only the documents that have open comments, incorporating
+   * each document's own comment text via `amendDocumentV2`. Runs
+   * sequentially and best-effort per document — a failure on one document
+   * leaves its previous version untouched (regenerateDocument only
+   * overwrites after a successful amend) and processing continues with the
+   * rest, mirroring `regenerateAffected`/`regenerateWeakSections` below.
+   */
+  async applyPackComments(workspaceId: string, packId: string, userId: string) {
+    const openComments = await this.prisma.documentComment.findMany({
+      where: { packId, workspaceId, status: 'open', documentId: { not: null } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const byDocument = new Map<string, typeof openComments>();
+    for (const comment of openComments) {
+      if (!comment.documentId) continue;
+      const list = byDocument.get(comment.documentId) ?? [];
+      list.push(comment);
+      byDocument.set(comment.documentId, list);
+    }
+
+    const results: unknown[] = [];
+    for (const [documentId, docComments] of byDocument) {
+      const instructions = docComments.map((c) => (c.sectionHeading ? `On section "${c.sectionHeading}": ${c.body}` : c.body));
+      try {
+        const updated = await this.regenerateDocument(workspaceId, packId, documentId, userId, instructions);
+        await this.prisma.documentComment.updateMany({
+          where: { id: { in: docComments.map((c) => c.id) } },
+          data: { status: 'resolved', resolvedAt: new Date(), resolvedBy: userId },
+        });
+        results.push({ documentId, status: 'updated', title: updated.title, commentsResolved: docComments.length });
+      } catch (e) {
+        results.push({ documentId, status: 'failed', error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    return {
+      documentsAffected: byDocument.size,
+      documentsUpdated: results.filter((r) => (r as { status: string }).status === 'updated').length,
+      documentsFailed: results.filter((r) => (r as { status: string }).status === 'failed').length,
+      results,
+    };
   }
 
   /** Regenerate all documents linked to a research update. */

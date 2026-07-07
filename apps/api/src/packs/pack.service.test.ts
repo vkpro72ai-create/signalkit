@@ -590,3 +590,96 @@ describe('PackService', () => {
     expect(updatedPackArgs.title).toBe('Build-Ready Product Pack');
   });
 });
+
+// ── PackService.amendDocumentV2 / isV2Document ───────────────────────────────
+
+const VALID_V2_DOCUMENT = {
+  type: 'product_vision',
+  layer: 'build',
+  title: 'Product Vision',
+  audience: ['founder'],
+  purpose: 'p',
+  whatThisIs: 'w',
+  whyItExists: 'w',
+  howToUse: 'h',
+  connections: [],
+  doneDefinition: ['d'],
+  sections: [
+    { heading: 'Overview', content: 'c', examples: [], implementationNotes: [], assumptions: [], risks: [], evidenceRefs: [], sourceNeeds: [] },
+  ],
+  acceptanceCriteria: ['a'],
+};
+
+function makeAmendPrisma(docMetadata: Record<string, unknown> = { document: VALID_V2_DOCUMENT }) {
+  const doc = { id: 'doc1', packId: 'pk1', docType: 'product_vision', title: 'Product Vision', language: 'en', metadata: docMetadata };
+  const pack = { id: 'pk1', workspaceId: 'w1', projectId: 'p1', primaryLanguage: 'en' };
+  return {
+    prisma: {
+      productPackDocument: { findFirst: vi.fn().mockResolvedValue(doc) },
+      productDocumentPack: { findFirst: vi.fn().mockResolvedValue(pack) },
+    } as unknown as PrismaService,
+    doc,
+    pack,
+  };
+}
+
+describe('PackService.isV2Document', () => {
+  it('is true only when metadata.document is a complete, valid V2 document', () => {
+    const { router } = makeRouter();
+    const svc = new PackService({} as PrismaService, router);
+    expect(svc.isV2Document({ metadata: { document: VALID_V2_DOCUMENT } })).toBe(true);
+    expect(svc.isV2Document({ metadata: {} })).toBe(false);
+    expect(svc.isV2Document({ metadata: null })).toBe(false);
+    expect(svc.isV2Document({ metadata: { document: { title: 'incomplete' } } })).toBe(false);
+  });
+});
+
+describe('PackService.amendDocumentV2', () => {
+  it('amends a document incorporating instructions, preserving type/layer, and returns a matching markdown body', async () => {
+    const { prisma } = makeAmendPrisma();
+    const amended = { ...VALID_V2_DOCUMENT, title: 'Product Vision (updated)', sections: [{ ...VALID_V2_DOCUMENT.sections[0], content: 'updated content' }] };
+    const run = vi.fn().mockResolvedValueOnce(makeLlmResult(JSON.stringify(amended)));
+    const { router } = makeRouter(run);
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.amendDocumentV2('w1', 'pk1', 'doc1', ['Please clarify the pricing section']);
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(result.document.title).toBe('Product Vision (updated)');
+    expect(result.document.type).toBe('product_vision');
+    expect(result.body).toContain('Product Vision (updated)');
+    expect(result.body).toContain('updated content');
+  });
+
+  it('falls back to one repair call on invalid JSON, then throws if the repair also fails', async () => {
+    const { prisma } = makeAmendPrisma();
+    const run = vi.fn()
+      .mockResolvedValueOnce(makeLlmResult('not json'))
+      .mockResolvedValueOnce(makeLlmResult('still not json'));
+    const { router } = makeRouter(run);
+    const svc = new PackService(prisma, router);
+
+    await expect(svc.amendDocumentV2('w1', 'pk1', 'doc1', [])).rejects.toThrow();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers via the repair call when only the first attempt is invalid', async () => {
+    const { prisma } = makeAmendPrisma();
+    const run = vi.fn()
+      .mockResolvedValueOnce(makeLlmResult('not json'))
+      .mockResolvedValueOnce(makeLlmResult(JSON.stringify(VALID_V2_DOCUMENT)));
+    const { router } = makeRouter(run);
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.amendDocumentV2('w1', 'pk1', 'doc1', []);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(result.document.title).toBe('Product Vision');
+  });
+
+  it('refuses to amend a legacy (non-V2) document rather than silently producing wrong output', async () => {
+    const { prisma } = makeAmendPrisma({});
+    const { router } = makeRouter();
+    const svc = new PackService(prisma, router);
+    await expect(svc.amendDocumentV2('w1', 'pk1', 'doc1', [])).rejects.toThrow();
+  });
+});

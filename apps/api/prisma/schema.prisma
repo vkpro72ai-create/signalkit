@@ -785,19 +785,22 @@ model ResearchUpdate {
 }
 
 model DocumentComment {
-  id           String    @id @default(cuid())
-  workspaceId  String
-  projectId    String?
-  packId       String
-  documentId   String?
-  claimId      String?
-  assumptionId String?
-  authorId     String
-  body         String
-  status       String    @default("open")
-  createdAt    DateTime  @default(now())
-  resolvedAt   DateTime?
-  resolvedBy   String?
+  id            String    @id @default(cuid())
+  workspaceId   String
+  projectId     String?
+  packId        String
+  documentId    String?
+  claimId       String?
+  assumptionId  String?
+  // Which document section (by its `### heading` text) this comment is
+  // about. Null = whole-document comment (pre-existing behavior).
+  sectionHeading String?
+  authorId      String
+  body          String
+  status        String    @default("open")
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
+  resolvedBy    String?
 
   @@index([packId])
   @@index([documentId])

@@ -233,7 +233,7 @@ export class GovernanceController {
     @Body() dto: CreateCommentDto,
     @Req() req: AuthReq,
   ) {
-    return this.comments.create(ws, packId, docId, req.user.sub, dto.body);
+    return this.comments.create(ws, packId, docId, req.user.sub, dto.body, dto.sectionHeading);
   }
 
   @Get('packs/:packId/documents/:documentId/comments')
@@ -245,6 +245,16 @@ export class GovernanceController {
     @Param('documentId') docId: string,
   ) {
     return this.comments.list(ws, packId, docId);
+  }
+
+  @Get('packs/:packId/comments/open-summary')
+  @RequirePermissions('pack:read')
+  @ApiOperation({ summary: 'Count how many documents in this pack have open comments' })
+  openCommentSummary(
+    @Param('workspaceId') ws: string,
+    @Param('packId') packId: string,
+  ) {
+    return this.comments.openSummary(ws, packId);
   }
 
   @Post('comments/:commentId/resolve')
@@ -303,5 +313,16 @@ export class GovernanceController {
     @Req() req: AuthReq,
   ) {
     return this.gov.regenerateWeakSections(ws, packId, req.user.sub);
+  }
+
+  @Post('packs/:packId/apply-comments')
+  @RequirePermissions('pack:generate')
+  @ApiOperation({ summary: 'Reprocess only the documents that have open comments, incorporating the feedback' })
+  applyComments(
+    @Param('workspaceId') ws: string,
+    @Param('packId') packId: string,
+    @Req() req: AuthReq,
+  ) {
+    return this.gov.applyPackComments(ws, packId, req.user.sub);
   }
 }
