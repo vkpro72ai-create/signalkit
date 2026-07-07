@@ -5,8 +5,8 @@
 #
 # What this does:
 #   • Exposes the API on 127.0.0.1:4000 so the host proxy can reach it
+#   • Exposes the web app on 127.0.0.1:3000 so the host proxy can reach it
 #   • Disables the bundled `caddy` container (would conflict on :80/:443)
-#   • Disables the `web` container (API-only deployment for mobile APK)
 #
 # Usage:
 #   docker compose \
@@ -15,19 +15,18 @@
 #     --env-file .env.production \
 #     up -d
 #
-# The host Caddy config should proxy api.YOUR_DOMAIN to http://127.0.0.1:4000
+# The host Caddy config proxies signalkit.YOUR_DOMAIN to http://127.0.0.1:3000
+# and api.YOUR_DOMAIN to http://127.0.0.1:4000
 
 services:
   api:
     ports:
       - "127.0.0.1:4000:4000"
 
+  # web already publishes 127.0.0.1:3000 in docker-compose.production.yml —
+  # nothing to add here besides disabling the bundled Caddy below.
+
   # Disable the bundled Caddy — the host reverse proxy handles TLS.
   caddy:
     profiles:
       - caddy-disabled
-
-  # Disable the web container — not needed for mobile APK acceptance.
-  web:
-    profiles:
-      - web-disabled
