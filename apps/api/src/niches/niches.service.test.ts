@@ -36,6 +36,7 @@ function makeDeps(signals: unknown[]) {
       create: nicheCreate,
       findFirst: vi.fn().mockResolvedValue({ id: 'n1', projectId: 'p1', workspaceId: 'w1', language: 'tr', title: 'Clinic AI Inbox' }),
       findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     },
     evidenceItem: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -146,6 +147,21 @@ describe('NichesService', () => {
     const userPrompt = router.run.mock.calls[0]![0].messages[1].content;
     expect(systemPrompt).toMatch(/output language is only|not evidence of the target market/i);
     expect(userPrompt).toContain('this is only the language to write in');
+  });
+
+  it('refuses to re-run discovery on a project with existing niches unless confirmReplace is set', async () => {
+    const { prisma, evidence, router } = makeDeps([]);
+    (prisma.niche.count as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+
+    await expect(new NichesService(prisma, evidence, router).discover('w1', 'p1')).rejects.toMatchObject({
+      response: { code: 'existing_niches_require_confirmation', existingNicheCount: 3 },
+    });
+    expect(router.run).not.toHaveBeenCalled();
+    expect(prisma.niche.deleteMany).not.toHaveBeenCalled();
+
+    await new NichesService(prisma, evidence, router).discover('w1', 'p1', { confirmReplace: true });
+    expect(router.run).toHaveBeenCalledTimes(1);
+    expect(prisma.niche.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'p1' } });
   });
 
   it('anchors discovery on the project goal with a prominent, labeled block', async () => {

@@ -100,6 +100,16 @@ export default function OpportunitiesPage() {
 
   async function discover() {
     if (!ws || !pid) return;
+    // Discovery replaces every existing opportunity in this project (and
+    // cascades to delete any Product Document Packs built on them) — it does
+    // not add to the list. Confirm before throwing away real work.
+    if (opportunities.length > 0) {
+      const warned = window.confirm(
+        `This project already has ${opportunities.length} opportunit${opportunities.length === 1 ? 'y' : 'ies'}. ` +
+          'Running discovery again will permanently delete them and any Product Document Packs built from them. Continue?',
+      );
+      if (!warned) return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -120,6 +130,7 @@ export default function OpportunitiesPage() {
         language,
         investorLens,
         mode: 'find_opportunities',
+        confirmReplace: opportunities.length > 0,
       });
       applyDiscoveryResult(result);
     } catch (e) {

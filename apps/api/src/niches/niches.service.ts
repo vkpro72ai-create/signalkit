@@ -89,6 +89,22 @@ export class NichesService {
     userId?: string,
   ) {
     const project = await this.requireProject(workspaceId, projectId);
+
+    // Discovery is a full replace, not an append (see the deleteMany below) —
+    // it cascades to delete every Product Document Pack built on the
+    // existing niches too. Require an explicit confirmation once there's
+    // something real to lose, instead of silently wiping it on re-run.
+    if (!dto.confirmReplace) {
+      const existingCount = await this.prisma.niche.count({ where: { projectId } });
+      if (existingCount > 0) {
+        throw new BadRequestException({
+          code: 'existing_niches_require_confirmation',
+          message: `This project already has ${existingCount} opportunit${existingCount === 1 ? 'y' : 'ies'}. Running discovery again will permanently delete them and any Product Document Packs built from them.`,
+          existingNicheCount: existingCount,
+        });
+      }
+    }
+
     const signals = await this.prisma.trendSignal.findMany({ where: { workspaceId, projectId } });
     const language = normalizeLocale(dto.language ?? project.defaultOutputLanguage ?? project.marketLanguage ?? 'en');
     const market = resolveDiscoveryMarket(dto, project);

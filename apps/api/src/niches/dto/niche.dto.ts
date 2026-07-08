@@ -87,6 +87,14 @@ export class DiscoverNichesDto {
   @IsOptional()
   @IsString()
   marketScope?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Must be true to re-run discovery on a project that already has opportunities — discovery replaces all existing niches (and cascades to their Product Document Packs), it does not add to them.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  confirmReplace?: boolean;
 }
 
 export class CompareMarketsDto {

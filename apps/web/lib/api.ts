@@ -181,6 +181,7 @@ export interface DiscoverOpportunitiesInput {
   language?: string;
   role?: string;
   mode?: 'find_opportunities';
+  confirmReplace?: boolean;
 }
 
 export interface DiscoverOpportunitiesResult {

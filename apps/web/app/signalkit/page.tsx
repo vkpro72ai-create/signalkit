@@ -106,9 +106,19 @@ export default function SignalKitHome() {
 
   async function findOpportunities() {
     if (!ws || !project) return;
+    // Discovery replaces every existing opportunity in this project (and
+    // cascades to delete any Product Document Packs built on them) — the
+    // "Rescan" button next to the table looks harmless but is destructive.
+    if (opportunities.length > 0) {
+      const warned = window.confirm(
+        `This project already has ${opportunities.length} opportunit${opportunities.length === 1 ? 'y' : 'ies'}. ` +
+          'Rescanning will permanently delete them and any Product Document Packs built from them. Continue?',
+      );
+      if (!warned) return;
+    }
     setBusy(true);
     try {
-      await opportunityApi.discover(ws.id, project.id);
+      await opportunityApi.discover(ws.id, project.id, { confirmReplace: opportunities.length > 0 });
       await load();
     } finally {
       setBusy(false);
