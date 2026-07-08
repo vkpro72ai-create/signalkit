@@ -95,3 +95,18 @@ a {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* ── Product Pack page: mobile Deliverable Hub vs desktop reader ─────────
+ * Both trees mount (no window-width JS, no hydration flicker) — the same
+ * 900px cutoff as the off-canvas sidebar above decides which is visible, so
+ * nav and page content switch to "mobile mode" together. */
+@media (max-width: 900px) {
+  .pack-reader-desktop {
+    display: none !important;
+  }
+}
+@media (min-width: 901px) {
+  .pack-deliverable-hub {
+    display: none !important;
+  }
+}
