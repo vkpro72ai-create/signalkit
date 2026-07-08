@@ -39,8 +39,20 @@ export type VerticalTemplate =
   | 'creator_economy_tool'
   | 'internal_enterprise_tool';
 
-/** The 27 canonical document types in a full pack. */
+/**
+ * Document types in a pack.
+ *
+ * The first 27 are the canonical REQUIRED set (Sessions 1–13). Session 14 adds
+ * optional Breakout/Build-Blueprint document types which are NOT part of the
+ * required 27 — they are appended to build-oriented depths so existing packs,
+ * quality gates and exports remain backwards-compatible.
+ */
 export type DocumentType =
+  | CanonicalDocumentType
+  | BlueprintDocumentType;
+
+/** The 27 canonical document types (the required spine). */
+export type CanonicalDocumentType =
   | 'product_vision'
   | 'market_context'
   | 'target_audience_icp'
@@ -69,8 +81,25 @@ export type DocumentType =
   | 'evidence_map'
   | 'source_appendix';
 
-/** Ordered list of all required document types in a full pack. */
-export const REQUIRED_DOCUMENT_TYPES: readonly DocumentType[] = [
+/**
+ * Session 14 Breakout / Build-Blueprint document types. Optional and additive:
+ * appended to build-oriented depths, never part of the required 27.
+ */
+export type BlueprintDocumentType =
+  | 'venture_thesis'
+  | 'breakout_opportunity_memo'
+  | 'build_blueprint'
+  | 'do_not_build';
+
+export const BLUEPRINT_DOCUMENT_TYPES: readonly BlueprintDocumentType[] = [
+  'venture_thesis',
+  'breakout_opportunity_memo',
+  'build_blueprint',
+  'do_not_build',
+] as const;
+
+/** Ordered list of all required (canonical) document types in a full pack. */
+export const REQUIRED_DOCUMENT_TYPES: readonly CanonicalDocumentType[] = [
   'product_vision',
   'market_context',
   'target_audience_icp',
@@ -225,4 +254,24 @@ export interface QualityGateResult extends Timestamps {
   passedCount: number;
   warnCount: number;
   failCount: number;
+}
+
+/** Role bucket used to group "Vibe Coding Prompts" (execution handoff AI-agent prompts). */
+export type PromptRole = 'frontend' | 'backend' | 'ai' | 'qa' | 'integration' | 'general';
+
+/**
+ * Buckets an AI-agent prompt draft into a role for display, based on which
+ * Product Pack V2 sections it's tied to (`relatedSections`, e.g.
+ * `frontend_pack`, `backend_pack`, `ai_agent_pack`, `qa_acceptance_pack`,
+ * `api_integration_requirements`). Shared by the mobile Prompts screen and
+ * the export ZIP renderers so grouping is identical everywhere.
+ */
+export function inferPromptRole(relatedSections: readonly string[]): PromptRole {
+  const joined = relatedSections.join(' ').toLowerCase();
+  if (joined.includes('frontend')) return 'frontend';
+  if (joined.includes('backend')) return 'backend';
+  if (joined.includes('ai_agent') || joined.includes('ai_')) return 'ai';
+  if (joined.includes('qa_') || joined.includes('acceptance')) return 'qa';
+  if (joined.includes('integration') || joined.includes('api_')) return 'integration';
+  return 'general';
 }

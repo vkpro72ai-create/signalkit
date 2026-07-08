@@ -1,14 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { MARKET_SCOPES, type MarketScope } from '@signalkit/shared';
 
-const MARKET_SCOPES = [
-  'current_location',
-  'country_of_residence',
-  'manual_country',
-  'manual_region',
-  'multi_country',
-  'global',
-] as const;
+const SCOPES = MARKET_SCOPES as readonly string[];
 
 export class CreateProjectDto {
   @ApiProperty({ example: 'WhatsApp AI sales copilot for clinics' })
@@ -21,13 +15,33 @@ export class CreateProjectDto {
   @IsString()
   goal?: string;
 
-  @ApiPropertyOptional({ enum: MARKET_SCOPES })
+  @ApiPropertyOptional({ enum: SCOPES })
   @IsOptional()
-  @IsIn(MARKET_SCOPES)
-  marketScope?: (typeof MARKET_SCOPES)[number];
+  @IsIn(SCOPES)
+  marketScope?: MarketScope;
 
-  @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2' })
+  @ApiPropertyOptional({ description: 'ISO 3166-1 alpha-2 (single-country scopes)' })
   @IsOptional()
   @IsString()
   targetCountry?: string;
+
+  @ApiPropertyOptional({ description: 'ISO 3166-2 (region scope)' })
+  @IsOptional()
+  @IsString()
+  targetRegion?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'Multi-market comparison' })
+  @IsOptional()
+  @IsArray()
+  targetCountries?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  targetRegions?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  marketLanguage?: string;
 }

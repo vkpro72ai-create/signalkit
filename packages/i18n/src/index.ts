@@ -1,7 +1,7 @@
 /**
- * @signalkit/i18n — locale detection, fallback, formatting and translation
- * primitives. Full translation catalogs land in Session 3; this establishes the
- * single, non-duplicated i18n contract used by web and mobile.
+ * @signalkit/i18n — locale detection, fallback, formatting and the bundled
+ * translation catalogs for all 10 supported locales. The single, non-duplicated
+ * i18n contract used by web and mobile.
  */
 import {
   SUPPORTED_LOCALES,
@@ -80,4 +80,31 @@ export function formatDate(
 ): string {
   const date = value instanceof Date ? value : new Date(value);
   return new Intl.DateTimeFormat(locale, options).format(date);
+}
+
+export { catalog, type MessageKey } from './catalogs/index.js';
+import { catalog } from './catalogs/index.js';
+import type { MessageKey } from './catalogs/index.js';
+
+export {
+  packContentCatalog,
+  createPackContentTranslator,
+  type PackContentKey,
+  type PackContentTranslator,
+} from './catalogs/pack-content/index.js';
+
+/** A translator bound to a locale, with type-checked keys and English fallback. */
+export type Translator = (key: MessageKey) => string;
+
+/**
+ * Create a translator for a locale using the bundled catalog. Unknown/missing
+ * translations fall back to English, then to the key itself — never blank.
+ */
+export function createTranslator(locale: LocaleCode): Translator {
+  return (key: MessageKey) => translate(catalog, locale, key);
+}
+
+/** The messages for a single locale (merged over the English base for safety). */
+export function getMessages(locale: LocaleCode): Record<MessageKey, string> {
+  return { ...catalog.en, ...catalog[locale] } as Record<MessageKey, string>;
 }

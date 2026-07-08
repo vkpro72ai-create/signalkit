@@ -1,5 +1,8 @@
+import './globals.css';
 import type { ReactNode } from 'react';
-import { DEFAULT_LOCALE, isRtl } from '@signalkit/i18n';
+import type { Viewport } from 'next';
+import { isRtl, DEFAULT_LOCALE } from '@signalkit/i18n';
+import { I18nProvider } from '../lib/i18n';
 
 export const metadata = {
   title: 'SignalKit',
@@ -7,20 +10,21 @@ export const metadata = {
     'Evidence-backed market opportunity discovery and build-ready Product Document Packs.',
 };
 
+// Without this, mobile browsers render the layout at a virtual ~980px
+// desktop width and zoom out — every page becomes unusably tiny on a phone.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+};
+
+// Static-export-compatible: no server-side cookies() call.
+// I18nProvider reads the locale cookie on the client after hydration.
 export default function RootLayout({ children }: { children: ReactNode }) {
-  const locale = DEFAULT_LOCALE;
   return (
-    <html lang={locale} dir={isRtl(locale) ? 'rtl' : 'ltr'}>
-      <body
-        style={{
-          margin: 0,
-          fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-          // Flat 2D: solid background, no gradients.
-          background: '#FBFCFD',
-          color: '#1B1F24',
-        }}
-      >
-        {children}
+    <html lang={DEFAULT_LOCALE} dir={isRtl(DEFAULT_LOCALE) ? 'rtl' : 'ltr'}>
+      <body>
+        <I18nProvider>{children}</I18nProvider>
       </body>
     </html>
   );

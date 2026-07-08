@@ -6,13 +6,7 @@
  * defines the interfaces; Session 4 implements provider adapters and Session 5
  * implements the router, cost control and usage logging.
  */
-import type {
-  LLMProviderType,
-  LLMTaskType,
-  LLMCostEstimate,
-  LLMRoutingRule,
-  LocaleCode,
-} from '@signalkit/shared';
+import type { LLMProviderType, LLMTaskType, LLMCostEstimate, LocaleCode } from '@signalkit/shared';
 
 /** A single chat message in a provider-agnostic shape. */
 export interface LLMMessage {
@@ -87,7 +81,7 @@ export interface LLMProviderAdapter {
   /** Perform a generation. Must throw LLMError on failure. */
   complete(request: LLMRequest): Promise<LLMResponse>;
   /** Optionally list models the provider exposes (e.g. OpenRouter catalog). */
-  listModels?(): Promise<{ modelId: string; displayName: string }[]>;
+  listModels?(): Promise<{ modelId: string; displayName: string; contextWindow?: number; maxOutputTokens?: number }[]>;
 }
 
 /** Cost estimator contract — used before expensive actions to warn/confirm. */
@@ -101,16 +95,20 @@ export interface LLMCostEstimator {
   }): LLMCostEstimate;
 }
 
-/**
- * The router contract. Resolves a task to a model via routing rules, applies
- * retry/fallback, validates output, and records usage. Implemented in Session 5.
- */
-export interface LLMRouter {
-  resolveRule(taskType: LLMTaskType): LLMRoutingRule;
-  run(request: LLMRequest): Promise<LLMResponse>;
-}
-
 /** Output validation contract (JSON shape / required sections / language). */
 export interface LLMOutputValidator<T = unknown> {
   validate(raw: string, request: LLMRequest): { ok: true; value: T } | { ok: false; reason: string };
 }
+
+// Session 4 implementations.
+export * from './crypto.js';
+export * from './cost.js';
+export * from './catalog.js';
+export * from './adapters/index.js';
+
+// Session 5 — router, generation contract, policies, validators, defaults.
+export * from './contract.js';
+export * from './defaults.js';
+export * from './policies.js';
+export * from './validators.js';
+export * from './router.js';

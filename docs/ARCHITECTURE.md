@@ -47,6 +47,56 @@ Identity/RBAC · Geo/Market · Projects/Search Context · Source ingestion/Signa
 - Apps use their native toolchains (`next build`, `nest build`, `expo`).
 - Tests: Vitest. Lint: ESLint (flat config) + Prettier.
 
+## Production Deployment (Session 13)
+
+```
+Internet
+  │
+  ▼
+[Caddy :80/:443]  — automatic TLS, gzip, secure headers
+  │         │
+  ▼         ▼
+[web:3000] [api:4000]
+             │
+             ├── [redis:6379]  BullMQ queues (export + ingestion)
+             │
+             └── [Supabase]    Managed PostgreSQL (external)
+```
+
+- `docker-compose.production.yml` — full production stack
+- `apps/api/Dockerfile` — 4-stage pnpm monorepo build
+- `apps/web/Dockerfile` — Next.js standalone output
+- `infra/caddy/Caddyfile` — reverse proxy + TLS
+- `scripts/deploy/` — bootstrap, deploy, migrate, healthcheck, logs
+
+Only Caddy exposes public ports. All other services are on the internal `signalkit` Docker network.
+
+See `docs/DEPLOYMENT_HETZNER.md` for the full setup guide.
+
 ## Cross-cutting invariants
 
 Every persisted entity is workspace-owned and carries timestamps; significant entities add versioning, confidence and audit. Geo stores at most country/region and only with consent. Secrets are encrypted at rest and never serialized to clients.
+
+## Breakout Opportunity Engine & Build Blueprint (Session 14)
+
+On top of niches/evidence/packs, SignalKit derives venture-scale opportunities
+and build-ready blueprints. Four scores are kept **strictly separate**:
+Opportunity and Confidence (`scoring.ts`), Venture Scale (`venture.ts`) and Build
+Readiness (`blueprint.ts`).
+
+- **Venture Thesis + Venture Scale Score** — per niche. Computed from the
+  project's real signals + evidence whenever a niche is scored, persisted to
+  `VentureThesis`. No fabricated TAM; weak dimensions become assumptions /
+  unresolved questions. See `docs/BREAKOUT_OPPORTUNITY_ENGINE.md`.
+- **Build Blueprint + Build Readiness Score** — per pack. Derived from the same
+  canonical `PackContext` (features → screens → entities → endpoints), so screen
+  contracts, state matrix, API↔screen map, component contracts, permission
+  matrix, analytics events and DO_NOT_BUILD are consistent by construction.
+  Persisted to `BuildBlueprint`. See `docs/BUILD_BLUEPRINT.md`.
+
+Both are **additive and backwards-compatible**: the canonical 27 documents,
+existing quality gates and exports are unchanged; new behavior activates only
+when venture/blueprint data is present. New pack document types
+(`venture_thesis`, `breakout_opportunity_memo`, `build_blueprint`,
+`do_not_build`) are appended to build-oriented depths and routed to a new
+`10_blueprint/` export folder. Additive migration `20260629_breakout_venture_blueprint`.

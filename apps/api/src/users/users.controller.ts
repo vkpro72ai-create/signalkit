@@ -20,6 +20,12 @@ export class UsersController {
     return this.users.getMe(user.sub);
   }
 
+  @Get('me/entitlements')
+  @ApiOperation({ summary: 'Current user entitlements (plan, features)' })
+  entitlements(@CurrentUser() user: JwtPayload) {
+    return this.users.getEntitlements(user.sub);
+  }
+
   @Get('users/:id/settings')
   @ApiOperation({ summary: 'Get a user’s settings (self only)' })
   getSettings(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
