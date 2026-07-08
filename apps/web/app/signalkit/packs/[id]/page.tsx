@@ -16,6 +16,7 @@ import {
   palette,
 } from '../../../../components/ui';
 import { Markdown } from '../../../../components/markdown';
+import { PackDeliverableHub } from '../../../../components/pack-mobile-hub';
 import { useT } from '../../../../lib/i18n';
 import {
   apiGet,
@@ -31,7 +32,7 @@ import type { Translator } from '@signalkit/i18n';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface DocMeta {
+export interface DocMeta {
   packDepth: string;
   verticalTemplate: string;
   market: { country: string | null };
@@ -44,7 +45,7 @@ interface DocMeta {
   section?: { key: string; title: string } | null;
 }
 
-interface DocView {
+export interface DocView {
   id: string;
   docType: string;
   title: string;
@@ -57,9 +58,53 @@ interface DocView {
   updatedAt: string;
 }
 
-interface GateCheck { id: string; label: string; status: string; message: string }
+export interface GateCheck { id: string; label: string; status: string; message: string }
 
-interface PackMetadata {
+export interface QiraBacklogTask {
+  title: string;
+  description: string;
+  ownerRole: string;
+  taskType: string;
+  dependencies: string[];
+  acceptanceCriteria: string[];
+}
+
+export interface QiraBacklogEpic {
+  title: string;
+  description: string;
+  priority: string;
+  sprintHint: string;
+  tasks: QiraBacklogTask[];
+  dependencies: string[];
+}
+
+export interface QiraBacklogDraft {
+  projectTitle: string;
+  projectDescription: string;
+  epics: QiraBacklogEpic[];
+  sprints: Array<{ name: string; goal: string; epicTitles: string[]; taskTitles: string[] }>;
+  ownerRoles: string[];
+  labels: string[];
+}
+
+export interface AiAgentPrompt {
+  title: string;
+  targetAgent: string;
+  purpose: string;
+  promptBody: string;
+  relatedSections: string[];
+  expectedFiles: string[];
+  tests: string[];
+  finalReportFormat: string[];
+}
+
+export interface ExecutionHandoff {
+  mode: string;
+  qiraBacklogDraft: QiraBacklogDraft | null;
+  aiAgentPromptBundleDraft: AiAgentPrompt[];
+}
+
+export interface PackMetadata {
   packTitle?: string;
   sourceMode?: string;
   qualityGates?: {
@@ -73,38 +118,18 @@ interface PackMetadata {
     whatNotToBuildOrClaim?: string[];
   };
   layers?: Array<{ key: 'vision' | 'build' | 'execution' | 'evidence'; title: string; documentTypes: string[]; titles: string[] }>;
-  executionHandoff?: {
-    mode: string;
-    qiraBacklogDraft: {
-      projectTitle: string;
-      projectDescription: string;
-      epics: Array<{ title: string; relatedSections: string[] }>;
-      sprints: Array<{ title: string; focus: string }>;
-      tasks: Array<{ title: string; ownerRole: string; phase: string; acceptanceCriteria: string[]; relatedSections: string[] }>;
-      dependencies: Array<{ from: string; to: string }>;
-      ownerRoles: string[];
-      labels: string[];
-      acceptanceCriteria: string[];
-      doneDefinition: string[];
-    };
-    aiAgentPromptBundleDraft: Array<{
-      title: string;
-      targetAgent: string;
-      purpose: string;
-      promptBody: string;
-      relatedSections: string[];
-      expectedFiles: string[];
-      tests: string[];
-      finalReportFormat: string[];
-    }>;
-  };
+  executionHandoff?: ExecutionHandoff | null;
 }
 
-interface Pack {
+export interface Pack {
   id: string;
   title: string;
   depth: string;
+  verticalTemplate: string;
+  primaryLanguage: string;
   status: string;
+  createdAt: string;
+  updatedAt: string;
   metadata?: PackMetadata | null;
   documents: DocView[];
   qualityGate: { status: string; passedCount: number; warnCount: number; failCount: number; checks: GateCheck[] } | null;
@@ -458,6 +483,21 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
     } catch { /* non-fatal */ }
   }
 
+  /**
+   * Mobile Deliverable Hub's single "Add comment" action — there's no
+   * document picker on mobile, so the note is attached to every document in
+   * the pack, then reworked via the same apply-comments amendment flow the
+   * desktop "Rework with comments" button uses. Not a regenerate: each
+   * document is amended with the comment as context, never blindly rebuilt.
+   */
+  async function submitPackComment(text: string) {
+    if (!ws || !pack) throw new Error('Pack not loaded.');
+    for (const d of pack.documents) {
+      await commentApi.create(ws, pack.id, d.id, text);
+    }
+    await applyComments();
+  }
+
   // ── Assumption validation ──────────────────────────────────────────────────
 
   async function updateAssumption(assumptionId: string, status: string) {
@@ -504,6 +544,16 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
       {state === 'ready' && pack && (
         <>
+          {/* Mobile phones default to a clean Deliverable Hub — no 31-document
+           * list, no raw QC dump, no Regenerate button. Desktop keeps the full
+           * reader below. Both mount (no window-width JS) so there's no
+           * hydration flicker; CSS media queries decide which one is visible,
+           * same pattern as the off-canvas sidebar in components/shell.tsx. */}
+          <div className="pack-deliverable-hub">
+            <PackDeliverableHub ws={ws} pack={pack} t={t} onSubmitComment={submitPackComment} />
+          </div>
+
+          <div className="pack-reader-desktop">
           {/* Quality gate row */}
           <div style={{ display: 'flex', gap: spacing.xs, marginBottom: spacing.md, alignItems: 'center', flexWrap: 'wrap' }}>
             {pack.qualityGate && (
@@ -768,20 +818,29 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
                   <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm, fontSize: typography.size.xs }}>
                     <p style={{ color: palette.subtle, margin: 0 }}>{t('pack.handoff.description')}</p>
                     <Row k={t('pack.handoff.mode')} v={handoff.mode} />
-                    <Row k={t('pack.handoff.qiraDraft')} v={`${handoff.qiraBacklogDraft.epics.length} · ${handoff.qiraBacklogDraft.sprints.length} sprints · ${handoff.qiraBacklogDraft.tasks.length}`} />
+                    {handoff.qiraBacklogDraft && (
+                      <Row
+                        k={t('pack.handoff.qiraDraft')}
+                        v={`${handoff.qiraBacklogDraft.epics.length} epics · ${handoff.qiraBacklogDraft.sprints.length} sprints · ${handoff.qiraBacklogDraft.epics.reduce((n, e) => n + e.tasks.length, 0)} tasks`}
+                      />
+                    )}
                     <Row k={t('pack.handoff.aiPrompts')} v={String(handoff.aiAgentPromptBundleDraft.length)} />
                     <div style={{ height: border.hairline, background: palette.line, margin: `${spacing.xs}px 0` }} />
-                    <div style={{ fontWeight: typography.weight.medium }}>{t('pack.handoff.qiraHeading')}</div>
-                    <div style={{ color: palette.subtle }}>{handoff.qiraBacklogDraft.projectDescription}</div>
-                    <div>
-                      <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>{t('pack.handoff.epicsHeading')}</div>
-                      {handoff.qiraBacklogDraft.epics.map((epic) => (
-                        <div key={epic.title} style={{ marginBottom: spacing.xs }}>
-                          <div>{epic.title}</div>
-                          <div style={{ color: palette.subtle }}>{epic.relatedSections.join(', ')}</div>
+                    {handoff.qiraBacklogDraft && (
+                      <>
+                        <div style={{ fontWeight: typography.weight.medium }}>{t('pack.handoff.qiraHeading')}</div>
+                        <div style={{ color: palette.subtle }}>{handoff.qiraBacklogDraft.projectDescription}</div>
+                        <div>
+                          <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>{t('pack.handoff.epicsHeading')}</div>
+                          {handoff.qiraBacklogDraft.epics.map((epic) => (
+                            <div key={epic.title} style={{ marginBottom: spacing.xs }}>
+                              <div>{epic.title}</div>
+                              <div style={{ color: palette.subtle }}>{epic.tasks.length} tasks · {epic.sprintHint}</div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      </>
+                    )}
                     <div>
                       <div style={{ fontWeight: typography.weight.medium, marginBottom: 4 }}>{t('pack.handoff.aiPromptsHeading')}</div>
                       {handoff.aiAgentPromptBundleDraft.map((prompt) => (
@@ -846,6 +905,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
             </div>
           </div>
           )}
+          </div>
         </>
       )}
     </div>
