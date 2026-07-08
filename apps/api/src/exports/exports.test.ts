@@ -68,6 +68,57 @@ function makeManifest(over: Partial<ExportManifest> = {}): ExportManifest {
   };
 }
 
+function makeExecutionHandoff(): NonNullable<EvidenceData['executionHandoff']> {
+  return {
+    mode: 'team_studio_and_ai_agent',
+    qiraBacklogDraft: {
+      projectTitle: 'Clinic WhatsApp Copilot',
+      projectDescription: 'Backlog draft for delivery teams.',
+      epics: [{
+        title: 'Onboarding epic',
+        description: 'Set up onboarding flow.',
+        sourceSections: ['product_vision'],
+        priority: 'high',
+        sprintHint: 'Sprint 1',
+        tasks: [{
+          title: 'Build onboarding screen',
+          description: 'Implement onboarding UI.',
+          ownerRole: 'frontend',
+          taskType: 'feature',
+          sourceSections: ['ux_flow'],
+          implementationNotes: [],
+          filesHint: [],
+          dependencies: [],
+          acceptanceCriteria: ['User can complete onboarding'],
+          qaChecks: [],
+          doneDefinition: [],
+        }],
+        acceptanceCriteria: [],
+        dependencies: [],
+        doneDefinition: [],
+      }],
+      sprints: [{ name: 'Sprint 1', goal: 'Ship onboarding', epicTitles: ['Onboarding epic'], taskTitles: ['Build onboarding screen'], definitionOfDone: [] }],
+      dependencies: [],
+      ownerRoles: ['frontend', 'backend'],
+      labels: ['mvp'],
+      acceptanceCriteria: [],
+      doneDefinition: [],
+    },
+    aiAgentPromptBundleDraft: [
+      {
+        title: 'Implement onboarding screen', targetAgent: 'Claude Code', purpose: 'Build the onboarding UI.',
+        promptBody: 'Implement the onboarding screen per ux_flow.md.', relatedSections: ['frontend_pack'],
+        expectedFiles: ['app/onboarding.tsx'], tests: ['renders without crashing'], finalReportFormat: ['List files changed'],
+      },
+      {
+        title: 'Wire backend endpoint', targetAgent: 'Cursor', purpose: 'Implement the API.',
+        promptBody: 'Implement POST /onboarding per backend_brd.md.', relatedSections: ['backend_pack'],
+        expectedFiles: ['src/onboarding.controller.ts'], tests: ['unit test coverage'], finalReportFormat: ['List endpoints added'],
+      },
+    ],
+  };
+}
+
 const ALL_DOC_TYPES = [
   'product_vision', 'market_context', 'market_selection_memo',
   'target_audience_icp', 'jobs_to_be_done', 'problem_map', 'user_scenarios',
@@ -251,6 +302,31 @@ describe('ExportRendererService — Markdown ZIP', () => {
     const assumptions = JSON.parse(assumptionsJson) as unknown[];
     expect(assumptions).toHaveLength(1);
   });
+
+  it('includes backlog, role-grouped prompts, and the embedded PDF when executionHandoff is present', async () => {
+    const JSZip = (await import('jszip')).default;
+    const evWithHandoff = makeEvidence({ executionHandoff: makeExecutionHandoff() });
+    const pdfBuffer = Buffer.from('%PDF-1.4 fake pdf content');
+    const buf = await renderer.renderMarkdownZip(pack, docs, evWithHandoff, manifest, pdfBuffer);
+    const zip = await JSZip.loadAsync(buf);
+
+    expect(zip.file('product-pack/11_execution/backlog.md')).not.toBeNull();
+    expect(zip.file('product-pack/11_execution/prompts/frontend/implement-onboarding-screen.md')).not.toBeNull();
+    expect(zip.file('product-pack/11_execution/prompts/backend/wire-backend-endpoint.md')).not.toBeNull();
+    expect(zip.file('product-pack/product-pack.pdf')).not.toBeNull();
+
+    const backlogMd = await zip.file('product-pack/11_execution/backlog.md')!.async('string');
+    expect(backlogMd).toContain('Onboarding epic');
+    expect(backlogMd).toContain('Build onboarding screen');
+  });
+
+  it('omits the 11_execution folder when executionHandoff is absent', async () => {
+    const JSZip = (await import('jszip')).default;
+    const buf = await renderer.renderMarkdownZip(pack, docs, ev, manifest);
+    const zip = await JSZip.loadAsync(buf);
+    expect(zip.file('product-pack/11_execution/backlog.md')).toBeNull();
+    expect(zip.file('product-pack/product-pack.pdf')).toBeNull();
+  });
 });
 
 describe('ExportRendererService — AI-Agent Bundle', () => {
@@ -291,6 +367,18 @@ describe('ExportRendererService — AI-Agent Bundle', () => {
     const assumptionsStr = await zip.file('assumptions.json')!.async('string');
     expect(assumptionsStr).toContain('a99');
     expect(assumptionsStr).toContain('Users will pay $50/month');
+  });
+
+  it('includes role-grouped Vibe Coding Prompt files when executionHandoff is present', async () => {
+    const JSZip = (await import('jszip')).default;
+    const evWithHandoff = makeEvidence({ executionHandoff: makeExecutionHandoff() });
+    const buf = await renderer.renderAiAgentBundle(makePack(), ALL_DOC_TYPES.map((dt) => makeDoc(dt)), evWithHandoff, makeManifest({ exportType: 'ai_agent_engineering_bundle' }));
+    const zip = await JSZip.loadAsync(buf);
+    expect(zip.file('prompts/frontend/implement-onboarding-screen.md')).not.toBeNull();
+    expect(zip.file('prompts/backend/wire-backend-endpoint.md')).not.toBeNull();
+    const promptMd = await zip.file('prompts/frontend/implement-onboarding-screen.md')!.async('string');
+    expect(promptMd).toContain('Claude Code');
+    expect(promptMd).toContain('Implement the onboarding screen per ux_flow.md.');
   });
 });
 
@@ -516,12 +604,14 @@ describe('ExportJobService — inline export (no Redis)', () => {
     const storage = new ExportStorageService();
     storage.write = vi.fn().mockResolvedValue('ws1/j1/file.zip');
 
+    const pdf = { render: vi.fn().mockResolvedValue(Buffer.from('%PDF-1.4 fake pdf content')) };
+
     const svc = new ExportJobService(
       prisma as unknown as import('../prisma/prisma.service').PrismaService,
       storage,
       new ExportManifestService(),
       new ExportRendererService(),
-      null as unknown as import('./export-pdf.service').ExportPdfService,
+      pdf as unknown as import('./export-pdf.service').ExportPdfService,
     );
 
     await svc.process('j1', 'ws1');

@@ -184,9 +184,81 @@ export const workspaceApi = {
     }>>(`/workspaces/${wsId}/niches`),
 };
 
+/** Backend `CreateOpportunityFromIdeaDto` — develops a founder-supplied idea into a scored opportunity. */
+export type CreateFromIdeaInput = {
+  founderIdea: string;
+  targetMarket?: string;
+  targetAudience?: string;
+  productFormat?: string;
+  outputLanguage?: string;
+  evidenceMode?: 'starter_hypothesis' | 'source_backed' | 'deep_research';
+  riskTolerance?: 'low' | 'medium' | 'high';
+};
+
+export const nicheApi = {
+  /** Turns a founder-written idea into a niche (does not replace/search for other ideas). */
+  createFromIdea: (wsId: string, projectId: string, dto: CreateFromIdeaInput) =>
+    api.post<{ id: string; name: string }>(`/workspaces/${wsId}/projects/${projectId}/niches/from-idea`, dto),
+};
+
+/** A prompt for an AI coding agent — one entry of `executionHandoff.aiAgentPromptBundleDraft`. */
+export type AiAgentPrompt = {
+  title: string;
+  targetAgent: string;
+  purpose: string;
+  promptBody: string;
+  relatedSections: string[];
+  expectedFiles: string[];
+  tests: string[];
+  finalReportFormat: string[];
+};
+
+export type QiraBacklogTask = {
+  title: string;
+  description: string;
+  ownerRole: string;
+  taskType: string;
+  dependencies: string[];
+  acceptanceCriteria: string[];
+};
+
+export type QiraBacklogEpic = {
+  title: string;
+  description: string;
+  priority: string;
+  sprintHint: string;
+  tasks: QiraBacklogTask[];
+  dependencies: string[];
+};
+
+export type QiraBacklogDraft = {
+  projectTitle: string;
+  projectDescription: string;
+  epics: QiraBacklogEpic[];
+  sprints: Array<{ name: string; goal: string; epicTitles: string[]; taskTitles: string[] }>;
+  ownerRoles: string[];
+  labels: string[];
+};
+
+/** `pack.metadata.executionHandoff` — the "Backlog & Sprints" + "Vibe Coding Prompts" execution artifacts. */
+export type ExecutionHandoff = {
+  mode: string;
+  qiraBacklogDraft: QiraBacklogDraft | null;
+  aiAgentPromptBundleDraft: AiAgentPrompt[];
+};
+
+export type QualityGate = {
+  status: string;
+  passedCount: number;
+  warnCount: number;
+  failCount: number;
+};
+
 export type PackSummary = {
   id: string;
+  title: string;
   depth: string;
+  verticalTemplate: string;
   language: string;
   status: string;
   documentCount: number;
@@ -195,13 +267,23 @@ export type PackSummary = {
   changesRequestedCount: number;
   createdAt: string;
   updatedAt: string;
+  metadata?: { executionHandoff?: ExecutionHandoff } | null;
+  qualityGate?: QualityGate | null;
+};
+
+export type PackDocument = {
+  id: string;
+  docType: string;
+  title: string;
 };
 
 export const packApi = {
   list: (wsId: string, nicheId: string) =>
     api.get<PackSummary[]>(`/workspaces/${wsId}/niches/${nicheId}/packs`),
   get: (wsId: string, packId: string) =>
-    api.get<PackSummary & { documents?: unknown[] }>(`/workspaces/${wsId}/packs/${packId}`),
+    api.get<PackSummary & { documents?: PackDocument[] }>(`/workspaces/${wsId}/packs/${packId}`),
+  generate: (wsId: string, nicheId: string, opts: { depth: string; vertical: string; language?: string; useLlm?: boolean }) =>
+    api.post<{ id: string }>(`/workspaces/${wsId}/niches/${nicheId}/generate-pack`, opts),
   exports: (wsId: string, packId: string) =>
     api.get<Array<{
       id: string;
@@ -214,4 +296,21 @@ export const packApi = {
       createdAt: string;
       error?: string;
     }>>(`/workspaces/${wsId}/packs/${packId}/exports`),
+};
+
+export const exportJobApi = {
+  create: (wsId: string, packId: string, opts: { type: string; language?: string }) =>
+    api.post<{ id: string; status: string }>(`/workspaces/${wsId}/packs/${packId}/exports`, opts),
+  /** Absolute URL for `FileSystem.downloadAsync` — pass the auth header separately (see lib/export.ts). */
+  downloadUrl: (wsId: string, exportId: string) => `${BASE}/workspaces/${wsId}/exports/${exportId}/download`,
+};
+
+export const commentsApi = {
+  create: (wsId: string, packId: string, documentId: string, body: string) =>
+    api.post<{ id: string }>(`/workspaces/${wsId}/packs/${packId}/documents/${documentId}/comments`, { body }),
+  /** Batches open comments per document and re-runs generation incorporating the feedback — an amendment, not a blind regenerate. */
+  applyPackComments: (wsId: string, packId: string) =>
+    api.post<{ documentsAffected: number; documentsUpdated: number; documentsFailed: number }>(
+      `/workspaces/${wsId}/packs/${packId}/apply-comments`,
+    ),
 };

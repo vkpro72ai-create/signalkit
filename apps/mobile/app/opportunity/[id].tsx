@@ -210,6 +210,22 @@ export default function OpportunityDetail() {
             >
               <Text style={{ fontSize: 16, fontWeight: '700', color: '#FFF' }}>View Build Blueprint →</Text>
             </Pressable>
+
+            {/* Create Product Pack CTA — amplifies this exact idea, no idea swap */}
+            <Pressable
+              onPress={() => { impact(); router.push(`/pack/create?nicheId=${id}`); }}
+              style={({ pressed }) => ({
+                backgroundColor: tk.color.surface,
+                borderColor: tk.color.line,
+                borderWidth: 1.5,
+                borderRadius: tk.radius.lg,
+                padding: 16,
+                alignItems: 'center',
+                opacity: pressed ? 0.88 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 16, fontWeight: '700', color: tk.color.ink }}>Создать Product Pack →</Text>
+            </Pressable>
           </>
         )}
       </View>

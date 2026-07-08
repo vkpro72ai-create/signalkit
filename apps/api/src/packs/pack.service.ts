@@ -69,7 +69,7 @@ interface ProductPackV2Document {
   acceptanceCriteria: string[];
 }
 
-interface ProductPackV2QiraTask {
+export interface ProductPackV2QiraTask {
   title: string;
   description: string;
   ownerRole: string;
@@ -83,7 +83,7 @@ interface ProductPackV2QiraTask {
   doneDefinition: string[];
 }
 
-interface ProductPackV2QiraEpic {
+export interface ProductPackV2QiraEpic {
   title: string;
   description: string;
   sourceSections: string[];
@@ -95,7 +95,7 @@ interface ProductPackV2QiraEpic {
   doneDefinition: string[];
 }
 
-interface ProductPackV2QiraBacklog {
+export interface ProductPackV2QiraBacklog {
   projectTitle: string;
   projectDescription: string;
   epics: ProductPackV2QiraEpic[];
@@ -107,7 +107,7 @@ interface ProductPackV2QiraBacklog {
   doneDefinition: string[];
 }
 
-interface ProductPackV2AiAgentPrompt {
+export interface ProductPackV2AiAgentPrompt {
   title: string;
   targetAgent: string;
   purpose: string;
@@ -118,7 +118,7 @@ interface ProductPackV2AiAgentPrompt {
   finalReportFormat: string[];
 }
 
-interface ProductPackV2ExecutionHandoff {
+export interface ProductPackV2ExecutionHandoff {
   mode: string;
   qiraBacklogDraft: ProductPackV2QiraBacklog | null;
   aiAgentPromptBundleDraft: ProductPackV2AiAgentPrompt[];
@@ -1772,7 +1772,7 @@ function slugifyDocType(title: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
-function extractPackV2Metadata(
+export function extractPackV2Metadata(
   documents: Array<{ metadata: unknown }>,
 ): ReturnType<typeof buildProductPackV2Metadata> | null {
   for (const document of documents) {

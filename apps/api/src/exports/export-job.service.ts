@@ -9,6 +9,7 @@ import { ExportStorageService } from './export-storage.service';
 import { ExportManifestService } from './export-manifest.service';
 import { ExportRendererService, type BlueprintData, type EvidenceData, type PackDocumentRow, type PackRow } from './export-renderer.service';
 import { ExportPdfService } from './export-pdf.service';
+import { extractPackV2Metadata } from '../packs/pack.service';
 
 interface ExportJobData {
   exportJobId: string;
@@ -188,7 +189,11 @@ export class ExportJobService implements OnModuleInit, OnModuleDestroy {
       } else if (type === 'ai_agent_engineering_bundle') {
         buffer = await this.renderer.renderAiAgentBundle(pack as PackRow, documents, ev, manifest);
       } else if (type === 'markdown_zip') {
-        buffer = await this.renderer.renderMarkdownZip(pack as PackRow, documents, ev, manifest);
+        // The combined ZIP export embeds the full PDF alongside the markdown
+        // docs, backlog and prompts, so mobile's "Download ZIP" action is a
+        // single self-contained bundle.
+        const pdfBuffer = await this.pdf.render('full_pdf_pack', pack as PackRow, documents, ev, manifest, whiteLabelSettings);
+        buffer = await this.renderer.renderMarkdownZip(pack as PackRow, documents, ev, manifest, pdfBuffer);
       } else if (type === 'json_bundle') {
         buffer = await this.renderer.renderJsonBundle(pack as PackRow, documents, ev, manifest);
       } else {
@@ -257,6 +262,8 @@ export class ExportJobService implements OnModuleInit, OnModuleDestroy {
       this.prisma.buildBlueprint.findFirst({ where: { packId }, orderBy: { createdAt: 'desc' } }),
     ]);
 
+    const packMetadata = extractPackV2Metadata(pack.documents);
+
     const wsSettings = await this.prisma.workspaceSettings.findFirst({ where: { workspaceId } });
     const whiteLabelSettings: WhiteLabelSnapshot | null = wsSettings?.whiteLabelEnabled
       ? {
@@ -303,6 +310,7 @@ export class ExportJobService implements OnModuleInit, OnModuleDestroy {
             warnings: blueprintRow.warnings,
           } as unknown as BlueprintData)
         : null,
+      executionHandoff: packMetadata?.executionHandoff ?? null,
     };
 
     const documents: PackDocumentRow[] = pack.documents.map((d) => ({

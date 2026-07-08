@@ -9,6 +9,8 @@ import type {
   ApiToScreenMapEntry,
   DoNotBuildItem,
 } from '@signalkit/shared';
+import { inferPromptRole } from '@signalkit/shared';
+import type { ProductPackV2ExecutionHandoff } from '../packs/pack.service';
 import { createPackContentTranslator, type PackContentKey, type PackContentTranslator } from '@signalkit/i18n';
 import {
   DOCUMENT_FOLDER,
@@ -36,6 +38,8 @@ export interface EvidenceData {
   researchUpdates: { id: string; title: string; type: string; content: string; createdAt: Date }[];
   /** Session 14 — Build Blueprint (structured). Null when not generated. */
   blueprint?: BlueprintData | null;
+  /** V2 execution handoff (Qira-ready backlog draft + AI-agent prompt bundle draft). Null when not generated. */
+  executionHandoff?: ProductPackV2ExecutionHandoff | null;
 }
 
 /** Structured Build Blueprint data used to emit implementation-ready files. */
@@ -81,6 +85,7 @@ export class ExportRendererService {
     documents: PackDocumentRow[],
     ev: EvidenceData,
     manifest: ExportManifest,
+    pdfBuffer?: Buffer,
   ): Promise<Buffer> {
     const zip = new JSZip();
     const root = zip.folder('product-pack')!;
@@ -134,6 +139,25 @@ export class ExportRendererService {
       bp.file('build_readiness.json', JSON.stringify({ score: ev.blueprint.buildReadinessScore, level: ev.blueprint.buildReadinessLevel, breakdown: ev.blueprint.buildReadinessBreakdown, warnings: ev.blueprint.warnings }, null, 2));
     }
 
+    // Execution handoff — Qira-ready backlog draft + AI-agent prompt bundle draft.
+    if (ev.executionHandoff) {
+      const exec = root.folder('11_execution')!;
+      if (ev.executionHandoff.qiraBacklogDraft) {
+        exec.file('backlog.md', this.buildBacklogMd(ev.executionHandoff.qiraBacklogDraft));
+      }
+      if (ev.executionHandoff.aiAgentPromptBundleDraft.length > 0) {
+        const promptsFolder = exec.folder('prompts')!;
+        for (const prompt of ev.executionHandoff.aiAgentPromptBundleDraft) {
+          const role = inferPromptRole(prompt.relatedSections);
+          promptsFolder.folder(role)!.file(`${this.slugify(prompt.title)}.md`, this.buildPromptMd(prompt));
+        }
+      }
+    }
+
+    if (pdfBuffer) {
+      root.file('product-pack.pdf', pdfBuffer);
+    }
+
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   }
 
@@ -185,6 +209,15 @@ export class ExportRendererService {
       zip.file('ANALYTICS_EVENTS.json', JSON.stringify(ev.blueprint.analyticsEvents, null, 2));
       zip.file('VALIDATION_RULES.md', this.blueprintValidationMd(ev.blueprint, t));
       zip.file('EMPTY_LOADING_ERROR_STATES.md', this.blueprintStatesMd(ev.blueprint, t));
+    }
+
+    // Vibe Coding Prompts — self-contained prompts for AI coding agents, grouped by role.
+    if (ev.executionHandoff?.aiAgentPromptBundleDraft.length) {
+      const promptsFolder = zip.folder('prompts')!;
+      for (const prompt of ev.executionHandoff.aiAgentPromptBundleDraft) {
+        const role = inferPromptRole(prompt.relatedSections);
+        promptsFolder.folder(role)!.file(`${this.slugify(prompt.title)}.md`, this.buildPromptMd(prompt));
+      }
     }
 
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
@@ -498,6 +531,62 @@ export class ExportRendererService {
     for (const i of items) lines.push(`- **${i.item}** — ${i.reason}`);
     if (items.length === 0) lines.push(`_${t('export.do_not_build_empty')}_`);
     return lines.join('\n');
+  }
+
+  // ── Execution handoff builders (Qira-ready backlog draft, AI-agent prompts) ─
+
+  private buildBacklogMd(backlog: NonNullable<ProductPackV2ExecutionHandoff['qiraBacklogDraft']>): string {
+    const lines: string[] = [
+      `# ${backlog.projectTitle}`,
+      '',
+      '> Draft backlog for Qira or another delivery/PM system. Not a live API export.',
+      '',
+      backlog.projectDescription,
+      '',
+      '## Epics',
+      '',
+    ];
+    for (const epic of backlog.epics) {
+      lines.push(`### ${epic.title}`, '', epic.description, '', `- Priority: ${epic.priority}`, `- Sprint hint: ${epic.sprintHint}`);
+      if (epic.dependencies.length) lines.push(`- Dependencies: ${epic.dependencies.join(', ')}`);
+      lines.push('', '#### Tasks', '');
+      for (const task of epic.tasks) {
+        lines.push(`- **${task.title}** (${task.ownerRole}, ${task.taskType}) — ${task.description}`);
+        if (task.acceptanceCriteria.length) lines.push(`  - Acceptance: ${task.acceptanceCriteria.join('; ')}`);
+        if (task.dependencies.length) lines.push(`  - Depends on: ${task.dependencies.join(', ')}`);
+      }
+      lines.push('');
+    }
+    lines.push('## Sprints', '');
+    for (const sprint of backlog.sprints) {
+      lines.push(`### ${sprint.name}`, '', sprint.goal, `- Epics: ${sprint.epicTitles.join(', ')}`, `- Tasks: ${sprint.taskTitles.join(', ')}`, '');
+    }
+    if (backlog.ownerRoles.length) lines.push('## Owner roles', '', backlog.ownerRoles.map((r) => `- ${r}`).join('\n'), '');
+    if (backlog.labels.length) lines.push('## Labels', '', backlog.labels.map((l) => `- ${l}`).join('\n'), '');
+    return lines.join('\n');
+  }
+
+  private buildPromptMd(prompt: ProductPackV2ExecutionHandoff['aiAgentPromptBundleDraft'][number]): string {
+    const lines = [
+      `# ${prompt.title}`,
+      '',
+      `Target agent: ${prompt.targetAgent}`,
+      '',
+      `Purpose: ${prompt.purpose}`,
+      '',
+      '## Prompt',
+      '',
+      prompt.promptBody,
+      '',
+    ];
+    if (prompt.expectedFiles.length) lines.push('## Expected files', '', prompt.expectedFiles.map((f) => `- ${f}`).join('\n'), '');
+    if (prompt.tests.length) lines.push('## Tests', '', prompt.tests.map((f) => `- ${f}`).join('\n'), '');
+    if (prompt.finalReportFormat.length) lines.push('## Final report format', '', prompt.finalReportFormat.map((f) => `- ${f}`).join('\n'), '');
+    return lines.join('\n');
+  }
+
+  private slugify(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
   }
 
   // ── Utility helpers ───────────────────────────────────────────────────────

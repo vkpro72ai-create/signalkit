@@ -84,8 +84,32 @@ export default function RootLayout() {
                 options={{ headerShown: true, title: '', headerBackTitle: 'Back' }}
               />
               <Stack.Screen
-                name="pack/[id]"
+                name="pack/create"
+                options={{ headerShown: true, title: 'Create Pack', headerBackTitle: 'Back' }}
+              />
+              <Stack.Screen
+                name="pack/create-confirm"
+                options={{ headerShown: true, title: 'Confirm Scope', headerBackTitle: 'Back' }}
+              />
+              <Stack.Screen
+                name="pack/create-progress"
+                options={{ headerShown: true, title: 'Generating', headerBackVisible: false, gestureEnabled: false }}
+              />
+              <Stack.Screen
+                name="pack/[id]/index"
                 options={{ headerShown: true, title: 'Product Pack', headerBackTitle: 'Back' }}
+              />
+              <Stack.Screen
+                name="pack/[id]/backlog"
+                options={{ headerShown: true, title: 'Backlog & Sprints', headerBackTitle: 'Back' }}
+              />
+              <Stack.Screen
+                name="pack/[id]/prompts"
+                options={{ headerShown: true, title: 'Vibe Coding Prompts', headerBackTitle: 'Back' }}
+              />
+              <Stack.Screen
+                name="pack/[id]/amend"
+                options={{ headerShown: true, title: 'Add Comment', headerBackTitle: 'Back' }}
               />
               <Stack.Screen
                 name="blueprint/[id]"

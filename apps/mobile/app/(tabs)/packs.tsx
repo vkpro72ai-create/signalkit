@@ -10,7 +10,7 @@ import { workspaceApi, packApi, ApiException } from '../../lib/api';
 import { impact } from '../../lib/haptics';
 import type { SemanticColor } from '@signalkit/ui';
 import {
-  tk, Card, Badge, SkeletonCard, EmptyState, ErrorState, Divider, PaywallGate,
+  tk, Card, Badge, IconButton, SkeletonCard, EmptyState, ErrorState, Divider, PaywallGate,
 } from '../../components/brand';
 
 type PackWithNiche = {
@@ -72,11 +72,17 @@ export default function Packs() {
       showsVerticalScrollIndicator={false}
     >
       {/* Header */}
-      <View style={{ paddingTop: 64, paddingHorizontal: tk.space.base, paddingBottom: tk.space.lg }}>
-        <Text style={{ fontSize: 26, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.4 }}>Product Packs</Text>
-        <Text style={{ fontSize: 14, color: tk.color.subtle, marginTop: 4 }}>
-          Document collections across your projects
-        </Text>
+      <View style={{
+        paddingTop: 64, paddingHorizontal: tk.space.base, paddingBottom: tk.space.lg,
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+      }}>
+        <View>
+          <Text style={{ fontSize: 26, fontWeight: '800', color: tk.color.ink, letterSpacing: -0.4 }}>Product Packs</Text>
+          <Text style={{ fontSize: 14, color: tk.color.subtle, marginTop: 4 }}>
+            Document collections across your projects
+          </Text>
+        </View>
+        <IconButton icon="+" onPress={() => { impact(); router.push('/pack/create'); }} />
       </View>
 
       <View style={{ paddingHorizontal: tk.space.base, gap: 12 }}>

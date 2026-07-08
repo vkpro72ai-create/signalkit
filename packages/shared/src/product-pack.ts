@@ -255,3 +255,23 @@ export interface QualityGateResult extends Timestamps {
   warnCount: number;
   failCount: number;
 }
+
+/** Role bucket used to group "Vibe Coding Prompts" (execution handoff AI-agent prompts). */
+export type PromptRole = 'frontend' | 'backend' | 'ai' | 'qa' | 'integration' | 'general';
+
+/**
+ * Buckets an AI-agent prompt draft into a role for display, based on which
+ * Product Pack V2 sections it's tied to (`relatedSections`, e.g.
+ * `frontend_pack`, `backend_pack`, `ai_agent_pack`, `qa_acceptance_pack`,
+ * `api_integration_requirements`). Shared by the mobile Prompts screen and
+ * the export ZIP renderers so grouping is identical everywhere.
+ */
+export function inferPromptRole(relatedSections: readonly string[]): PromptRole {
+  const joined = relatedSections.join(' ').toLowerCase();
+  if (joined.includes('frontend')) return 'frontend';
+  if (joined.includes('backend')) return 'backend';
+  if (joined.includes('ai_agent') || joined.includes('ai_')) return 'ai';
+  if (joined.includes('qa_') || joined.includes('acceptance')) return 'qa';
+  if (joined.includes('integration') || joined.includes('api_')) return 'integration';
+  return 'general';
+}
