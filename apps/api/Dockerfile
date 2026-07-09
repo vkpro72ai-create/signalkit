@@ -77,6 +77,11 @@ RUN pnpm --filter @signalkit/api deploy --prod --legacy /deploy/api
 # Copy Prisma schema + migrations into the deploy dir (needed for migrate deploy)
 RUN cp -r apps/api/prisma /deploy/api/prisma
 
+# pnpm deploy only follows the dependency graph (package.json + dist/), not
+# arbitrary asset directories — copy the embedded PDF fonts explicitly so
+# Cyrillic/Unicode text renders correctly at runtime (see src/exports/pdf/fonts.ts).
+RUN cp -r apps/api/assets /deploy/api/assets
+
 # pnpm deploy creates a fresh node_modules but does not run postinstall scripts,
 # so .prisma/client (native engine) is missing. Regenerate inside the deploy
 # dir where prisma is now a production dependency.

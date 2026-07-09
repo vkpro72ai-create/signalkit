@@ -51,7 +51,9 @@
     "@nestjs/schematics": "^10.2.3",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
+    "@types/pdf-parse": "^1.1.4",
     "@types/pdfkit": "^0.13.7",
+    "pdf-parse": "^1.1.1",
     "tsx": "^4.19.2"
   }
 }

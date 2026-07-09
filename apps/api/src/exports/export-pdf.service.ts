@@ -5,26 +5,31 @@ import type { PackDocumentRow, EvidenceData, PackRow } from './export-renderer.s
 import { ROLE_BRIEF_DOCUMENTS } from '@signalkit/exports';
 import type { RoleBriefType } from '@signalkit/shared';
 import { createPackContentTranslator, type PackContentTranslator } from '@signalkit/i18n';
-
-// Flat 2D palette — no gradients
-const COLORS = {
-  black: '#111111',
-  gray: '#555555',
-  lightGray: '#aaaaaa',
-  border: '#cccccc',
-  accent: '#1a1a1a',
-  bg: '#ffffff',
-  sectionLine: '#dddddd',
-} as const;
+import { registerFonts, FONT, sanitizeForPdf } from './pdf/fonts';
+import { COLOR, PAGE, TYPE } from './pdf/theme';
+import { parseMarkdown } from './pdf/markdown';
+import {
+  drawCoverPage,
+  drawTableOfContents,
+  drawSectionDivider,
+  drawBlocks,
+  drawScoreCards,
+  drawCallout,
+  drawFailedQualityDiagnostic,
+  stampFooter,
+  ensureSpace,
+} from './pdf/components';
 
 /**
- * PDF export engine using pdfkit. Flat 2D style — no gradients, no
- * glassmorphism. Produces readable PDFs for Full Pack, Founder Summary,
+ * PDF export engine using pdfkit + an embedded Unicode font (Noto Sans —
+ * see ./pdf/fonts.ts). Flat 2D SignalKit brand style — no gradients, no
+ * glassmorphism. Produces cover + TOC + section-divided, structurally
+ * rendered (not raw-dumped) Markdown for Full Pack, Founder Summary,
  * Investor Memo, Roadmap, and Agency Client exports.
  *
- * RTL note: pdfkit has limited bidi support. Arabic/Hebrew content is rendered
- * in LTR order with a manifest flag `rtlContentWarning`. Full RTL layout
- * requires a follow-up RTL PDF engine or a headless browser renderer.
+ * RTL note: pdfkit has limited bidi support. Arabic/Hebrew content is
+ * rendered in LTR order with a manifest flag `rtlContentWarning`. Full RTL
+ * layout requires a follow-up RTL PDF engine or a headless browser renderer.
  */
 @Injectable()
 export class ExportPdfService {
@@ -41,8 +46,9 @@ export class ExportPdfService {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       const doc = new PDFDocument({
-        margin: 60,
-        size: 'A4',
+        margin: PAGE.margin,
+        size: PAGE.size,
+        bufferPages: true,
         info: {
           Title: pack.title,
           Author: whiteLabelSettings?.preparedBy ?? 'SignalKit',
@@ -52,17 +58,46 @@ export class ExportPdfService {
         },
       });
 
+      registerFonts(doc);
+      doc.font(FONT.regular);
+
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
       const t = createPackContentTranslator(pack.primaryLanguage as LocaleCode);
+      const brandName = whiteLabelSettings?.hideSignalKitBrand ? (whiteLabelSettings.brandName ?? 'SignalKit') : 'SignalKit';
+
       try {
-        this.renderTitlePage(doc, pack, type, whiteLabelSettings, t);
-        this.renderTableOfContents(doc, documents, type, ev, t);
-        this.renderDocuments(doc, pack, documents, type, ev);
+        // A pack that failed its quality gate never gets a normal,
+        // successful-looking export — only a short diagnostic marked as such.
+        // (Applies to every PDF type, including the copy embedded in the
+        // combined markdown_zip bundle, since both go through this method.)
+        if (ev.qualityGate?.status === 'failed') {
+          drawFailedQualityDiagnostic(doc, {
+            brandName,
+            title: pack.title,
+            qualityStatus: ev.qualityGate.status,
+            failCount: ev.qualityGate.failCount,
+            warnCount: ev.qualityGate.warnCount,
+            passedCount: ev.qualityGate.passedCount,
+            checks: (ev.qualityGate.checks as Array<{ label?: string; id?: string; status: string; message: string }>).map((c) => ({
+              label: c.label ?? c.id ?? 'Check',
+              status: c.status,
+              message: c.message,
+            })),
+          });
+          stampFooter(doc, { text: `${brandName} · Quality Failed · ${manifest.generatedAt.slice(0, 10)}` });
+          doc.end();
+          return;
+        }
+
+        this.renderCoverPage(doc, pack, type, documents, ev, whiteLabelSettings, t);
+        const includedDocs = this.docsForType(type, documents);
+        this.renderTableOfContents(doc, includedDocs, t);
+        this.renderDocuments(doc, includedDocs);
         this.renderEvidenceAppendix(doc, ev, t);
-        this.renderFooter(doc, manifest, whiteLabelSettings, t);
+        stampFooter(doc, { text: whiteLabelSettings?.footerText ?? (whiteLabelSettings?.hideSignalKitBrand ? brandName : t('export.pdf_footer')) });
       } catch (err) {
         doc.end();
         reject(err);
@@ -75,216 +110,168 @@ export class ExportPdfService {
 
   // ── Section renderers ─────────────────────────────────────────────────────
 
-  private renderTitlePage(doc: PDFKit.PDFDocument, pack: PackRow, type: ExportType, wl: WhiteLabelSnapshot | null, t: PackContentTranslator): void {
-    const brandName = wl?.brandName ?? 'SignalKit';
-    const clientName = wl?.clientName;
+  private renderCoverPage(
+    doc: PDFKit.PDFDocument,
+    pack: PackRow,
+    type: ExportType,
+    documents: PackDocumentRow[],
+    ev: EvidenceData,
+    wl: WhiteLabelSnapshot | null,
+    t: PackContentTranslator,
+  ): void {
+    const brandName = wl?.hideSignalKitBrand ? (wl.brandName ?? 'SignalKit') : 'SignalKit';
 
-    // Title block
-    doc.moveDown(4);
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(28)
-      .fillColor(COLORS.black)
-      .text(pack.title, { align: 'center' });
-
-    doc.moveDown(0.5);
-    doc
-      .font('Helvetica')
-      .fontSize(13)
-      .fillColor(COLORS.gray)
-      .text(this.exportTypeLabel(type, t), { align: 'center' });
-
-    doc.moveDown(0.5);
-    doc
-      .fontSize(11)
-      .fillColor(COLORS.lightGray)
-      .text(t('export.pdf_title_meta_line', {
-        depth: pack.depth.replace(/_/g, ' '),
-        vertical: pack.verticalTemplate.replace(/_/g, ' '),
-        language: pack.primaryLanguage.toUpperCase(),
-      }), { align: 'center' });
-
-    // Separator
-    doc.moveDown(2);
-    doc.moveTo(60, doc.y).lineTo(doc.page.width - 60, doc.y).strokeColor(COLORS.sectionLine).lineWidth(1).stroke();
-    doc.moveDown(2);
-
-    // Meta info
-    const meta = [
-      clientName ? `${t('export.pdf_prepared_for')}: ${clientName}` : null,
-      `${t('export.pdf_prepared_by')}: ${wl?.preparedBy ?? brandName}`,
-      `${t('export.pdf_generated')}: ${new Date().toISOString().slice(0, 10)}`,
-      `${t('export.pdf_pack_version')}: ${pack.version}`,
-    ].filter(Boolean) as string[];
-
-    doc.font('Helvetica').fontSize(10).fillColor(COLORS.gray);
-    for (const line of meta) {
-      doc.text(line, { align: 'center' });
-    }
-
-    // Disclaimer
-    doc.moveDown(4);
-    const disclaimer = wl?.customDisclaimer ?? t('export.pdf_disclaimer');
-
-    doc.fontSize(9).fillColor(COLORS.lightGray).text(disclaimer, { align: 'center' });
-
-    if (!wl?.hideSignalKitBrand) {
-      doc.moveDown(1);
-      doc.fontSize(8).fillColor(COLORS.lightGray).text(t('export.pdf_footer'), { align: 'center' });
-    }
-
-    doc.addPage();
+    drawCoverPage(doc, {
+      brandName,
+      documentTypeLabel: this.exportTypeLabel(type, t),
+      title: pack.title,
+      opportunityType: pack.verticalTemplate ? pack.verticalTemplate.replace(/_/g, ' ') : null,
+      language: pack.primaryLanguage,
+      generatedDate: new Date().toISOString().slice(0, 10),
+      packVersion: pack.version,
+      qualityStatus: ev.qualityGate?.status ?? null,
+      confidenceScore: this.averageConfidence(documents),
+      providerLabel: this.providerLabel(documents),
+      clientName: wl?.clientName ?? null,
+      disclaimer: wl?.customDisclaimer ?? t('export.pdf_disclaimer'),
+      footerNote: wl?.hideSignalKitBrand ? null : t('export.pdf_footer'),
+    });
   }
 
-  private renderTableOfContents(doc: PDFKit.PDFDocument, documents: PackDocumentRow[], type: ExportType, _ev: EvidenceData, t: PackContentTranslator): void {
-    doc.font('Helvetica-Bold').fontSize(16).fillColor(COLORS.black).text(t('export.pdf_table_of_contents'));
-    doc.moveDown(0.5);
-    doc.moveTo(60, doc.y).lineTo(doc.page.width - 60, doc.y).strokeColor(COLORS.sectionLine).lineWidth(0.5).stroke();
-    doc.moveDown(0.5);
-
-    const includedDocs = this.docsForType(type, documents);
-    let n = 1;
-    for (const d of includedDocs) {
-      doc.font('Helvetica').fontSize(10).fillColor(COLORS.black).text(`${n++}. ${d.title}`);
-    }
-
-    // Always include appendices
-    doc.font('Helvetica').fontSize(10).fillColor(COLORS.gray).text(`${n++}. ${t('export.pdf_evidence_assumptions_appendix')}`);
-    doc.text(`${n}. ${t('export.pdf_source_appendix')}`);
-
-    doc.addPage();
+  private renderTableOfContents(doc: PDFKit.PDFDocument, includedDocs: PackDocumentRow[], t: PackContentTranslator): void {
+    const entries = includedDocs.map((d) => d.title);
+    entries.push(t('export.pdf_evidence_assumptions_appendix'));
+    entries.push(t('export.pdf_source_appendix'));
+    drawTableOfContents(doc, t('export.pdf_table_of_contents'), entries);
   }
 
-  private renderDocuments(doc: PDFKit.PDFDocument, _pack: PackRow, documents: PackDocumentRow[], type: ExportType, _ev: EvidenceData): void {
-    const includedDocs = this.docsForType(type, documents);
-    for (const d of includedDocs) {
-      this.renderDocumentSection(doc, d);
-    }
+  private renderDocuments(doc: PDFKit.PDFDocument, includedDocs: PackDocumentRow[]): void {
+    includedDocs.forEach((d, i) => {
+      if (i > 0) doc.addPage();
+      const { audience, purpose } = this.sectionInfo(d);
+      drawSectionDivider(doc, { index: i + 1, total: includedDocs.length, title: d.title, audience, purpose });
+      drawBlocks(doc, parseMarkdown(this.stripRedundantHeader(d.body)));
+    });
   }
 
-  private renderDocumentSection(doc: PDFKit.PDFDocument, d: PackDocumentRow): void {
-    doc.font('Helvetica-Bold').fontSize(14).fillColor(COLORS.black).text(d.title);
-    doc.moveDown(0.25);
-    doc.moveTo(60, doc.y).lineTo(doc.page.width - 60, doc.y).strokeColor(COLORS.accent).lineWidth(1).stroke();
-    doc.moveDown(0.5);
-
-    // Render markdown-ish content with basic formatting
-    const lines = d.body.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('# ')) {
-        doc.font('Helvetica-Bold').fontSize(14).fillColor(COLORS.black).text(line.replace(/^#+ /, ''));
-      } else if (line.startsWith('## ')) {
-        doc.font('Helvetica-Bold').fontSize(12).fillColor(COLORS.black).text(line.replace(/^#+ /, ''));
-      } else if (line.startsWith('### ')) {
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(COLORS.gray).text(line.replace(/^#+ /, ''));
-      } else if (line.startsWith('- ') || line.startsWith('* ')) {
-        doc.font('Helvetica').fontSize(9).fillColor(COLORS.black).text(`  • ${line.slice(2)}`);
-      } else if (line.startsWith('> ')) {
-        doc.font('Helvetica-Oblique').fontSize(9).fillColor(COLORS.gray).text(`  ${line.slice(2)}`);
-      } else if (line.trim() === '---' || line.trim() === '***') {
-        doc.moveDown(0.25);
-        doc.moveTo(60, doc.y).lineTo(doc.page.width - 60, doc.y).strokeColor(COLORS.sectionLine).lineWidth(0.5).stroke();
-        doc.moveDown(0.25);
-      } else if (line.trim() === '') {
-        doc.moveDown(0.3);
-      } else {
-        const clean = line.replace(/\*\*(.*?)\*\*/g, '$1').replace(/_(.*?)_/g, '$1');
-        doc.font('Helvetica').fontSize(9).fillColor(COLORS.black).text(clean, { lineGap: 1 });
+  /**
+   * documentToMarkdown() (pack.service.ts) already opens every document body
+   * with a "# Title" line and "**Audience:**"/"**Purpose:**" bold lines —
+   * the section divider now renders those, so repeating them as plain
+   * paragraph text would duplicate the same facts twice on the page.
+   */
+  private stripRedundantHeader(body: string): string {
+    const lines = body.split('\n');
+    let i = 0;
+    if (lines[i]?.trim().startsWith('# ')) i++;
+    while (i < lines.length) {
+      const line = lines[i]!.trim();
+      if (line === '' || /^\*\*(Audience|What this is|Why it exists|Purpose|How to use):\*\*/.test(line)) {
+        i++;
+        continue;
       }
+      break;
     }
+    return lines.slice(i).join('\n');
+  }
 
-    doc.addPage();
+  private sectionInfo(d: PackDocumentRow): { audience?: string[]; purpose?: string } {
+    const meta = d.metadata as { document?: { audience?: unknown; purpose?: unknown } } | null | undefined;
+    const doc = meta?.document;
+    const audience = Array.isArray(doc?.audience) ? (doc!.audience as unknown[]).filter((a): a is string => typeof a === 'string') : undefined;
+    const purpose = typeof doc?.purpose === 'string' ? doc.purpose : undefined;
+    return { audience, purpose };
+  }
+
+  private averageConfidence(documents: PackDocumentRow[]): number | null {
+    const values: number[] = [];
+    for (const d of documents) {
+      const meta = d.metadata as { confidence?: { value?: unknown } } | null | undefined;
+      const v = meta?.confidence?.value;
+      if (typeof v === 'number' && Number.isFinite(v)) values.push(v);
+    }
+    if (values.length === 0) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+
+  private providerLabel(documents: PackDocumentRow[]): string | null {
+    for (const d of documents) {
+      const meta = d.metadata as { aiRuns?: Record<string, { primary?: { provider?: unknown; modelId?: unknown } }> } | null | undefined;
+      const aiRuns = meta?.aiRuns;
+      if (!aiRuns) continue;
+      const labels = new Set<string>();
+      for (const run of Object.values(aiRuns)) {
+        const provider = run?.primary?.provider;
+        const modelId = run?.primary?.modelId;
+        if (typeof provider === 'string' && typeof modelId === 'string') labels.add(`${provider}/${modelId}`);
+      }
+      if (labels.size > 0) return Array.from(labels).join(', ');
+    }
+    return null;
   }
 
   private renderEvidenceAppendix(doc: PDFKit.PDFDocument, ev: EvidenceData, t: PackContentTranslator): void {
-    doc.font('Helvetica-Bold').fontSize(14).fillColor(COLORS.black).text(t('export.pdf_evidence_assumptions_appendix'));
-    doc.moveDown(0.5);
+    doc.addPage();
+    doc.font(FONT.bold).fontSize(TYPE.h1).fillColor(COLOR.ink).text(sanitizeForPdf(t('export.pdf_evidence_assumptions_appendix')));
+    doc.moveDown(0.6);
 
-    // Quality gate summary
     if (ev.qualityGate) {
-      doc.font('Helvetica-Bold').fontSize(11).text(t('export.pdf_quality_gate_summary'));
-      doc.font('Helvetica').fontSize(9).fillColor(COLORS.gray);
-      doc.text(t('export.pdf_quality_gate_line', {
-        status: ev.qualityGate.status,
-        passed: ev.qualityGate.passedCount,
-        warnings: ev.qualityGate.warnCount,
-        failed: ev.qualityGate.failCount,
-      }));
-      doc.moveDown(0.5);
+      drawScoreCards(doc, [
+        { label: t('export.pdf_scorecard_status'), value: ev.qualityGate.status, variant: ev.qualityGate.status === 'passed' ? 'success' : ev.qualityGate.status === 'warnings' ? 'warning' : 'neutral' },
+        { label: t('export.pdf_scorecard_passed'), value: String(ev.qualityGate.passedCount), variant: 'success' },
+        { label: t('export.pdf_scorecard_warnings'), value: String(ev.qualityGate.warnCount), variant: 'warning' },
+        { label: t('export.pdf_scorecard_failed'), value: String(ev.qualityGate.failCount), variant: ev.qualityGate.failCount > 0 ? 'risk' : 'neutral' },
+      ]);
     }
 
-    // Claims
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.black).text(t('export.pdf_claims', { n: ev.claims.length }));
-    doc.font('Helvetica').fontSize(9).fillColor(COLORS.black);
-    for (const c of ev.claims) {
-      doc.text(`• [${c.type} · ${c.confidenceLevel}] ${c.text}`);
+    if (ev.claims.length > 0) {
+      ensureSpace(doc, 20);
+      doc.font(FONT.bold).fontSize(TYPE.h3).fillColor(COLOR.ink).text(sanitizeForPdf(t('export.pdf_claims', { n: ev.claims.length })));
+      doc.moveDown(0.3);
+      drawBlocks(doc, parseMarkdown(ev.claims.map((c) => `- [${c.type} · ${c.confidenceLevel}] ${c.text}`).join('\n')));
     }
-    doc.moveDown(0.5);
 
-    // Assumptions
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.black).text(t('export.pdf_assumptions', { n: ev.assumptions.length }));
-    doc.font('Helvetica-Oblique').fontSize(9).fillColor(COLORS.gray).text(t('export.pdf_assumptions_caveat'));
-    doc.font('Helvetica').fontSize(9).fillColor(COLORS.black);
-    for (const a of ev.assumptions) {
-      doc.text(`• [${a.validationStatus}] ${a.text}`);
+    if (ev.assumptions.length > 0) {
+      drawCallout(
+        doc,
+        t('export.pdf_assumptions', { n: ev.assumptions.length }),
+        ev.assumptions.map((a) => [{ text: `[${a.validationStatus}] ${a.text}` }]),
+      );
+      doc.font(FONT.italic).fontSize(TYPE.small).fillColor(COLOR.muted).text(sanitizeForPdf(t('export.pdf_assumptions_caveat')));
+      doc.moveDown(0.4);
     }
-    doc.moveDown(0.5);
 
-    // Constraints
     if (ev.constraints.length > 0) {
-      doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.black).text(t('export.pdf_constraints', { n: ev.constraints.length }));
-      doc.font('Helvetica').fontSize(9);
-      for (const c of ev.constraints) {
-        doc.text(`• [${c.category}] ${c.text}`);
-      }
-      doc.moveDown(0.5);
+      ensureSpace(doc, 20);
+      doc.font(FONT.bold).fontSize(TYPE.h3).fillColor(COLOR.ink).text(sanitizeForPdf(t('export.pdf_constraints', { n: ev.constraints.length })));
+      doc.moveDown(0.3);
+      drawBlocks(doc, parseMarkdown(ev.constraints.map((c) => `- [${c.category}] ${c.text}`).join('\n')));
     }
 
-    // Unresolved questions
     if (ev.unresolvedQuestions.length > 0) {
-      doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.black).text(t('export.pdf_unresolved_questions', { n: ev.unresolvedQuestions.length }));
-      doc.font('Helvetica-Oblique').fontSize(9).fillColor(COLORS.gray).text(t('export.pdf_unresolved_caveat'));
-      doc.font('Helvetica').fontSize(9).fillColor(COLORS.black);
-      for (const q of ev.unresolvedQuestions) {
-        doc.text(`• [${q.priority}] ${q.text}`);
-      }
-      doc.moveDown(0.5);
+      drawCallout(
+        doc,
+        t('export.pdf_unresolved_questions', { n: ev.unresolvedQuestions.length }),
+        ev.unresolvedQuestions.map((q) => [{ text: `[${q.priority}] ${q.text}` }]),
+      );
+      doc.font(FONT.italic).fontSize(TYPE.small).fillColor(COLOR.muted).text(sanitizeForPdf(t('export.pdf_unresolved_caveat')));
     }
 
     // Source appendix
     doc.addPage();
-    doc.font('Helvetica-Bold').fontSize(14).fillColor(COLORS.black).text(t('export.pdf_source_appendix'));
-    doc.moveDown(0.5);
+    doc.font(FONT.bold).fontSize(TYPE.h1).fillColor(COLOR.ink).text(sanitizeForPdf(t('export.pdf_source_appendix')));
+    doc.moveDown(0.6);
     if (ev.sourceRefs.length === 0) {
-      doc.font('Helvetica').fontSize(9).fillColor(COLORS.gray).text(t('export.pdf_no_sources'));
+      doc.font(FONT.regular).fontSize(TYPE.body).fillColor(COLOR.subtle).text(sanitizeForPdf(t('export.pdf_no_sources')));
     } else {
       for (const s of ev.sourceRefs) {
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(COLORS.black).text(s.title ?? t('export.pdf_untitled_source'));
-        doc.font('Helvetica').fontSize(8).fillColor(COLORS.gray);
-        doc.text(`Adapter: ${s.adapter}`);
-        if (s.url) doc.text(`URL: ${s.url}`);
-        doc.moveDown(0.3);
+        ensureSpace(doc, 32);
+        doc.font(FONT.bold).fontSize(TYPE.small).fillColor(COLOR.ink).text(sanitizeForPdf(s.title ?? t('export.pdf_untitled_source')));
+        doc.font(FONT.regular).fontSize(TYPE.small).fillColor(COLOR.subtle);
+        doc.text(sanitizeForPdf(`Adapter: ${s.adapter}`));
+        if (s.url) doc.text(sanitizeForPdf(`URL: ${s.url}`));
+        doc.moveDown(0.4);
       }
-    }
-  }
-
-  private renderFooter(doc: PDFKit.PDFDocument, manifest: ExportManifest, wl: WhiteLabelSnapshot | null, t: PackContentTranslator): void {
-    const footer = wl?.footerText ?? (wl?.hideSignalKitBrand ? '' : t('export.pdf_footer'));
-    if (!footer) return;
-
-    const range = doc.bufferedPageRange();
-    for (let i = 0; i < range.count; i++) {
-      doc.switchToPage(range.start + i);
-      doc
-        .font('Helvetica')
-        .fontSize(7)
-        .fillColor(COLORS.lightGray)
-        .text(
-          `${footer} | ${manifest.generatedAt.slice(0, 10)} | ${t('export.pdf_page_of', { current: i + 1, total: range.count })}`,
-          60,
-          doc.page.height - 30,
-          { align: 'center', width: doc.page.width - 120 },
-        );
     }
   }
 
@@ -293,7 +280,6 @@ export class ExportPdfService {
   private docsForType(type: ExportType, documents: PackDocumentRow[]): PackDocumentRow[] {
     const docMap = new Map(documents.map((d) => [d.docType, d]));
 
-    // Role-mapped PDF types use role brief document selection
     const roleMap: Partial<Record<ExportType, RoleBriefType>> = {
       founder_summary_pdf: 'founder',
       investor_memo_pdf: 'investor',

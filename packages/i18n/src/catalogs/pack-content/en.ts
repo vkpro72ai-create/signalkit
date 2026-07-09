@@ -306,6 +306,10 @@ export const en = {
   'export.pdf_type_full_pack': 'Full Product Document Pack',
   'export.pdf_type_client_agency': 'Client Ready Export',
   'export.pdf_page_of': 'Page {current} of {total}',
+  'export.pdf_scorecard_status': 'Status',
+  'export.pdf_scorecard_passed': 'Passed',
+  'export.pdf_scorecard_warnings': 'Warnings',
+  'export.pdf_scorecard_failed': 'Failed',
 } as const;
 
 export type PackContentKey = keyof typeof en;
