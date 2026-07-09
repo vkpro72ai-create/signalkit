@@ -21,6 +21,13 @@ function redirectToLogin() {
   window.location.href = '/login';
 }
 
+/** Clear the saved session and return to sign-in. There was no way to do this before. */
+export function logout() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem('signalkit_token');
+  window.location.href = '/login';
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
   if (res.status === 401) {

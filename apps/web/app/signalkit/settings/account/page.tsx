@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { spacing, typography, border } from '@signalkit/ui';
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader, palette } from '../../../../components/ui';
 import { useT } from '../../../../lib/i18n';
-import { accountApi, apiGet, workspaceApi, type EntitlementsView, type MeWorkspaces } from '../../../../lib/api';
+import { accountApi, apiGet, logout, workspaceApi, type EntitlementsView, type MeWorkspaces } from '../../../../lib/api';
 
 const PLAN_LABEL: Record<string, string> = {
   free: 'Free',
@@ -106,6 +106,10 @@ export default function AccountSettingsPage() {
           }
         />
       </Card>
+
+      <div style={{ marginBottom: spacing.xl }}>
+        <Button variant="secondary" onClick={() => logout()}>{t('action.signOut')}</Button>
+      </div>
 
       <h2 style={{ fontSize: typography.size.lg, marginBottom: spacing.sm }}>{t('settings.aiEngine.title')}</h2>
       <Card style={{ marginBottom: spacing.xl }}>
