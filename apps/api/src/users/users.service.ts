@@ -13,6 +13,7 @@ export class UsersService {
         settings: true,
         memberships: {
           where: { status: 'active' },
+          orderBy: { createdAt: 'asc' },
           include: {
             workspace: {
               include: { settings: true },
