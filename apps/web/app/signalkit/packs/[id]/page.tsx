@@ -263,7 +263,13 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
       if (!workspaceId) return setState('not_found');
       await openPack(workspaceId, packId);
       setState('ready');
-    } catch {
+    } catch (e) {
+      // apiGet()/apiPost() already redirect to /login on a 401 (no/expired
+      // session) — don't also flash "Pack not found" here, which is
+      // misleading (the pack may well exist) and can be the last thing a
+      // slower mobile page transition leaves visible before the redirect
+      // actually happens.
+      if (e instanceof Error && e.message === 'http_401') return;
       setState('not_found');
     }
   }
