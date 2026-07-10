@@ -17,6 +17,7 @@ import { buildPackContext, type PackContext, type PackContextInput, type PackSco
 import { DEPTH_DOCUMENTS, buildDocument } from './templates';
 import { buildBuildBlueprint } from './blueprint';
 import { runQualityGates, type DocForGate } from './quality-gates';
+import { runProductPackV2ContentQualityChecks } from './product-pack-v2-quality';
 import {
   buildProductPackV2StepPrompt,
   buildProductPackV2StepRepairPrompt,
@@ -1654,6 +1655,11 @@ function buildProductPackV2QualityGate(
         : 'Pack title must not be empty or a preview placeholder.',
       documentTypes: [],
     },
+    ...runProductPackV2ContentQualityChecks({
+      documents: packJson.documents,
+      dataModel: packJson.dataModel as Array<{ entity?: string }>,
+      evidenceCount: packJson.quality.evidenceCount,
+    }).map((check) => ({ ...check, documentTypes: check.documentTypes as DocumentType[] })),
   ];
   const passedCount = checks.filter((check) => check.status === 'pass').length;
   const warnCount = checks.filter((check) => check.status === 'warn').length;

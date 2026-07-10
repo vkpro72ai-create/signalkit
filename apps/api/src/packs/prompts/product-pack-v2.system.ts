@@ -94,6 +94,24 @@ If evidence is missing, mark it as:
 - validation needed.
 If sources are not provided, say that the pack is a strategic starter pack and evidence must be added later.
 If a claim says "according to agencies/reports/data", it must have evidenceRefs. Otherwise rewrite it as an assumption or source need.
+If evidenceCount is 0, never write "generated from real market signals and evidence", "validated", "proven", "clinically proven", or "evidence-backed" anywhere in the pack. Write "strategic starter pack", "assumption-based", or "requires evidence collection" instead.
+
+BCG OPPORTUNITY EVALUATION RULE:
+Every Build-Ready Product Pack must include a real, scored "BCG Opportunity Evaluation & Star Upgrade Plan" document evaluating the FOUNDER'S IDEA (never SignalKit) — see that section's own contract for the full A-G structure, the opportunity-type-specific criteria (B2C/B2B/B2B2C/Infra-Devtool/Marketplace), and the numeric scorecard. A bare quadrant label with no reasoning, no numeric scorecard, no Star Upgrade Strategy, no Unicorn-grade Upside Path, or no Before/After table is treated as a failed pack, not a passable shortcut.
+Every upgrade recommendation anywhere in the pack (Star Upgrade Strategy, Growth & Monetization, Product Ecosystem Vision) must name the exact dimension or metric it improves and why — "improve quality", "do marketing", "add integrations" with no explanation is not acceptable.
+
+NO SHALLOW SECTIONS RULE:
+No major document may contain only 1-2 generic lines. Every major document must explain what it is, why it matters, who uses it, how it connects to the rest of the product, and include product-specific detail, examples, and implementation implications a cold reader can act on.
+
+NO GENERIC CRUD RULE:
+Do not output a data model or backend design whose only entities are generic placeholders like User, Workspace, or AI/Ai unless the product itself is genuinely about managing users, workspaces, or AI sessions. Design entities, modules, and screens specific to what this product actually does.
+Never use a generic placeholder screen name like "Item screen" — name every screen after what it actually shows.
+
+CONTEXT ISOLATION RULE:
+Never mention SignalKit, Nofida, or any other internal tool/company name inside the generated Product Pack content — the pack is about the founder's idea only, not about the system generating it.
+
+ENCODING RULE:
+Output must be clean UTF-8 text in the requested language. Never emit corrupted/mojibake character sequences or replacement characters.
 
 MEDICAL / LEGAL / FINANCIAL SAFETY:
 If the idea touches regulated domains, do not make unsupported claims.

@@ -9,6 +9,7 @@ export type ProductPackV2SectionKey =
   | 'founder_investor_vision'
   | 'category_and_market_strategy'
   | 'competitive_attack_switching_strategy'
+  | 'bcg_opportunity_evaluation_star_upgrade'
   | 'strategic_product_paths'
   | 'product_ecosystem_vision'
   | 'largest_upside_scenario'
@@ -91,6 +92,9 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'investor narrative',
       'strategic wedge without shrinking the vision',
       'largest upside scenario summary',
+      'current BCG classification summary (reference the BCG Opportunity Evaluation & Star Upgrade Plan by name for the full scorecard)',
+      'Star Upgrade summary — the two or three highest-leverage upgrade moves',
+      'unicorn-grade upside summary, in careful unproven-until-shown language',
       'main risks',
       'what must be proven',
       'what must not be reduced to a narrow MVP too early',
@@ -122,6 +126,8 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'barriers to adoption',
       'category risks',
       'category naming options',
+      'market-growth reasoning that feeds the BCG Opportunity Evaluation (is the category growing, flat, or shrinking, and why)',
+      'markets or segments not to enter first, and why',
     ],
   },
   {
@@ -150,6 +156,39 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'attack wedge',
       'defensibility hypotheses',
       'how to steal users or customers from alternatives',
+      'what incumbents will likely copy once this gains traction, and how to stay ahead of that',
+      'if exact competitors are unknown, list competitor categories and the research needed to name them',
+    ],
+  },
+  {
+    key: 'bcg_opportunity_evaluation_star_upgrade',
+    layer: 'vision',
+    title: 'BCG Opportunity Evaluation & Star Upgrade Plan',
+    audience: ['founder', 'investor', 'venture studio', 'strategy lead'],
+    purpose:
+      'Evaluate the FOUNDER\'S IDEA (never SignalKit itself) using BCG growth-share logic, then actively design how to move it toward Star and, where credible, category-leader status. This is analytical and scored, never a one-line label.',
+    mustExplain: [
+      'first classify the opportunity type — B2C, B2B, B2B2C, Infrastructure/Devtool, Marketplace, or Any/Mixed — from the idea itself, and apply the matching BCG criteria below; only compare business-model alternatives when the type is genuinely Any/Mixed, never bolt on an irrelevant B2B path to a pure B2C idea or vice versa',
+      'B2C criteria: market growth, consumer demand, retention potential, habit loop, CAC risk, willingness to pay, virality/organic loop, brand differentiation, emotional intensity of the problem, frequency of use',
+      'B2B criteria: buyer urgency, budget owner clarity, ROI, workflow pain, switching cost, sales cycle, integration depth, compliance/security needs, expansion revenue, ACV potential',
+      'B2B2C criteria: buyer/user split, institutional distribution, end-user activation, privacy/trust, partner adoption, user retention after distribution, procurement risk, outcomes reporting',
+      'Infrastructure/Devtool criteria: developer adoption, OSS/community wedge, ecosystem timing, standardization potential, technical moat, integration surface, developer workflow pain, trust/security',
+      'Marketplace criteria: supply/demand liquidity, cold-start wedge, network effects, take rate, repeat usage, trust and quality control, density of market, disintermediation risk',
+      'why the idea is a Star, Question Mark, Cash Cow, or Dog using market growth/category momentum, relative competitive position, ability to capture demand, distribution advantage, differentiation, defensibility, capital intensity, and timing',
+      'for an early-stage idea, interpret "relative market share" as: realistic ability to win a meaningful share of the first wedge, strength of differentiation versus incumbents, speed/realism of distribution, switching cost/retention potential, founder or product unfair advantage if present, and ability to become category-defining',
+      'why the idea is not yet a Star if it is not one, what blocks it, what is weak, what is promising, what assumptions are dangerous, what could collapse it into a Dog, and what could make it break out',
+      'what must be added, removed, or changed — across product, positioning, distribution, monetization, defensibility, and evidence — to move the opportunity toward Star, with each move tied explicitly to which scorecard dimension it raises and why',
+      'what would need to become true for a plausible venture-scale (unicorn-grade) outcome, using only careful, unproven-until-shown language — never fabricated TAM, revenue, or market-share numbers',
+    ],
+    mustInclude: [
+      'A. Current BCG Position: one of Star / Question Mark / Cash Cow / Dog, with full reasoning across every relevant factor listed above — never a bare label',
+      'B. BCG Scorecard: a real markdown table, 0-10 score per dimension (market growth, urgency of problem, buyer/user willingness to pay, competitive gap, differentiation, distribution access, retention/switching cost, monetization strength, defensibility/moat, evidence confidence, venture scale potential, execution feasibility), each with why-this-score, what-would-raise-it, and what-evidence-is-needed',
+      'C. Current State Diagnosis: why not yet a Star, blockers, weak parts, promising parts, dangerous assumptions, Dog-collapse risks, breakout triggers',
+      'D. Star Upgrade Strategy with five explicit upgrade tracks — Product upgrades (retention/urgency/differentiation/switching-cost features, harder-to-copy architecture, daily/weekly workflows, role of AI/data/integrations), Positioning upgrades (sharper category, clearer wedge, stronger promise, stronger enemy/status quo, why switch now), Distribution upgrades (strongest channels, growth loop or sales motion, partnerships, PLG/community/content/SEO or enterprise/channel strategy as fits the type), Monetization upgrades (pricing model, paywall moments, expansion paths, what pricing mistake would weaken the opportunity), Defensibility upgrades (data/workflow/network-effect/integration/trust/brand moat, switching costs) — plus an Evidence upgrades list of what must be validated first and what metrics investors would believe',
+      'E. Unicorn-grade Upside Path: what category/market expansion, platform/ecosystem move, data/network/workflow moat, distribution advantage, pricing/ACV/LTV path, and product-surface expansion would need to become true — using "could become", "requires proof", "unicorn-grade path depends on", "not proven yet"; never a factual unicorn claim',
+      'F. Before / After Upgrade Table: a second markdown table with columns Dimension | Current score | Weakness | Upgrade move | Target score after upgrades | Why score improves, covering market growth, competitive position, distribution, retention, monetization, moat, evidence confidence, venture scale, execution feasibility — the improved score is explicitly labeled a strategic target, not a proven fact',
+      'G. Final BCG Verdict: current BCG position, target BCG position after upgrades, minimum ambition (Star), maximum ambition (unicorn-grade category leader), top 5 moves required, top 5 proof points required, top 5 risks that can kill the upgrade',
+      'every upgrade recommendation must name the exact scorecard dimension it improves and why — generic advice like "improve quality" or "do marketing" with no tie to a score is not acceptable',
     ],
   },
   {
@@ -158,7 +197,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
     title: 'Strategic Product Paths',
     audience: ['founder', 'investor', 'product lead'],
     purpose:
-      'Show that the same raw idea can become different products, then compare the paths and recommend the strongest path without pretending the others do not exist.',
+      'Show that the same raw idea can become different products, then compare the paths and recommend the strongest path without pretending the others do not exist. Reference the BCG Opportunity Evaluation by name for scoring instead of re-deriving it.',
     mustExplain: [
       'multiple possible realizations of the idea',
       'pros and cons of each path',
@@ -167,6 +206,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'distribution differences',
       'why the recommended path is strongest',
       'why not the other paths first',
+      'what each path implies for the BCG classification and Star Upgrade potential',
     ],
     mustInclude: [
       '3 to 5 possible product strategies',
@@ -175,6 +215,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'business model for each path',
       'key risk for each path',
       'distribution motion for each path',
+      'BCG implication for each path',
       'recommended path',
       'why not the other paths first',
       'later expansion from recommended path into other paths',
@@ -202,10 +243,16 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'primary user modes',
       'secondary user modes',
       'ecosystem modules',
+      'adjacent modules beyond the core product',
+      'data layer that compounds over time',
+      'AI/automation layer if relevant to the idea',
+      'integrations that extend the ecosystem',
       'retention loops',
       'trust loops',
       'data loops',
       'long-term expansion map',
+      'what creates platform potential',
+      'what creates unicorn-grade upside if the ecosystem compounds, in careful unproven-until-shown language',
       'what must remain coherent across the ecosystem',
     ],
   },
@@ -565,6 +612,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'critical event storyboard',
       'handoff/export storyboard',
       'failure/error storyboard',
+      'trust/privacy storyboard if the product touches sensitive data or consent',
     ],
   },
   {
@@ -618,6 +666,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'empty states',
       'error states',
       'loading states',
+      'every screen name specific to this product — never a generic placeholder like "Item screen"',
     ],
   },
   {
@@ -643,6 +692,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'actions per screen',
       'empty/loading/error states',
       'API calls per screen',
+      'screen names specific to this product, not generic placeholders like "Item screen"',
     ],
   },
   {
@@ -697,10 +747,12 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'form fields',
       'API integration list',
       'state model',
-      'permission logic',
+      'permission/access states',
       'i18n requirements',
       'responsive behavior',
+      'accessibility notes',
       'acceptance checks',
+      'API calls specific to this product — never generic placeholders like GET /users or POST /workspaces unless the product is genuinely about user/workspace management itself',
     ],
   },
   {
@@ -731,6 +783,10 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'auth and permissions',
       'audit requirements',
       'error codes',
+      'data lifecycle (creation, retention, deletion/export)',
+      'observability/logging notes',
+      'security/privacy considerations specific to this product\'s data',
+      'entities and modules specific to this product — never a generic User/Workspace/AI-only data model unless the product itself is genuinely about user or workspace or AI-session management',
     ],
   },
   {
@@ -813,6 +869,7 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
       'evaluation rules',
       'failure handling',
       'handoff rules',
+      'escalation rules — when the agent must stop and hand off to a human',
     ],
   },
   {
@@ -887,13 +944,17 @@ export const PRODUCT_PACK_V2_SECTIONS: ProductPackV2SectionDefinition[] = [
     ],
     mustInclude: [
       'positioning',
+      'ICP / buyer / user distinction',
       'pricing hypotheses',
       'tiers',
       'paywall moments',
       'activation moment',
       'retention loops',
-      'channels',
+      'acquisition channels',
+      'growth loops',
       'expansion revenue',
+      'proof metrics an investor would believe',
+      'how this monetization design raises the BCG monetization-strength and venture-scale scores, and why',
     ],
   },
 

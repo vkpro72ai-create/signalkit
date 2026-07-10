@@ -69,36 +69,104 @@ interface StepJsonOptions {
   unsourcedClaim?: boolean;
 }
 
+/**
+ * A full, BCG-compliant fixture — real generation writes something like this
+ * for every real pack; a one-line placeholder would (correctly) now fail
+ * product_pack_shallow_bcg / product_pack_missing_bcg_scorecard /
+ * product_pack_missing_star_upgrade / product_pack_missing_unicorn_path /
+ * product_pack_missing_upgrade_table. See product-pack-v2-quality.test.ts
+ * for the dedicated negative-case tests of each of those checks.
+ */
+const BCG_FIXTURE_CONTENT = `
+A. Current BCG Position
+Question Mark: market growth is strong, but competitive position, distribution advantage, and defensibility are not yet proven. Differentiation is moderate; timing favors the category.
+
+B. BCG Scorecard
+| Dimension | Score | Why | What raises it | Evidence needed |
+|---|---|---|---|---|
+| Market growth | 7 | Category demand rising | Confirm with data | Market data |
+| Urgency of problem | 6 | Painful, not acute | Sharper wedge | Interviews |
+| Willingness to pay | 5 | Unproven | Pricing test | WTP survey |
+| Competitive gap | 6 | Incumbents generic | Differentiated workflow | Competitor teardown |
+| Differentiation | 5 | Some, not defensible | Unique data loop | User research |
+| Distribution | 4 | No channel proven | PLG loop | Channel experiment |
+| Retention | 5 | Habit not formed | Daily trigger | Cohort data |
+| Monetization | 5 | Hypothesis only | Tiered pricing | WTP data |
+| Defensibility | 3 | No moat yet | Data/workflow moat | Usage data |
+| Evidence confidence | 4 | Mostly assumption | Interviews | Source-backed claims |
+| Venture scale | 5 | Plausible, not proven | Expansion path | Market sizing |
+| Execution feasibility | 7 | Buildable now | N/A | N/A |
+
+C. Current State Diagnosis
+Not yet a Star because distribution and defensibility are unproven. Weak: retention loop, moat. Promising: market growth, execution feasibility. Dangerous assumption: willingness to pay. Could collapse into a Dog if distribution never lands; could break out if the data loop compounds.
+
+D. Star Upgrade Strategy
+Product upgrades: add a daily-use workflow and a compounding data loop, raising retention and defensibility.
+Positioning upgrades: sharpen the category wedge and name the status-quo enemy, raising differentiation.
+Distribution upgrades: build a product-led growth loop and a partnership channel, raising distribution.
+Monetization upgrades: move to usage-based pricing with an enterprise tier, raising monetization strength.
+Defensibility upgrades: accumulate a proprietary workflow/data moat over the first year, raising defensibility.
+
+E. Unicorn-grade Upside Path
+This could become a category leader if the data moat compounds and distribution proves repeatable — this requires proof and is not proven yet, and depends on evidence from the first user cohort.
+
+F. Before / After Upgrade Table
+| Dimension | Current score | Weakness | Upgrade move | Target score after upgrades | Why score improves |
+|---|---|---|---|---|---|
+| Market growth | 7 | None major | Confirm with data | 8 | Third-party validation |
+| Competitive position | 6 | Generic incumbents | Sharper wedge | 8 | Differentiation increases |
+| Distribution | 4 | No channel proven | PLG loop | 7 | Channel derisked |
+| Retention | 5 | No habit loop | Daily workflow | 8 | Habit loop formed |
+| Monetization | 5 | Pricing unproven | Usage-based tiers | 7 | Pricing tested |
+| Moat | 3 | No moat | Data/workflow moat | 7 | Compounding data |
+| Evidence confidence | 4 | Mostly assumption | Interviews + test | 7 | Evidence collected |
+| Venture scale | 5 | Plausible only | Expansion proof | 7 | Expansion validated |
+| Execution feasibility | 7 | None major | N/A | 8 | Team proven |
+
+G. Final BCG Verdict
+Current BCG position: Question Mark. Target: Star, with a unicorn-grade category-leader path as the maximum ambition. Top 5 moves: daily workflow, PLG channel, pricing tests, data moat, customer interviews. Top 5 proof points: retention data, channel CAC, pricing data, moat usage data, expansion signal. Top 5 risks: distribution failing, retention not forming, pricing rejection, fast incumbent copying, moat compounding too slowly.
+`;
+
 /** One step's `documents[]`, scoped to exactly that step's section keys — mirrors the contract in product-pack-v2.builder.ts. */
 function makeStepDocuments(step: StepDef, options: StepJsonOptions = {}) {
   const evidenceCount = options.evidenceCount ?? 2;
-  return sectionsForStep(step).map((section) => ({
-    type: section.key,
-    layer: section.layer,
-    title: section.title,
-    audience: ['founder', 'builder'],
-    purpose: `Purpose for ${section.key}`,
-    whatThisIs: `What ${section.key} is`,
-    whyItExists: `Why ${section.key} exists`,
-    howToUse: 'Use it as guidance.',
-    connections: ['product_vision'],
-    doneDefinition: ['Reviewed and approved'],
-    sections: [
-      {
-        heading: 'Overview',
-        content: options.unsourcedClaim && section.key === 'market_context'
-          ? 'According to reports, this market is growing rapidly.'
-          : `Content for ${section.key}`,
-        examples: ['Example'],
-        implementationNotes: ['Note'],
-        assumptions: ['Assumption'],
-        risks: ['Risk'],
-        evidenceRefs: evidenceCount > 0 ? ['Source 1'] : [],
-        sourceNeeds: [],
-      },
-    ],
-    acceptanceCriteria: ['Criterion 1'],
-  }));
+  return sectionsForStep(step).map((section) => {
+    const isBcg = section.key === 'bcg_opportunity_evaluation_star_upgrade';
+    return {
+      type: section.key,
+      layer: section.layer,
+      title: section.title,
+      audience: ['founder', 'builder'],
+      purpose: `Purpose for ${section.key}`,
+      whatThisIs: `What ${section.key} is`,
+      whyItExists: `Why ${section.key} exists`,
+      howToUse: 'Use it as guidance.',
+      connections: ['product_vision'],
+      doneDefinition: ['Reviewed and approved'],
+      sections: [
+        {
+          heading: 'Overview',
+          content: isBcg
+            ? BCG_FIXTURE_CONTENT
+            : options.unsourcedClaim && section.key === 'market_context'
+              // Still padded past the shallow-content threshold — this branch
+              // tests the unsourced-claim -> "Assumption / needs source:"
+              // normalization, not section depth.
+              ? 'According to reports, this market is growing rapidly. This section otherwise explains what it is, why it exists, who uses it, and how it connects to the rest of the product.'
+              // Long enough to clear product_pack_section_too_shallow (>150 chars) —
+              // real generation is always far longer than a one-line placeholder.
+              : `Content for ${section.key}. This section explains what it is, why it exists, who uses it, and how it connects to the rest of the product, with product-specific detail a cold reader can act on.`,
+          examples: ['Example'],
+          implementationNotes: ['Note'],
+          assumptions: ['Assumption'],
+          risks: ['Risk'],
+          evidenceRefs: evidenceCount > 0 ? ['Source 1'] : [],
+          sourceNeeds: [],
+        },
+      ],
+      acceptanceCriteria: ['Criterion 1'],
+    };
+  });
 }
 
 /** Top-level fields a given step owns, beyond `documents[]` — mirrors each step's `extraFieldsContract`. */
@@ -588,6 +656,82 @@ describe('PackService', () => {
     const updatedPackArgs = tx.productDocumentPack.update.mock.calls[0]![0].data;
     expect(updatedPackArgs.status).toBe('draft');
     expect(updatedPackArgs.title).toBe('Build-Ready Product Pack');
+  });
+
+  // ── Task 2: venture-grade content quality (BCG / Star Upgrade) ────────────
+
+  it('fails a pack the old way — every section structurally present, but the BCG evaluation is a bare label with no scorecard or upgrade plan', async () => {
+    // Reproduces "the old bad report": structurally complete (every section
+    // the pre-Task-2 gate checked for is there — the per-step schema
+    // validator already rejects an outright-missing section before this
+    // even reaches the quality gate, which is its own good defense), but the
+    // BCG document is exactly the shallow one-liner this task was written to
+    // catch. This is what passed before this task and must fail now.
+    const { prisma, gateCreate } = makePrisma();
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      const payload = makeStepPayload(step);
+      if (step.id === 'vision') {
+        payload.documents = payload.documents.map((doc: { type: string; sections: unknown[] }) =>
+          doc.type === 'bcg_opportunity_evaluation_star_upgrade'
+            ? {
+                ...doc,
+                sections: [{
+                  heading: 'BCG',
+                  content: 'Current BCG Position: Question Mark.',
+                  examples: [], implementationNotes: [], assumptions: [], risks: [], evidenceRefs: [], sourceNeeds: [],
+                }],
+              }
+            : doc,
+        );
+      }
+      routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(payload)));
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    const gateArgs = gateCreate.mock.calls[0]![0].data;
+    expect(gateArgs.status).toBe('failed');
+    const checkIds = gateArgs.checks.filter((c: { status: string }) => c.status === 'fail').map((c: { id: string }) => c.id);
+    expect(checkIds).toEqual(expect.arrayContaining([
+      'product_pack_shallow_bcg',
+      'product_pack_missing_bcg_scorecard',
+      'product_pack_missing_star_upgrade',
+      'product_pack_missing_unicorn_path',
+      'product_pack_missing_upgrade_table',
+    ]));
+  });
+
+  it('passes a genuinely deep, BCG-evaluated pack as a whole', async () => {
+    const { prisma, gateCreate } = makePrisma();
+    const routerRun = mockAllStepsSucceed();
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    const gateArgs = gateCreate.mock.calls[0]![0].data;
+    const failed = gateArgs.checks.filter((c: { status: string }) => c.status === 'fail');
+    expect(failed, JSON.stringify(failed, null, 2)).toEqual([]);
+  });
+});
+
+describe('PRODUCT_PACK_V2_SECTIONS — BCG / Star Upgrade', () => {
+  it('includes the BCG Opportunity Evaluation & Star Upgrade Plan in the canonical section list', () => {
+    const section = PRODUCT_PACK_V2_SECTIONS.find((s) => s.key === 'bcg_opportunity_evaluation_star_upgrade');
+    expect(section).toBeDefined();
+    expect(section!.title).toBe('BCG Opportunity Evaluation & Star Upgrade Plan');
+    expect(section!.layer).toBe('vision');
+  });
+
+  it('runs the BCG Opportunity Evaluation in the vision step, before Strategic Product Paths', () => {
+    const visionStep = PRODUCT_PACK_V2_STEPS.find((s) => s.id === 'vision')!;
+    const bcgIndex = visionStep.sectionKeys.indexOf('bcg_opportunity_evaluation_star_upgrade');
+    const pathsIndex = visionStep.sectionKeys.indexOf('strategic_product_paths');
+    expect(bcgIndex).toBeGreaterThanOrEqual(0);
+    expect(pathsIndex).toBeGreaterThan(bcgIndex);
   });
 });
 

@@ -43,10 +43,11 @@ VISION LAYER INSTRUCTIONS:
 2. Find hidden opportunities inside the idea.
 3. Find underrated features.
 4. Find competitor gaps and switching opportunities.
-5. Generate multiple possible product paths.
-6. Recommend a strategic path, but explain alternatives.
-7. Explain the largest upside scenario without fabricating TAM, revenue, clinical proof, laws, or sources.
-8. Explain category creation or category attack potential.`;
+5. Classify the opportunity type (B2C, B2B, B2B2C, Infrastructure/Devtool, Marketplace, or Any/Mixed) and evaluate it with the matching BCG criteria in the BCG Opportunity Evaluation & Star Upgrade Plan document — full A-G structure, numeric scorecard, Star Upgrade Strategy, Unicorn-grade Upside Path, and Before/After table. Generate this BEFORE Strategic Product Paths so the paths can reference its conclusion.
+6. Generate multiple possible product paths, each with its BCG implication.
+7. Recommend a strategic path, but explain alternatives.
+8. Explain the largest upside scenario without fabricating TAM, revenue, clinical proof, laws, or sources.
+9. Explain category creation or category attack potential.`;
 
 const BUILD_INSTRUCTIONS = `
 BUILD LAYER INSTRUCTIONS:
@@ -98,6 +99,7 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'founder_investor_vision',
       'category_and_market_strategy',
       'competitive_attack_switching_strategy',
+      'bcg_opportunity_evaluation_star_upgrade',
       'strategic_product_paths',
       'product_ecosystem_vision',
       'largest_upside_scenario',
@@ -106,8 +108,11 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     ],
     // Live-tested: 8 rich documents (whatThisIs/whyItExists/howToUse/
     // doneDefinition + multi-field sections) naturally ran past 23k tokens
-    // even before finishing — budget with real headroom, not a guess.
-    maxOutputTokens: 30000,
+    // even before finishing — budget with real headroom, not a guess. The
+    // BCG document (two scored tables + five upgrade tracks + unicorn path)
+    // is as content-heavy as the other 8 combined, so the step budget went
+    // up accordingly rather than squeezing it into the old number.
+    maxOutputTokens: 46000,
     layerInstructions: VISION_INSTRUCTIONS,
     extraFieldsContract: `{
   "packTitle": string,
