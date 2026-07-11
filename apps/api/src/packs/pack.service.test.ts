@@ -33,6 +33,18 @@ function makePrisma() {
     mvpConcept: 'mvp', recommendedProductFormat: 'b2b_saas', riskLevel: 'medium',
     scores: [{ totalScore: 70, confidenceValue: 0.5, confidenceLevel: 'medium', explanation: 'e', breakdown: [] }],
   };
+  // Interim (staged-availability) document rows created one createMany() call
+  // per step — findMany() below hands each call's rows straight back (with a
+  // synthetic id) so persistInterimStepDocuments() can resolve document ids.
+  let interimDocSeq = 0;
+  const interimDocCreateMany = vi.fn().mockResolvedValue({ count: 0 });
+  const interimDocFindMany = vi.fn(async ({ where }: { where: { docType: { in: string[] } } }) =>
+    where.docType.in.map((docType) => ({ id: `interim-${docType}-${interimDocSeq++}` })),
+  );
+  const stepUpsert = vi.fn().mockResolvedValue({});
+  const jobCreate = vi.fn().mockResolvedValue({ id: 'job1' });
+  const jobUpdate = vi.fn().mockResolvedValue({});
+  const jobFindUnique = vi.fn().mockResolvedValue(null);
   const prisma = {
     niche: { findFirst: vi.fn().mockResolvedValue(niche) },
     project: { findUnique: vi.fn().mockResolvedValue({ targetCountry: 'TR', marketLanguage: 'tr', marketScope: 'manual_country', targetRegion: null }) },
@@ -47,13 +59,15 @@ function makePrisma() {
       update: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    productPackDocument: { create: docCreate, updateMany: vi.fn().mockResolvedValue({}) },
+    productPackDocument: { create: docCreate, createMany: interimDocCreateMany, findMany: interimDocFindMany, updateMany: vi.fn().mockResolvedValue({}) },
     qualityGateResult: { create: gateCreate, findMany: vi.fn().mockResolvedValue([]) },
     ventureThesis: { findFirst: vi.fn().mockResolvedValue(null) },
     buildBlueprint: { deleteMany: vi.fn().mockResolvedValue({}), create: vi.fn().mockResolvedValue({ id: 'bp1' }) },
+    productPackGenerationStep: { upsert: stepUpsert },
+    productPackGenerationJob: { create: jobCreate, update: jobUpdate, findUnique: jobFindUnique },
     $transaction: vi.fn(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx)),
   } as unknown as PrismaService;
-  return { prisma, docCreate, docCreateMany, gateCreate, packUpdate, tx };
+  return { prisma, docCreate, docCreateMany, gateCreate, packUpdate, tx, interimDocCreateMany, interimDocFindMany, stepUpsert, jobCreate, jobUpdate, jobFindUnique };
 }
 
 /** Helper: the rows passed to the single createMany() call in a V2 test, or [] if it wasn't called. */
@@ -1036,5 +1050,138 @@ describe('PackService.amendDocumentV2', () => {
     const { router } = makeRouter();
     const svc = new PackService(prisma, router);
     await expect(svc.amendDocumentV2('w1', 'pk1', 'doc1', [])).rejects.toThrow();
+  });
+});
+
+// ── Task 3: async job-based generation — per-step progress + staged availability ──
+
+const JOB_SHAPE = { id: 'job1', workspaceId: 'w1', nicheId: 'n1', packId: 'pk1', depth: 'quick_opportunity', verticalTemplate: 'b2b_saas', language: null as string | null };
+
+describe('PackService.createPackShellForJob', () => {
+  it('creates the pack row and resolves context without running any pipeline step (no LLM calls)', async () => {
+    const { prisma } = makePrisma();
+    const { router, run } = makeRouter();
+    const svc = new PackService(prisma, router);
+
+    const { pack, ctx, projectId } = await svc.createPackShellForJob('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    expect(pack.id).toBe('pk1');
+    expect(projectId).toBe('p1');
+    expect(ctx.niche.title).toBe('Clinic Copilot');
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe('PackService.generateV2ForJob — per-step progress tracking + staged availability', () => {
+  it('persists each step\'s documents incrementally and marks every step row completed with timing/provider/model/attempt data', async () => {
+    const { prisma, interimDocCreateMany, stepUpsert } = makePrisma();
+    const routerRun = mockAllStepsSucceed();
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.generateV2ForJob(JOB_SHAPE);
+
+    expect(result.allStepsCompleted).toBe(true);
+    // One interim createMany() per step, each scoped to that step's own documents.
+    expect(interimDocCreateMany).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length);
+    const bcgInterimCall = interimDocCreateMany.mock.calls.find((call: any) =>
+      (call[0].data as Array<{ docType: string }>).some((row) => row.docType === 'bcg_opportunity_evaluation_star_upgrade'),
+    );
+    expect(bcgInterimCall).toBeDefined();
+
+    // Every step got a "running" upsert then a "completed" upsert (2 calls each, none left pending).
+    const completedCalls = stepUpsert.mock.calls.filter((call: any) => call[0].create.status === 'completed' || call[0].update.status === 'completed');
+    expect(completedCalls).toHaveLength(PRODUCT_PACK_V2_STEPS.length);
+    for (const call of completedCalls) {
+      const patch = call[0].update;
+      expect(patch.durationMs).toBeGreaterThanOrEqual(0);
+      expect(patch.provider).toBeTruthy();
+      expect(patch.model).toBeTruthy();
+      expect(patch.attemptCount).toBeGreaterThanOrEqual(1);
+      expect(Array.isArray(patch.documentIds)).toBe(true);
+    }
+  });
+
+  it('tracks the BCG step\'s own progress row explicitly (completed, attemptCount 1, repairCount 0 on a clean run)', async () => {
+    const { prisma, stepUpsert } = makePrisma();
+    const routerRun = mockAllStepsSucceed();
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generateV2ForJob(JOB_SHAPE);
+
+    const bcgCompleted = stepUpsert.mock.calls.find((call: any) => call[0].where.jobId_stepKey.stepKey === 'bcg_star_evaluation' && call[0].update.status === 'completed');
+    expect(bcgCompleted).toBeDefined();
+    expect(bcgCompleted![0].update.attemptCount).toBe(1);
+    expect(bcgCompleted![0].update.repairCount).toBe(0);
+  });
+
+  it('tracks repairCount/attemptCount when a step needs one repair pass', async () => {
+    const { prisma, stepUpsert } = makePrisma();
+    const [firstStep, ...restSteps] = PRODUCT_PACK_V2_STEPS;
+    const routerRun = vi.fn();
+    routerRun.mockResolvedValueOnce(makeLlmResult('not json', { outputTokens: 50 }));
+    routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(firstStep!)), { outputTokens: 180 }));
+    for (const step of restSteps) routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generateV2ForJob(JOB_SHAPE);
+
+    const firstStepCompleted = stepUpsert.mock.calls.find((call: any) => call[0].where.jobId_stepKey.stepKey === firstStep!.id && call[0].update.status === 'completed');
+    expect(firstStepCompleted![0].update.attemptCount).toBe(2);
+    expect(firstStepCompleted![0].update.repairCount).toBe(1);
+  });
+
+  it('marks a failed step with an error code/reason instead of leaving it pending', async () => {
+    const { prisma, stepUpsert } = makePrisma();
+    const firstStep = PRODUCT_PACK_V2_STEPS[0]!;
+    const routerRun = vi.fn()
+      .mockResolvedValueOnce(makeLlmResult('{"documents":[', { outputTokens: firstStep.maxOutputTokens }))
+      .mockResolvedValueOnce(makeLlmResult('{"documents":[', { outputTokens: firstStep.maxOutputTokens }));
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await expect(svc.generateV2ForJob(JOB_SHAPE)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'product_pack_v2_output_truncated' }),
+    });
+
+    const failedCall = stepUpsert.mock.calls.find((call: any) => call[0].where.jobId_stepKey.stepKey === firstStep.id && call[0].update.status === 'failed');
+    expect(failedCall).toBeDefined();
+    expect(failedCall![0].update.errorCode).toBeTruthy();
+    expect(failedCall![0].update.errorReason).toBeTruthy();
+  });
+
+  it('reports allStepsCompleted=false (partially generated, not build-ready) when a later non-BCG step fails after repair+regenerate', async () => {
+    const { prisma } = makePrisma();
+    const failingStepIndex = PRODUCT_PACK_V2_STEPS.findIndex((step) => step.id === 'qira_backlog');
+    const completedSteps = PRODUCT_PACK_V2_STEPS.slice(0, failingStepIndex);
+    const routerRun = vi.fn();
+    for (const step of completedSteps) routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
+    routerRun.mockResolvedValueOnce(makeLlmResult('not json', { outputTokens: 10 }));
+    routerRun.mockResolvedValueOnce(makeLlmResult('still not json', { outputTokens: 10 }));
+    routerRun.mockResolvedValueOnce(makeLlmResult('really still not json', { outputTokens: 10 }));
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.generateV2ForJob(JOB_SHAPE);
+
+    expect(result.allStepsCompleted).toBe(false);
+    // buildReady is computed by PackGenerationJobService as allStepsCompleted && gate !== 'failed' —
+    // an incomplete pack must never compute true regardless of gate status.
+    const wouldBeBuildReady = result.allStepsCompleted && result.qualityGate.status !== 'failed';
+    expect(wouldBeBuildReady).toBe(false);
+  });
+
+  it('reports allStepsCompleted=true for a fully generated pack (build-ready once the gate is not a hard fail)', async () => {
+    const { prisma } = makePrisma();
+    const routerRun = mockAllStepsSucceed();
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.generateV2ForJob(JOB_SHAPE);
+
+    expect(result.allStepsCompleted).toBe(true);
+    expect(result.qualityGate.status).not.toBe('failed');
   });
 });

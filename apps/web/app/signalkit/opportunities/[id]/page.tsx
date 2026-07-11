@@ -234,12 +234,15 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
     setBusy(true);
     setActionError(null);
     try {
-      const res = await apiPost<{ pack: { id: string } }>(`/workspaces/${ws}/niches/${id}/generate-pack`, {
+      // Async job-based generation (Task 3): the pack row exists immediately,
+      // but the ~20-25min pipeline still runs in the background — navigate
+      // right away, the pack page polls generation-status for progress.
+      const res = await apiPost<{ packId: string; jobId: string; status: string }>(`/workspaces/${ws}/niches/${id}/generate-pack`, {
         depth: 'build_ready',
         vertical: 'b2b_saas',
         useLlm: true,
       });
-      router.push(`/signalkit/packs/${res.pack.id}`);
+      router.push(`/signalkit/packs/${res.packId}`);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : l.packGenerationFailed);
     } finally {

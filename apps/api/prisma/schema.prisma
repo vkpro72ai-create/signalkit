@@ -106,6 +106,29 @@ enum ExportStatus {
   expired
 }
 
+enum PackGenerationJobStatus {
+  queued
+  running
+  partially_ready
+  completed
+  failed
+  cancelled
+}
+
+enum PackGenerationStepStatus {
+  pending
+  running
+  completed
+  repairing
+  failed
+  skipped
+}
+
+enum PackGenerationMode {
+  standard
+  strong_model
+}
+
 enum RiskLevel {
   low
   medium
@@ -700,6 +723,71 @@ model QualityGateResult {
   updatedAt   DateTime @updatedAt
 
   @@index([packId])
+}
+
+// Async, job-based Product Pack v2 generation (Task 3): the API returns a
+// job+pack id immediately instead of blocking on the ~20-25min multi-step
+// LLM pipeline. ProductPackGenerationStep tracks per-step progress/timing so
+// the client can poll for staged availability instead of a bare spinner.
+model ProductPackGenerationJob {
+  id                         String                  @id @default(cuid())
+  workspaceId                String
+  projectId                  String
+  nicheId                    String
+  packId                     String
+  status                     PackGenerationJobStatus @default(queued)
+  generationMode             PackGenerationMode      @default(standard)
+  depth                      String
+  verticalTemplate           String
+  language                   String?
+  requestedById              String?
+  currentStep                String?
+  progressPercent            Int                     @default(0)
+  readyDocumentCount         Int                     @default(0)
+  totalExpectedDocumentCount Int                     @default(0)
+  buildReady                 Boolean                 @default(false)
+  errorCode                  String?
+  errorReason                String?
+  startedAt                  DateTime?
+  completedAt                DateTime?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+  // Free-form extras: durationsMsByStep summary, repair totals, etc.
+  metadata                   Json                    @default("{}")
+
+  steps ProductPackGenerationStep[]
+
+  @@index([workspaceId])
+  @@index([packId])
+  @@index([nicheId])
+}
+
+model ProductPackGenerationStep {
+  id              String                    @id @default(cuid())
+  jobId           String
+  stepKey         String
+  status          PackGenerationStepStatus  @default(pending)
+  provider        String?
+  model           String?
+  maxOutputTokens Int?
+  inputTokens     Int?
+  outputTokens    Int?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+  attemptCount    Int                       @default(0)
+  repairCount     Int                       @default(0)
+  errorCode       String?
+  errorReason     String?
+  documentIds     Json                      @default("[]")
+  metadata        Json                      @default("{}")
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  job ProductPackGenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, stepKey])
+  @@index([jobId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

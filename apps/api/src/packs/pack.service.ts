@@ -437,23 +437,9 @@ export class PackService {
     return { pack, documentCount: built.length, qualityGate: result };
   }
 
-  /**
-   * Generate a Build-Ready Product Pack as a sequence of independent LLM
-   * steps (see product-pack-v2.steps.ts) instead of one ~39-section mega
-   * call. Steps run strictly in order — never in parallel — so each step
-   * can be told what earlier steps already decided (via a deterministic,
-   * non-LLM summary) and stay consistent with it. If a later step fails
-   * even after its own repair attempt, generation stops there but the
-   * documents/fields already produced by completed steps are still
-   * persisted rather than discarded.
-   */
-  private async generatePackV2(
-    workspaceId: string,
-    nicheId: string,
-    opts: GeneratePackOptions,
-    ctx: PackContext,
-    _requiredDocs: readonly DocumentType[],
-  ) {
+  /** Create just the pack row + resolve context, without running any LLM steps — fast, synchronous. Used by PackGenerationJobService so the client gets a real packId immediately, before the (possibly 20+ minute) pipeline runs in the background. */
+  async createPackShellForJob(workspaceId: string, nicheId: string, opts: GeneratePackOptions) {
+    const ctx = await this.gatherContext(workspaceId, nicheId, opts);
     const projectId = await this.projectIdForNiche(workspaceId, nicheId);
     const pack = await this.prisma.productDocumentPack.create({
       data: {
@@ -469,6 +455,77 @@ export class PackService {
         confidenceLevel: ctx.score?.confidenceLevel ?? 'low',
       },
     });
+    return { pack, ctx, projectId };
+  }
+
+  /** Runs the full V2 pipeline for an already-created job + pack row, with per-step progress tracking and staged document persistence. Called by PackGenerationJobService's (queued or inline) worker — never awaited by the HTTP request that created the job. */
+  async generateV2ForJob(job: {
+    id: string;
+    workspaceId: string;
+    nicheId: string;
+    packId: string;
+    depth: string;
+    verticalTemplate: string;
+    language: string | null;
+  }) {
+    const opts: GeneratePackOptions = {
+      depth: job.depth as ProductPackDepth,
+      vertical: job.verticalTemplate as VerticalTemplate,
+      language: (job.language ?? undefined) as LocaleCode | undefined,
+      useLlm: true,
+    };
+    const ctx = await this.gatherContext(job.workspaceId, job.nicheId, opts);
+    const requiredDocs = DEPTH_DOCUMENTS[opts.depth];
+    return this.generatePackV2(job.workspaceId, job.nicheId, opts, ctx, requiredDocs, {
+      jobId: job.id,
+      pack: { id: job.packId },
+    });
+  }
+
+  /**
+   * Generate a Build-Ready Product Pack as a sequence of independent LLM
+   * steps (see product-pack-v2.steps.ts) instead of one ~39-section mega
+   * call. Steps run strictly in order — never in parallel — so each step
+   * can be told what earlier steps already decided (via a deterministic,
+   * non-LLM summary) and stay consistent with it. If a later step fails
+   * even after its own repair attempt, generation stops there but the
+   * documents/fields already produced by completed steps are still
+   * persisted rather than discarded.
+   *
+   * When `jobContext` is provided (async/job-based generation only — see
+   * generateV2ForJob above), the already-created pack row is reused instead
+   * of creating a new one, and each step's progress/timing is persisted to
+   * ProductPackGenerationStep plus its documents are written to the DB
+   * immediately (staged availability) rather than only at the very end. The
+   * synchronous call path (plain `generate()`, and all of pack.service.test.ts)
+   * never passes `jobContext`, so its behavior is completely unchanged.
+   */
+  private async generatePackV2(
+    workspaceId: string,
+    nicheId: string,
+    opts: GeneratePackOptions,
+    ctx: PackContext,
+    _requiredDocs: readonly DocumentType[],
+    jobContext?: { jobId: string; pack: { id: string } },
+  ) {
+    const projectId = await this.projectIdForNiche(workspaceId, nicheId);
+    const pack = jobContext
+      ? jobContext.pack
+      : await this.prisma.productDocumentPack.create({
+          data: {
+            workspaceId,
+            nicheId,
+            projectId,
+            title: 'Build-Ready Product Pack',
+            depth: opts.depth,
+            verticalTemplate: opts.vertical,
+            primaryLanguage: ctx.language,
+            status: 'generating',
+            confidenceValue: ctx.score?.confidenceValue ?? 0,
+            confidenceLevel: ctx.score?.confidenceLevel ?? 'low',
+          },
+        });
+    const jobId = jobContext?.jobId;
 
     const input = this.buildProductPackV2Input(ctx, opts);
     const documents: ProductPackV2Document[] = [];
@@ -476,8 +533,12 @@ export class PackService {
     const stepAiRuns: PackV2StepAiRuns = {};
     const priorSummaries: string[] = [];
     let pipelineError: unknown = null;
+    let allStepsCompleted = true;
+    const totalSteps = PRODUCT_PACK_V2_STEPS.length;
 
-    for (const step of PRODUCT_PACK_V2_STEPS) {
+    for (const [stepIndex, step] of PRODUCT_PACK_V2_STEPS.entries()) {
+      const stepStartedAt = Date.now();
+      if (jobId) await this.markGenerationStepRunning(jobId, step.id);
       try {
         const stepResult = step.id === 'bcg_star_evaluation'
           ? await this.runBcgStep(workspaceId, pack.id, projectId, ctx, input, step, priorSummaries.join('\n\n'))
@@ -486,9 +547,19 @@ export class PackService {
         mergeStepFields(extraFields, stepResult.extraFields);
         stepAiRuns[step.id] = stepResult.aiRun;
         priorSummaries.push(summarizeStepForNextStep(step, stepResult));
+        if (jobId) {
+          const documentIds = await this.persistInterimStepDocuments(stepResult.documents, ctx, opts, pack.id);
+          await this.markGenerationStepCompleted(jobId, step.id, stepResult.aiRun, Date.now() - stepStartedAt, documentIds);
+          await this.updateJobProgress(jobId, {
+            currentStep: step.id,
+            progressPercent: Math.round(((stepIndex + 1) / totalSteps) * 100),
+            readyDocumentCount: documents.length,
+          });
+        }
       } catch (error) {
         pipelineError = error;
         this.logger.warn(`Product Pack v2 step "${step.id}" failed for niche ${nicheId}: ${String(error)}`);
+        if (jobId) await this.markGenerationStepFailed(jobId, step.id, error, Date.now() - stepStartedAt);
         // Every other step's documents-so-far are still persisted as a
         // draft pack on failure (see the docstring above) — but there is no
         // safe partial/fake fallback for a scored BCG evaluation, so a BCG
@@ -497,6 +568,7 @@ export class PackService {
           await this.prisma.productDocumentPack.update({ where: { id: pack.id }, data: { status: 'failed' } });
           throw mapPackGenerationError(pipelineError, 'BCG Opportunity Evaluation step failed.');
         }
+        allStepsCompleted = false;
         break;
       }
     }
@@ -564,12 +636,90 @@ export class PackService {
         pack: { ...saved.updatedPack, metadata: packMetadata },
         documentCount: docRows.length,
         qualityGate: saved.qualityGate,
+        allStepsCompleted,
       };
     } catch (error) {
       await this.prisma.productDocumentPack.update({ where: { id: pack.id }, data: { status: 'failed' } });
       this.logger.warn(`Product Pack v2 post-processing failed for niche ${nicheId}: ${String(error)}`);
       throw mapPackGenerationError(error, 'Build-Ready Product Pack generation failed.');
     }
+  }
+
+  // ── Async job progress hooks (only exercised when generatePackV2 is called with jobContext) ──
+
+  private async markGenerationStepRunning(jobId: string, stepKey: string): Promise<void> {
+    await this.prisma.productPackGenerationStep.upsert({
+      where: { jobId_stepKey: { jobId, stepKey } },
+      create: { jobId, stepKey, status: 'running', startedAt: new Date(), attemptCount: 1 },
+      update: { status: 'running', startedAt: new Date() },
+    });
+  }
+
+  private async markGenerationStepCompleted(
+    jobId: string,
+    stepKey: string,
+    aiRun: PackV2AiRun,
+    durationMs: number,
+    documentIds: string[],
+  ): Promise<void> {
+    const attemptCount = 1 + (aiRun.repair ? 1 : 0) + (aiRun.regenerate ? 1 : 0);
+    const repairCount = (aiRun.repair ? 1 : 0) + (aiRun.regenerate ? 1 : 0);
+    const finalAttempt = aiRun.regenerate ?? aiRun.repair ?? aiRun.primary;
+    await this.prisma.productPackGenerationStep.upsert({
+      where: { jobId_stepKey: { jobId, stepKey } },
+      create: {
+        jobId, stepKey, status: 'completed', startedAt: new Date(Date.now() - durationMs), completedAt: new Date(),
+        durationMs, attemptCount, repairCount,
+        provider: finalAttempt.provider, model: finalAttempt.modelId, maxOutputTokens: finalAttempt.effectiveMaxOutputTokens,
+        inputTokens: finalAttempt.inputTokens, outputTokens: finalAttempt.outputTokens,
+        documentIds: documentIds as unknown as Prisma.InputJsonValue,
+        metadata: { aiRun } as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        status: 'completed', completedAt: new Date(), durationMs, attemptCount, repairCount,
+        provider: finalAttempt.provider, model: finalAttempt.modelId, maxOutputTokens: finalAttempt.effectiveMaxOutputTokens,
+        inputTokens: finalAttempt.inputTokens, outputTokens: finalAttempt.outputTokens,
+        documentIds: documentIds as unknown as Prisma.InputJsonValue,
+        metadata: { aiRun } as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async markGenerationStepFailed(jobId: string, stepKey: string, error: unknown, durationMs: number): Promise<void> {
+    const mapped = mapPackGenerationError(error, 'Product Pack step failed.');
+    const response = mapped.getResponse();
+    const errorCode = response && typeof response === 'object' && 'code' in response ? String((response as { code: unknown }).code) : 'product_pack_step_failed';
+    const errorReason = mapped instanceof Error ? mapped.message.slice(0, 500) : String(mapped).slice(0, 500);
+    await this.prisma.productPackGenerationStep.upsert({
+      where: { jobId_stepKey: { jobId, stepKey } },
+      create: { jobId, stepKey, status: 'failed', startedAt: new Date(Date.now() - durationMs), completedAt: new Date(), durationMs, attemptCount: 1, errorCode, errorReason },
+      update: { status: 'failed', completedAt: new Date(), durationMs, errorCode, errorReason },
+    });
+  }
+
+  private async updateJobProgress(
+    jobId: string,
+    patch: { currentStep: string; progressPercent: number; readyDocumentCount: number },
+  ): Promise<void> {
+    await this.prisma.productPackGenerationJob.update({ where: { id: jobId }, data: patch });
+  }
+
+  /** Staged availability: write this step's documents to the DB right away (lightweight rows, no full pack aggregation) so a polling client can list them before the pipeline finishes. The final transaction later replaces every row with the fully-normalized set. */
+  private async persistInterimStepDocuments(
+    stepDocuments: ProductPackV2Document[],
+    ctx: PackContext,
+    opts: GeneratePackOptions,
+    packId: string,
+  ): Promise<string[]> {
+    if (stepDocuments.length === 0) return [];
+    const rows = stepDocuments.map((doc) => mapPackV2DocumentToInterimRow(doc, ctx, opts, packId));
+    await this.prisma.productPackDocument.createMany({ data: rows });
+    const docTypes = rows.map((row) => row.docType);
+    const saved = await this.prisma.productPackDocument.findMany({
+      where: { packId, docType: { in: docTypes as DocumentType[] } },
+      select: { id: true },
+    });
+    return saved.map((row) => row.id);
   }
 
   private buildProductPackV2Input(ctx: PackContext, opts: GeneratePackOptions): BuildProductPackV2PromptInput {
@@ -1842,6 +1992,45 @@ function mapPackV2DocumentToProductPackDocument(
       document: doc,
       layer: section?.layer ?? 'build',
       section: section ? { key: section.key, title: section.title } : null,
+    } as unknown as Prisma.InputJsonValue,
+  };
+}
+
+/**
+ * Lightweight per-document row for staged availability: unlike
+ * mapPackV2DocumentToProductPackDocument, this doesn't need the full
+ * aggregated packJson/packMetadata (those only exist once every step has
+ * run) — just this one document, rendered the same way
+ * (documentToMarkdown), marked `interim: true` so it's identifiable while
+ * the pipeline is still running. The final transaction in generatePackV2
+ * deletes and replaces every row for this pack with the fully-normalized
+ * set, so these interim rows never linger once generation finishes.
+ */
+function mapPackV2DocumentToInterimRow(
+  doc: ProductPackV2Document,
+  ctx: PackContext,
+  opts: GeneratePackOptions,
+  packId: string,
+): Prisma.ProductPackDocumentUncheckedCreateInput {
+  const section = resolvePackV2Section(doc.type, doc.title);
+  return {
+    packId,
+    docType: (section?.key ?? doc.type ?? slugifyDocType(doc.title)) as DocumentType,
+    title: doc.title,
+    body: documentToMarkdown(doc),
+    language: ctx.language,
+    status: 'generating',
+    confidenceValue: 0,
+    confidenceLevel: 'low',
+    qualityGateStatus: 'not_run',
+    metadata: {
+      language: ctx.language,
+      packDepth: opts.depth,
+      verticalTemplate: opts.vertical,
+      document: doc,
+      layer: section?.layer ?? 'build',
+      section: section ? { key: section.key, title: section.title } : null,
+      interim: true,
     } as unknown as Prisma.InputJsonValue,
   };
 }

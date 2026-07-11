@@ -16,6 +16,7 @@ import {
   palette,
 } from '../../../../components/ui';
 import { Markdown } from '../../../../components/markdown';
+import { PackGenerationStatusBanner } from '../../../../components/pack-generation-status';
 import { useT } from '../../../../lib/i18n';
 import {
   apiGet,
@@ -504,6 +505,8 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
       {state === 'ready' && pack && (
         <>
+          {ws && <PackGenerationStatusBanner workspaceId={ws} packId={pack.id} />}
+
           {/* Quality gate row */}
           <div style={{ display: 'flex', gap: spacing.xs, marginBottom: spacing.md, alignItems: 'center', flexWrap: 'wrap' }}>
             {pack.qualityGate && (

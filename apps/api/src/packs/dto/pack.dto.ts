@@ -8,6 +8,8 @@ const VERTICALS: VerticalTemplate[] = [
   'local_service_saas', 'compliance_saas', 'health_adjacent_product', 'fintech_adjacent_product', 'ecommerce_tool',
   'creator_economy_tool', 'internal_enterprise_tool',
 ];
+const GENERATION_MODES = ['standard', 'strong_model'] as const;
+export type GenerationModeDto = (typeof GENERATION_MODES)[number];
 
 export class GeneratePackDto {
   @ApiProperty({ enum: DEPTHS })
@@ -23,8 +25,16 @@ export class GeneratePackDto {
   @IsString()
   language?: string;
 
-  @ApiPropertyOptional({ description: 'Enhance documents via LlmRouterService (needs a configured LLM).' })
+  @ApiPropertyOptional({ description: 'Enhance documents via LlmRouterService (needs a configured LLM). When true, generation runs as an async job — see generation-status endpoints.' })
   @IsOptional()
   @IsBoolean()
   useLlm?: boolean;
+
+  @ApiPropertyOptional({
+    enum: GENERATION_MODES,
+    description: 'standard = current reliable multi-step pipeline. strong_model is scaffolded for a future stronger-model pipeline and fails with strong_model_not_configured until one is wired up — only relevant when useLlm=true.',
+  })
+  @IsOptional()
+  @IsIn(GENERATION_MODES)
+  generationMode?: GenerationModeDto;
 }

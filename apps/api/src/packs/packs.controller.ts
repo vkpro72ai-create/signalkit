@@ -2,19 +2,56 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { LocaleCode } from '@signalkit/shared';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/auth.service';
 import { PackService } from './pack.service';
+import { PackGenerationJobService } from './pack-generation-job.service';
 import { GeneratePackDto } from './dto/pack.dto';
 
 @ApiTags('packs')
 @Controller('workspaces/:workspaceId')
 export class PacksController {
-  constructor(private readonly packs: PackService) {}
+  constructor(
+    private readonly packs: PackService,
+    private readonly jobs: PackGenerationJobService,
+  ) {}
 
+  /**
+   * useLlm=false: unchanged, fast synchronous deterministic generation.
+   * useLlm=true: returns quickly with { packId, jobId, status } — the real
+   * ~20-25min pipeline runs in the background. Poll
+   * GET packs/:packId/generation-status (or pack-generation-jobs/:jobId)
+   * for progress.
+   */
   @Post('niches/:nicheId/generate-pack')
   @RequirePermissions('pack:generate')
-  @ApiOperation({ summary: 'Generate a Product Document Pack for a niche' })
-  generate(@Param('workspaceId') ws: string, @Param('nicheId') nicheId: string, @Body() dto: GeneratePackDto) {
-    return this.packs.generate(ws, nicheId, { depth: dto.depth, vertical: dto.vertical, language: dto.language as LocaleCode | undefined, useLlm: dto.useLlm });
+  @ApiOperation({ summary: 'Generate a Product Document Pack for a niche (async job when useLlm=true)' })
+  async generate(
+    @Param('workspaceId') ws: string,
+    @Param('nicheId') nicheId: string,
+    @Body() dto: GeneratePackDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const opts = { depth: dto.depth, vertical: dto.vertical, language: dto.language as LocaleCode | undefined, useLlm: dto.useLlm };
+    if (!dto.useLlm) {
+      return this.packs.generate(ws, nicheId, opts);
+    }
+    const job = await this.jobs.create(ws, nicheId, opts, user.sub, dto.generationMode ?? 'standard');
+    return shapeJobStatus(job);
+  }
+
+  @Get('packs/:packId/generation-status')
+  @RequirePermissions('pack:read')
+  @ApiOperation({ summary: 'Get the latest Product Pack generation job status for a pack (progress, staged availability, build-ready)' })
+  async generationStatusForPack(@Param('workspaceId') ws: string, @Param('packId') packId: string) {
+    return shapeJobStatus(await this.jobs.getJobForPack(ws, packId));
+  }
+
+  @Get('pack-generation-jobs/:jobId')
+  @RequirePermissions('pack:read')
+  @ApiOperation({ summary: 'Get a Product Pack generation job status by job id' })
+  async generationStatus(@Param('workspaceId') ws: string, @Param('jobId') jobId: string) {
+    return shapeJobStatus(await this.jobs.getJob(ws, jobId));
   }
 
   @Get('niches/:nicheId/packs')
@@ -58,4 +95,37 @@ export class PacksController {
   regenerateBlueprint(@Param('workspaceId') ws: string, @Param('packId') packId: string) {
     return this.packs.regenerateBlueprint(ws, packId);
   }
+}
+
+/** Shapes a ProductPackGenerationJob (+ steps) row into the polling contract the frontend expects. */
+function shapeJobStatus(job: Awaited<ReturnType<PackGenerationJobService['getJob']>>) {
+  return {
+    jobId: job.id,
+    packId: job.packId,
+    status: job.status,
+    generationMode: job.generationMode,
+    overallProgress: job.progressPercent,
+    currentStep: job.currentStep,
+    steps: job.steps.map((step) => ({
+      stepKey: step.stepKey,
+      status: step.status,
+      provider: step.provider,
+      model: step.model,
+      startedAt: step.startedAt,
+      completedAt: step.completedAt,
+      durationMs: step.durationMs,
+      attemptCount: step.attemptCount,
+      repairCount: step.repairCount,
+      errorCode: step.errorCode,
+      errorReason: step.errorReason,
+      documentIds: step.documentIds,
+    })),
+    readyDocumentCount: job.readyDocumentCount,
+    totalExpectedDocumentCount: job.totalExpectedDocumentCount,
+    buildReady: job.buildReady,
+    errorCode: job.errorCode,
+    errorReason: job.errorReason,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+  };
 }
