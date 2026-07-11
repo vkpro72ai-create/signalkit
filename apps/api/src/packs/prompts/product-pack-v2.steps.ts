@@ -17,6 +17,7 @@ import { PRODUCT_PACK_V2_SECTIONS, type ProductPackV2SectionKey } from './produc
 
 export type ProductPackV2StepId =
   | 'vision'
+  | 'bcg_star_evaluation'
   | 'build_product'
   | 'build_design'
   | 'build_engineering'
@@ -35,6 +36,14 @@ export interface ProductPackV2Step {
   layerInstructions: string;
   /** JSON shape for the extra top-level fields this step owns, beyond the universal `documents[]` array. */
   extraFieldsContract: string;
+  /**
+   * Per-document contract override for this step, replacing
+   * PRODUCT_PACK_V2_DOCUMENT_CONTRACT inside the shared `documents[]` wrapper.
+   * Used by bcg_star_evaluation — see BCG_STEP_DOCUMENT_CONTRACT below for why
+   * (structured scored fields instead of markdown-in-JSON reduces schema
+   * drift risk; the backend renders the final markdown deterministically).
+   */
+  documentContractOverride?: string;
 }
 
 const VISION_INSTRUCTIONS = `
@@ -43,11 +52,100 @@ VISION LAYER INSTRUCTIONS:
 2. Find hidden opportunities inside the idea.
 3. Find underrated features.
 4. Find competitor gaps and switching opportunities.
-5. Classify the opportunity type (B2C, B2B, B2B2C, Infrastructure/Devtool, Marketplace, or Any/Mixed) and evaluate it with the matching BCG criteria in the BCG Opportunity Evaluation & Star Upgrade Plan document — full A-G structure, numeric scorecard, Star Upgrade Strategy, Unicorn-grade Upside Path, and Before/After table. Generate this BEFORE Strategic Product Paths so the paths can reference its conclusion.
-6. Generate multiple possible product paths, each with its BCG implication.
-7. Recommend a strategic path, but explain alternatives.
-8. Explain the largest upside scenario without fabricating TAM, revenue, clinical proof, laws, or sources.
-9. Explain category creation or category attack potential.`;
+5. Generate multiple possible product paths, each noting its likely BCG implication in general terms (the numeric BCG Opportunity Evaluation itself is produced separately, right after this step — reference it by name rather than re-deriving it).
+6. Recommend a strategic path, but explain alternatives.
+7. Explain the largest upside scenario without fabricating TAM, revenue, clinical proof, laws, or sources.
+8. Explain category creation or category attack potential.`;
+
+const BCG_STAR_INSTRUCTIONS = `
+BCG OPPORTUNITY EVALUATION INSTRUCTIONS:
+1. Evaluate the FOUNDER'S IDEA (never SignalKit itself) using BCG growth-share logic. This is analytical and scored, never a one-line label.
+2. First classify the opportunity type — B2C, B2B, B2B2C, Infrastructure/Devtool, Marketplace, or Any/Mixed — from the idea itself, and apply the matching criteria; only compare business-model alternatives when the type is genuinely Any/Mixed.
+3. B2C criteria: market growth, consumer demand, retention potential, habit loop, CAC risk, willingness to pay, virality/organic loop, brand differentiation, emotional intensity of the problem, frequency of use.
+4. B2B criteria: buyer urgency, budget owner clarity, ROI, workflow pain, switching cost, sales cycle, integration depth, compliance/security needs, expansion revenue, ACV potential.
+5. B2B2C criteria: buyer/user split, institutional distribution, end-user activation, privacy/trust, partner adoption, user retention after distribution, procurement risk, outcomes reporting.
+6. Infrastructure/Devtool criteria: developer adoption, OSS/community wedge, ecosystem timing, standardization potential, technical moat, integration surface, developer workflow pain, trust/security.
+7. Marketplace criteria: supply/demand liquidity, cold-start wedge, network effects, take rate, repeat usage, trust and quality control, density of market, disintermediation risk.
+8. Fill every field in the contract below as STRUCTURED DATA — short labels, scores, and arrays of short strings. Do NOT write markdown tables, do NOT put "|" pipe-table syntax anywhere, and do NOT format any field as a table — the backend renders the final markdown/tables from these structured fields.
+9. Every scorecard entry needs a real 0-10 currentScore, not a placeholder — and rationale/whatWouldRaiseIt/evidenceNeeded specific to THIS idea, never generic filler.
+10. Every star-upgrade-strategy item must name what it changes and why that raises a specific scorecard dimension — "improve quality" or "do marketing" with no reasoning is not acceptable.
+11. unicornGradeUpsidePath must use careful, unproven-until-shown language ("could become", "requires proof", "depends on", "not proven yet") — never state it as a fact, never fabricate TAM/revenue/market-share numbers.
+12. beforeAfterUpgradeTable's targetScoreAfterUpgrades is a strategic target, not a proven fact — say so implicitly by tying it to the upgrade move, not asserting it as already achieved.`;
+
+/**
+ * Structured, table-free contract for the BCG step's single document.
+ * Deliberately does NOT include the generic `sections`/`examples`/
+ * `implementationNotes`/... fields from PRODUCT_PACK_V2_DOCUMENT_CONTRACT —
+ * asking the model for two markdown tables embedded as JSON strings is what
+ * caused schema_invalid_documents/schema_missing_sections against
+ * deepseek-v4-flash. The backend (pack.service.ts) renders `sections` from
+ * these structured fields deterministically after parsing.
+ */
+export const BCG_STEP_DOCUMENT_CONTRACT = `{
+  "type": "bcg_opportunity_evaluation_star_upgrade" (MUST be copied verbatim, in English, even when everything else is written in the output language),
+  "layer": "vision",
+  "title": string,
+  "audience": string[],
+  "purpose": string,
+  "whatThisIs": string,
+  "whyItExists": string,
+  "howToUse": string,
+  "connections": string[],
+  "doneDefinition": string[],
+  "acceptanceCriteria": string[],
+  "sections": [] (ALWAYS an empty array — this step returns structured fields below instead of markdown sections; the backend renders the document body from them),
+  "bcg": {
+    "opportunityType": "B2C" | "B2B" | "B2B2C" | "Infrastructure/Devtool" | "Marketplace" | "Mixed",
+    "currentPosition": "Star" | "Question Mark" | "Cash Cow" | "Dog",
+    "marketGrowthAssessment": string,
+    "relativeCompetitivePosition": string,
+    "classificationRationale": string,
+    "starBlockers": string[],
+    "starPotential": string,
+    "minimumAmbition": "Star",
+    "maximumAmbition": string
+  },
+  "scorecard": [
+    { "dimension": string, "currentScore": number, "rationale": string, "whatWouldRaiseIt": string, "evidenceNeeded": string }
+    // exactly these 12 dimensions, in this order: Market growth, Urgency of problem, Buyer/user willingness to pay, Competitive gap, Differentiation, Distribution access, Retention / switching cost, Monetization strength, Defensibility / moat, Evidence confidence, Venture scale potential, Execution feasibility
+  ],
+  "currentStateDiagnosis": {
+    "weakParts": string[],
+    "promisingParts": string[],
+    "dangerousAssumptions": string[],
+    "dogRisks": string[],
+    "breakoutTriggers": string[]
+  },
+  "starUpgradeStrategy": {
+    "productUpgrades": string[],
+    "positioningUpgrades": string[],
+    "distributionUpgrades": string[],
+    "monetizationUpgrades": string[],
+    "defensibilityUpgrades": string[],
+    "evidenceUpgrades": string[]
+  },
+  "unicornGradeUpsidePath": {
+    "categoryExpansionNeeded": string,
+    "platformOrEcosystemMove": string,
+    "moatNeeded": string,
+    "distributionAdvantageNeeded": string,
+    "pricingOrLtvPath": string,
+    "productSurfaceExpansion": string,
+    "proofRequiredBeforeClaimingUpside": string[],
+    "investorBeliefTriggers": string[]
+  },
+  "beforeAfterUpgradeTable": [
+    { "dimension": string, "currentScore": number, "weakness": string, "upgradeMove": string, "targetScoreAfterUpgrades": number, "whyScoreImproves": string }
+    // exactly these 9 dimensions, in this order: Market growth, Competitive position, Distribution, Retention, Monetization, Moat, Evidence confidence, Venture scale, Execution feasibility
+  ],
+  "finalBcgVerdict": {
+    "currentBcgPosition": string,
+    "targetBcgPositionAfterUpgrades": string,
+    "topFiveMovesRequired": string[],
+    "topFiveProofPointsRequired": string[],
+    "topFiveRisks": string[]
+  }
+}`;
 
 const BUILD_INSTRUCTIONS = `
 BUILD LAYER INSTRUCTIONS:
@@ -99,7 +197,6 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
       'founder_investor_vision',
       'category_and_market_strategy',
       'competitive_attack_switching_strategy',
-      'bcg_opportunity_evaluation_star_upgrade',
       'strategic_product_paths',
       'product_ecosystem_vision',
       'largest_upside_scenario',
@@ -108,11 +205,15 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     ],
     // Live-tested: 8 rich documents (whatThisIs/whyItExists/howToUse/
     // doneDefinition + multi-field sections) naturally ran past 23k tokens
-    // even before finishing — budget with real headroom, not a guess. The
-    // BCG document (two scored tables + five upgrade tracks + unicorn path)
-    // is as content-heavy as the other 8 combined, so the step budget went
-    // up accordingly rather than squeezing it into the old number.
-    maxOutputTokens: 46000,
+    // even before finishing — budget with real headroom, not a guess.
+    // The BCG Opportunity Evaluation used to be a 9th document bundled into
+    // this same call — live-tested against deepseek-v4-flash, that produced
+    // schema_invalid_documents/schema_missing_sections on all 3 attempts (not
+    // truncation — outputTokens stayed well under budget). It is now its own
+    // dedicated step (bcg_star_evaluation, below) with a structured,
+    // markdown-free contract, and this step's budget is back to its
+    // pre-BCG size.
+    maxOutputTokens: 30000,
     layerInstructions: VISION_INSTRUCTIONS,
     extraFieldsContract: `{
   "packTitle": string,
@@ -137,6 +238,18 @@ export const PRODUCT_PACK_V2_STEPS: ProductPackV2Step[] = [
     "whatMustNotBeLost": string[]
   }
 }`,
+  },
+  {
+    id: 'bcg_star_evaluation',
+    title: 'BCG Opportunity Evaluation & Star Upgrade Plan',
+    sectionKeys: ['bcg_opportunity_evaluation_star_upgrade'],
+    // Exactly one document, but a dense structured one (scorecard + before/
+    // after table + five upgrade tracks + unicorn path) — this budget is
+    // sized for one rich document, not nine.
+    maxOutputTokens: 18000,
+    layerInstructions: BCG_STAR_INSTRUCTIONS,
+    extraFieldsContract: `{}`,
+    documentContractOverride: BCG_STEP_DOCUMENT_CONTRACT,
   },
   {
     id: 'build_product',

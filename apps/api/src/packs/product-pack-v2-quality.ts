@@ -19,10 +19,78 @@ export interface PackV2DocSectionLike {
   implementationNotes?: string[];
 }
 
+// ── BCG structured fields (see product-pack-v2.steps.ts's
+// BCG_STEP_DOCUMENT_CONTRACT for the canonical shape) — the gate validates
+// these directly instead of scanning rendered markdown, since the backend
+// (not the model) builds the markdown deterministically from them.
+
+export interface PackV2BcgScorecardItemLike {
+  dimension?: string;
+  currentScore?: number;
+  rationale?: string;
+  whatWouldRaiseIt?: string;
+  evidenceNeeded?: string;
+}
+
+export interface PackV2BcgUpgradeTableItemLike {
+  dimension?: string;
+  currentScore?: number;
+  weakness?: string;
+  upgradeMove?: string;
+  targetScoreAfterUpgrades?: number;
+  whyScoreImproves?: string;
+}
+
+export interface PackV2BcgCoreLike {
+  opportunityType?: string;
+  currentPosition?: string;
+  marketGrowthAssessment?: string;
+  relativeCompetitivePosition?: string;
+  classificationRationale?: string;
+  starBlockers?: string[];
+  starPotential?: string;
+  minimumAmbition?: string;
+  maximumAmbition?: string;
+}
+
+export interface PackV2BcgStarUpgradeStrategyLike {
+  productUpgrades?: string[];
+  positioningUpgrades?: string[];
+  distributionUpgrades?: string[];
+  monetizationUpgrades?: string[];
+  defensibilityUpgrades?: string[];
+  evidenceUpgrades?: string[];
+}
+
+export interface PackV2BcgUnicornPathLike {
+  categoryExpansionNeeded?: string;
+  platformOrEcosystemMove?: string;
+  moatNeeded?: string;
+  distributionAdvantageNeeded?: string;
+  pricingOrLtvPath?: string;
+  productSurfaceExpansion?: string;
+  proofRequiredBeforeClaimingUpside?: string[];
+  investorBeliefTriggers?: string[];
+}
+
+export interface PackV2BcgVerdictLike {
+  currentBcgPosition?: string;
+  targetBcgPositionAfterUpgrades?: string;
+  topFiveMovesRequired?: string[];
+  topFiveProofPointsRequired?: string[];
+  topFiveRisks?: string[];
+}
+
 export interface PackV2DocLike {
   type: string;
   title: string;
   sections?: PackV2DocSectionLike[];
+  bcg?: PackV2BcgCoreLike;
+  scorecard?: PackV2BcgScorecardItemLike[];
+  starUpgradeStrategy?: PackV2BcgStarUpgradeStrategyLike;
+  unicornGradeUpsidePath?: PackV2BcgUnicornPathLike;
+  beforeAfterUpgradeTable?: PackV2BcgUpgradeTableItemLike[];
+  finalBcgVerdict?: PackV2BcgVerdictLike;
 }
 
 export interface PackV2DataModelEntityLike {
@@ -59,31 +127,14 @@ function findByType(documents: PackV2DocLike[], type: string): PackV2DocLike | u
   return documents.find((d) => d.type === type);
 }
 
-const TABLE_ROW_RE = /\|[^\n]*\|/;
-const TABLE_SEPARATOR_RE = /\|?[\s:|-]*-[\s:|-]*\|?/;
-
-/** Counts distinct markdown pipe-tables (one per separator row `|---|---|`-ish line). */
-function countMarkdownTables(text: string): number {
-  const lines = text.split('\n');
-  let count = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!.trim();
-    if (TABLE_ROW_RE.test(line) && TABLE_SEPARATOR_RE.test(line) && line.includes('-')) {
-      // A separator row sits directly under a header row — confirm there is
-      // a plausible header line above it to avoid matching a stray "---" hr.
-      const prev = lines[i - 1]?.trim() ?? '';
-      if (prev.includes('|')) count += 1;
-    }
-  }
-  return count;
-}
-
 // Latin-1 Supplement accented-letter ranges (upper + lower), the character
 // class real mojibake (misdecoded UTF-8 bytes) tends to cluster in.
 const MOJIBAKE_RE = /[À-ÖØ-öø-ÿ]{3,}/;
 const REPLACEMENT_CHAR_RE = /�/;
 
 const GENERIC_ENTITIES = new Set(['user', 'users', 'workspace', 'workspaces', 'ai', 'item', 'items', 'account', 'accounts']);
+
+const BCG_POSITIONS = new Set(['Star', 'Question Mark', 'Cash Cow', 'Dog']);
 
 const UNFRAMED_SCALE_CLAIM_RE = /\b(\$?\d+\s*(billion|trillion|million)|TAM of|guaranteed unicorn|will become a unicorn|\$\d+[bBmM]\b)/i;
 const CAREFUL_FRAMING_RE = /(could become|requires proof|not proven|not yet proven|depends on|assumption|hypothes|to validate|no fabricated|not a guarantee|not guaranteed)/i;
@@ -96,9 +147,15 @@ const EVIDENCE_OVERCLAIM_RE = /(evidence-backed|clinically proven|scientifically
 // that today's evidence backs the pack.
 const ASSERTION_PROVEN_RE = /\b(is|are|has been|have been|this is|it is)\s+(validated|proven)\b/i;
 
-const UPGRADE_CATEGORIES = ['product', 'positioning', 'distribution', 'monetization', 'defensib'];
+const STAR_UPGRADE_TRACKS = ['productUpgrades', 'positioningUpgrades', 'distributionUpgrades', 'monetizationUpgrades', 'defensibilityUpgrades'] as const;
 
-const GENERIC_BULLET_RE = /^[-*]\s*(improve quality|do marketing|add integrations)\.?\s*$/im;
+// A generic upgrade-strategy item with no reasoning tied to it — short and
+// matching one of these bare phrases almost exactly.
+const GENERIC_UPGRADE_PHRASES = ['improve quality', 'do marketing', 'add integrations', 'improve the product', 'market it better'];
+function isGenericUpgradeItem(item: string): boolean {
+  const normalized = item.trim().toLowerCase().replace(/[.!]+$/, '');
+  return normalized.length < 30 && GENERIC_UPGRADE_PHRASES.some((phrase) => normalized === phrase || normalized === phrase.replace(/^(improve|add|do) /, ''));
+}
 
 export function runProductPackV2ContentQualityChecks(input: ProductPackV2ContentCheckInput): ContentGateCheck[] {
   const { documents, evidenceCount } = input;
@@ -106,7 +163,6 @@ export function runProductPackV2ContentQualityChecks(input: ProductPackV2Content
   const checks: ContentGateCheck[] = [];
 
   const bcg = findByType(documents, BCG_SECTION_KEY);
-  const bcgText = bcg ? docText(bcg) : '';
 
   // 1) BCG evaluation must exist.
   checks.push(mk(
@@ -118,79 +174,113 @@ export function runProductPackV2ContentQualityChecks(input: ProductPackV2Content
   ));
 
   if (bcg) {
-    // 2) BCG must be reasoned, not a bare quadrant label.
-    const reasoningKeywords = ['market growth', 'competitive', 'differentiat', 'distribution', 'defensib', 'timing', 'moat', 'retention', 'switching'];
-    const reasoningHits = reasoningKeywords.filter((k) => bcgText.toLowerCase().includes(k)).length;
-    const shallow = bcgText.trim().length < 600 || reasoningHits < 3;
+    // 2) BCG must be reasoned, not a bare quadrant label — validated on the
+    // structured fields directly, not by scanning rendered markdown.
+    const core = bcg.bcg;
+    const shallow = !core
+      || !BCG_POSITIONS.has(core.currentPosition ?? '')
+      || (core.classificationRationale ?? '').trim().length < 40
+      || !(core.marketGrowthAssessment ?? '').trim()
+      || !(core.relativeCompetitivePosition ?? '').trim();
     checks.push(mk(
       'product_pack_shallow_bcg',
       'BCG evaluation is reasoned, not a bare label',
       shallow ? 'fail' : 'pass',
-      shallow ? 'BCG section reads like a bare quadrant label — needs full reasoning across market growth, competitive position, differentiation, distribution, and defensibility.' : 'BCG evaluation includes substantive reasoning.',
+      shallow ? 'BCG section reads like a bare quadrant label — needs a valid position plus real classification/market-growth/competitive-position reasoning.' : 'BCG evaluation includes substantive, structured reasoning.',
       shallow ? [BCG_SECTION_KEY] : [],
     ));
 
     // 3) Numeric BCG scorecard.
-    const dims = ['market growth', 'urgency', 'willingness to pay', 'competitive gap', 'differentiation', 'distribution', 'retention', 'switching', 'monetization', 'defensibility', 'moat', 'evidence confidence', 'venture scale', 'execution feasibility'];
-    const dimHits = dims.filter((d) => bcgText.toLowerCase().includes(d)).length;
-    const hasScorecard = countMarkdownTables(bcgText) >= 1 && dimHits >= 6;
+    const scorecard = bcg.scorecard ?? [];
+    const hasScorecard = scorecard.length >= 8 && scorecard.every((item) =>
+      typeof item.dimension === 'string' && item.dimension.trim().length > 0
+      && typeof item.currentScore === 'number'
+      && (item.rationale ?? '').trim().length > 0
+      && (item.whatWouldRaiseIt ?? '').trim().length > 0
+      && (item.evidenceNeeded ?? '').trim().length > 0);
     checks.push(mk(
       'product_pack_missing_bcg_scorecard',
       'Numeric BCG scorecard exists',
       hasScorecard ? 'pass' : 'fail',
-      hasScorecard ? 'A scored table covering the required BCG dimensions is present.' : 'No numeric BCG scorecard table (0-10 per dimension) found.',
+      hasScorecard ? `A scored entry per dimension is present (${scorecard.length} dimensions).` : `Missing or incomplete numeric BCG scorecard (found ${scorecard.length} dimension(s); every entry needs currentScore/rationale/whatWouldRaiseIt/evidenceNeeded).`,
       hasScorecard ? [] : [BCG_SECTION_KEY],
     ));
 
-    // 4) Star Upgrade Strategy.
-    const hasStarUpgrade = /star upgrade/i.test(bcgText) && UPGRADE_CATEGORIES.filter((c) => bcgText.toLowerCase().includes(c)).length >= 3;
+    // 4) Star Upgrade Strategy — all five required tracks non-empty.
+    const strategy = bcg.starUpgradeStrategy;
+    const missingTracks = strategy ? STAR_UPGRADE_TRACKS.filter((t) => !(strategy[t] ?? []).length) : [...STAR_UPGRADE_TRACKS];
+    const hasStarUpgrade = Boolean(strategy) && missingTracks.length === 0;
     checks.push(mk(
       'product_pack_missing_star_upgrade',
       'Star Upgrade Strategy exists',
       hasStarUpgrade ? 'pass' : 'fail',
-      hasStarUpgrade ? 'Star Upgrade Strategy covers multiple upgrade tracks.' : 'Missing a Star Upgrade Strategy with product/positioning/distribution/monetization/defensibility tracks.',
+      hasStarUpgrade ? 'Star Upgrade Strategy covers all required upgrade tracks.' : `Missing Star Upgrade Strategy tracks: ${missingTracks.join(', ') || 'starUpgradeStrategy object itself'}.`,
       hasStarUpgrade ? [] : [BCG_SECTION_KEY],
     ));
 
-    // 5) Unicorn-grade upside path, carefully framed.
-    const mentionsUnicorn = /unicorn/i.test(bcgText);
-    const carefullyFramed = CAREFUL_FRAMING_RE.test(bcgText);
-    const hasUnframedClaim = bcgText.split('\n').some((line) => UNFRAMED_SCALE_CLAIM_RE.test(line) && !CAREFUL_FRAMING_RE.test(line));
-    const okUnicorn = mentionsUnicorn && carefullyFramed && !hasUnframedClaim;
+    // 5) Unicorn-grade upside path, carefully framed — structured fields
+    // plus a defensive scan of the free-text fields for unframed scale claims.
+    const unicorn = bcg.unicornGradeUpsidePath;
+    const unicornTextFields = unicorn ? [unicorn.categoryExpansionNeeded, unicorn.platformOrEcosystemMove, unicorn.moatNeeded, unicorn.distributionAdvantageNeeded, unicorn.pricingOrLtvPath, unicorn.productSurfaceExpansion].filter((v): v is string => Boolean(v)) : [];
+    const hasUnicornFields = Boolean(unicorn)
+      && unicornTextFields.length === 6
+      && unicornTextFields.every((v) => v.trim().length > 0)
+      && (unicorn?.proofRequiredBeforeClaimingUpside ?? []).length > 0;
+    const hasUnframedClaim = unicornTextFields.some((v) => UNFRAMED_SCALE_CLAIM_RE.test(v) && !CAREFUL_FRAMING_RE.test(v));
+    const okUnicorn = hasUnicornFields && !hasUnframedClaim;
     checks.push(mk(
       'product_pack_missing_unicorn_path',
       'Unicorn-grade upside path exists and is carefully framed',
       okUnicorn ? 'pass' : 'fail',
-      !mentionsUnicorn
-        ? 'Missing a Unicorn-grade Upside Path.'
+      !hasUnicornFields
+        ? 'Missing or incomplete Unicorn-grade Upside Path (all fields plus proofRequiredBeforeClaimingUpside are required).'
         : hasUnframedClaim
           ? 'Unicorn-grade upside path makes an unframed scale claim — must use "could become"/"requires proof"/"not proven yet" language.'
-          : !carefullyFramed
-            ? 'Unicorn-grade upside path is not carefully hedged (missing "could become"/"requires proof"/"not proven yet"-style language).'
-            : 'Unicorn-grade upside path is present and carefully framed.',
+          : 'Unicorn-grade upside path is present and carefully framed.',
       okUnicorn ? [] : [BCG_SECTION_KEY],
     ));
 
-    // 6) Before/After upgrade table (a second distinct table from the scorecard).
-    const tableCount = countMarkdownTables(bcgText);
-    const mentionsBeforeAfter = /(before\s*\/\s*after|target score|current score)/i.test(bcgText);
-    const hasUpgradeTable = tableCount >= 2 && mentionsBeforeAfter;
+    // 6) Before/After upgrade table.
+    const upgradeTable = bcg.beforeAfterUpgradeTable ?? [];
+    const hasUpgradeTable = upgradeTable.length >= 6 && upgradeTable.every((item) =>
+      typeof item.dimension === 'string' && item.dimension.trim().length > 0
+      && typeof item.currentScore === 'number'
+      && typeof item.targetScoreAfterUpgrades === 'number'
+      && (item.upgradeMove ?? '').trim().length > 0
+      && (item.whyScoreImproves ?? '').trim().length > 0);
     checks.push(mk(
       'product_pack_missing_upgrade_table',
       'Before/After upgrade table exists',
       hasUpgradeTable ? 'pass' : 'fail',
-      hasUpgradeTable ? 'Before/After upgrade table is present alongside the scorecard.' : 'Missing the Before/After Upgrade table (Dimension | Current score | Weakness | Upgrade move | Target score | Why score improves).',
+      hasUpgradeTable ? `Before/After upgrade table is present (${upgradeTable.length} dimensions).` : `Missing or incomplete Before/After Upgrade table (found ${upgradeTable.length} row(s); every row needs currentScore/upgradeMove/targetScoreAfterUpgrades/whyScoreImproves).`,
       hasUpgradeTable ? [] : [BCG_SECTION_KEY],
     ));
 
-    // 15) Generic, unexplained upgrade advice.
-    const genericBullet = GENERIC_BULLET_RE.test(bcgText);
+    // 7) Final BCG Verdict.
+    const verdict = bcg.finalBcgVerdict;
+    const hasVerdict = Boolean(verdict)
+      && (verdict?.currentBcgPosition ?? '').trim().length > 0
+      && (verdict?.targetBcgPositionAfterUpgrades ?? '').trim().length > 0
+      && (verdict?.topFiveMovesRequired ?? []).length > 0
+      && (verdict?.topFiveProofPointsRequired ?? []).length > 0
+      && (verdict?.topFiveRisks ?? []).length > 0;
+    checks.push(mk(
+      'product_pack_missing_bcg_verdict',
+      'Final BCG Verdict exists',
+      hasVerdict ? 'pass' : 'fail',
+      hasVerdict ? 'Final BCG Verdict is present with moves/proof points/risks.' : 'Missing or incomplete Final BCG Verdict (needs currentBcgPosition, targetBcgPositionAfterUpgrades, and all three top-5 lists).',
+      hasVerdict ? [] : [BCG_SECTION_KEY],
+    ));
+
+    // 8) Generic, unexplained upgrade advice — scan every upgrade-strategy item.
+    const allUpgradeItems = strategy ? STAR_UPGRADE_TRACKS.flatMap((t) => strategy[t] ?? []) : [];
+    const genericItems = allUpgradeItems.filter(isGenericUpgradeItem);
     checks.push(mk(
       'product_pack_generic_upgrade_advice',
       'Upgrade advice is specific, not generic',
-      genericBullet ? 'fail' : 'pass',
-      genericBullet ? 'Found generic, unexplained upgrade advice (e.g. "improve quality" with no tie to a score). Every move must name the dimension it raises and why.' : 'Upgrade advice is tied to specific reasoning.',
-      genericBullet ? [BCG_SECTION_KEY] : [],
+      genericItems.length === 0 ? 'pass' : 'fail',
+      genericItems.length === 0 ? 'Upgrade advice is tied to specific reasoning.' : `Found generic, unexplained upgrade advice with no tie to a score: ${genericItems.join(', ')}`,
+      genericItems.length === 0 ? [] : [BCG_SECTION_KEY],
     ));
   }
 

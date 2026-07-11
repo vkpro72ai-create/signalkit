@@ -70,6 +70,100 @@ interface ProductPackV2Document {
   acceptanceCriteria: string[];
 }
 
+// ── BCG Opportunity Evaluation (dedicated step, structured contract) ────────
+// See product-pack-v2.steps.ts's BCG_STEP_DOCUMENT_CONTRACT for the prompt
+// side of this shape. The model never writes markdown/tables for this
+// document — renderBcgDocumentToSections() below builds `sections`
+// deterministically from these fields once parsed.
+
+interface ProductPackV2BcgScorecardItem {
+  dimension: string;
+  currentScore: number;
+  rationale: string;
+  whatWouldRaiseIt: string;
+  evidenceNeeded: string;
+}
+
+interface ProductPackV2BcgUpgradeTableItem {
+  dimension: string;
+  currentScore: number;
+  weakness: string;
+  upgradeMove: string;
+  targetScoreAfterUpgrades: number;
+  whyScoreImproves: string;
+}
+
+interface ProductPackV2BcgCore {
+  opportunityType: string;
+  currentPosition: string;
+  marketGrowthAssessment: string;
+  relativeCompetitivePosition: string;
+  classificationRationale: string;
+  starBlockers: string[];
+  starPotential: string;
+  minimumAmbition: string;
+  maximumAmbition: string;
+}
+
+interface ProductPackV2BcgCurrentStateDiagnosis {
+  weakParts: string[];
+  promisingParts: string[];
+  dangerousAssumptions: string[];
+  dogRisks: string[];
+  breakoutTriggers: string[];
+}
+
+interface ProductPackV2BcgStarUpgradeStrategy {
+  productUpgrades: string[];
+  positioningUpgrades: string[];
+  distributionUpgrades: string[];
+  monetizationUpgrades: string[];
+  defensibilityUpgrades: string[];
+  evidenceUpgrades: string[];
+}
+
+interface ProductPackV2BcgUnicornPath {
+  categoryExpansionNeeded: string;
+  platformOrEcosystemMove: string;
+  moatNeeded: string;
+  distributionAdvantageNeeded: string;
+  pricingOrLtvPath: string;
+  productSurfaceExpansion: string;
+  proofRequiredBeforeClaimingUpside: string[];
+  investorBeliefTriggers: string[];
+}
+
+interface ProductPackV2BcgVerdict {
+  currentBcgPosition: string;
+  targetBcgPositionAfterUpgrades: string;
+  topFiveMovesRequired: string[];
+  topFiveProofPointsRequired: string[];
+  topFiveRisks: string[];
+}
+
+interface ProductPackV2BcgDocument extends ProductPackV2Document {
+  bcg: ProductPackV2BcgCore;
+  scorecard: ProductPackV2BcgScorecardItem[];
+  currentStateDiagnosis: ProductPackV2BcgCurrentStateDiagnosis;
+  starUpgradeStrategy: ProductPackV2BcgStarUpgradeStrategy;
+  unicornGradeUpsidePath: ProductPackV2BcgUnicornPath;
+  beforeAfterUpgradeTable: ProductPackV2BcgUpgradeTableItem[];
+  finalBcgVerdict: ProductPackV2BcgVerdict;
+}
+
+const BCG_SCORECARD_DIMENSIONS = [
+  'Market growth', 'Urgency of problem', 'Buyer/user willingness to pay', 'Competitive gap',
+  'Differentiation', 'Distribution access', 'Retention / switching cost', 'Monetization strength',
+  'Defensibility / moat', 'Evidence confidence', 'Venture scale potential', 'Execution feasibility',
+] as const;
+
+const BCG_UPGRADE_TABLE_DIMENSIONS = [
+  'Market growth', 'Competitive position', 'Distribution', 'Retention', 'Monetization',
+  'Moat', 'Evidence confidence', 'Venture scale', 'Execution feasibility',
+] as const;
+
+const BCG_POSITIONS = ['Star', 'Question Mark', 'Cash Cow', 'Dog'] as const;
+
 interface ProductPackV2QiraTask {
   title: string;
   description: string;
@@ -180,7 +274,8 @@ type ProductPackV2ParseReason =
   | 'schema_invalid_quality'
   | 'schema_missing_documents'
   | 'schema_invalid_documents'
-  | 'schema_missing_sections';
+  | 'schema_missing_sections'
+  | 'schema_invalid_bcg_fields';
 
 /** Parse result for ONE step's JSON output (documents scoped to that step, plus whichever top-level fields it owns). */
 interface ProductPackV2StepParseResult {
@@ -384,7 +479,9 @@ export class PackService {
 
     for (const step of PRODUCT_PACK_V2_STEPS) {
       try {
-        const stepResult = await this.runPackV2Step(workspaceId, pack.id, projectId, ctx, input, step, priorSummaries.join('\n\n'));
+        const stepResult = step.id === 'bcg_star_evaluation'
+          ? await this.runBcgStep(workspaceId, pack.id, projectId, ctx, input, step, priorSummaries.join('\n\n'))
+          : await this.runPackV2Step(workspaceId, pack.id, projectId, ctx, input, step, priorSummaries.join('\n\n'));
         documents.push(...stepResult.documents);
         mergeStepFields(extraFields, stepResult.extraFields);
         stepAiRuns[step.id] = stepResult.aiRun;
@@ -392,6 +489,14 @@ export class PackService {
       } catch (error) {
         pipelineError = error;
         this.logger.warn(`Product Pack v2 step "${step.id}" failed for niche ${nicheId}: ${String(error)}`);
+        // Every other step's documents-so-far are still persisted as a
+        // draft pack on failure (see the docstring above) — but there is no
+        // safe partial/fake fallback for a scored BCG evaluation, so a BCG
+        // failure hard-fails generation instead of silently continuing.
+        if (step.id === 'bcg_star_evaluation') {
+          await this.prisma.productDocumentPack.update({ where: { id: pack.id }, data: { status: 'failed' } });
+          throw mapPackGenerationError(pipelineError, 'BCG Opportunity Evaluation step failed.');
+        }
         break;
       }
     }
@@ -602,6 +707,59 @@ export class PackService {
     return { documents, extraFields, aiRun };
   }
 
+  /**
+   * Runs the dedicated BCG Opportunity Evaluation step. Deliberately NOT the
+   * same 3-attempt (generate/repair/regenerate-from-scratch) flow as
+   * runPackV2Step: generate, then at most ONE repair pass. If that also
+   * fails, the pack fails with a BCG-specific error code instead of falling
+   * back to a fake/deterministic BCG document — there is no safe
+   * deterministic fallback for a scored strategic evaluation.
+   */
+  private async runBcgStep(
+    workspaceId: string,
+    packId: string,
+    projectId: string,
+    ctx: PackContext,
+    input: BuildProductPackV2PromptInput,
+    step: ProductPackV2Step,
+    priorSummary: string,
+  ): Promise<{ documents: ProductPackV2Document[]; extraFields: Record<string, unknown>; aiRun: PackV2AiRun }> {
+    const prompt = buildProductPackV2StepPrompt(step, input, priorSummary);
+    const firstRun = await this.runPackPrompt(workspaceId, packId, projectId, ctx.language, prompt, PACK_V2_TASK_TYPE, step.maxOutputTokens);
+    const firstAttempt = await this.inspectPackV2Attempt(PACK_V2_TASK_TYPE, 'generate', firstRun, step.maxOutputTokens, (raw) =>
+      parseBcgStepJson(raw, step),
+    );
+
+    let parsed = firstAttempt.parsed;
+    const aiRun: PackV2AiRun = { primary: this.aiRunFromResult(firstRun, firstAttempt.diagnostics) };
+    let lastDiagnostics = firstAttempt.diagnostics;
+
+    if (!parsed.json) {
+      const repairPrompt = buildProductPackV2StepRepairPrompt(step, firstAttempt.raw);
+      const repairRun = await this.runPackPrompt(workspaceId, packId, projectId, ctx.language, repairPrompt, PACK_V2_TASK_TYPE, step.maxOutputTokens);
+      const repairAttempt = await this.inspectPackV2Attempt(PACK_V2_TASK_TYPE, 'repair', repairRun, step.maxOutputTokens, (raw) =>
+        parseBcgStepJson(raw, step),
+      );
+      parsed = repairAttempt.parsed;
+      aiRun.repair = this.aiRunFromResult(repairRun, repairAttempt.diagnostics);
+      lastDiagnostics = repairAttempt.diagnostics;
+    }
+
+    if (!parsed.json) {
+      if (firstAttempt.diagnostics.likelyTruncated || lastDiagnostics.likelyTruncated) {
+        throw buildProductPackV2StepTruncatedException(step);
+      }
+      throw new BadRequestException({
+        code: 'product_pack_bcg_step_failed',
+        message: `BCG Opportunity Evaluation step failed after generate + one repair attempt (reason: ${lastDiagnostics.parseReason}).`,
+      });
+    }
+
+    const bcgDoc = parsed.json.documents[0];
+    const renderedDoc: ProductPackV2Document = { ...bcgDoc, sections: renderBcgDocumentToSections(bcgDoc) };
+    return { documents: [renderedDoc], extraFields: {}, aiRun };
+  }
+
   private async runPackPrompt(
     workspaceId: string,
     packId: string,
@@ -633,12 +791,12 @@ export class PackService {
     return withTimeout(request, PACK_V2_TIMEOUT_MS, 'llm_timeout');
   }
 
-  private async inspectPackV2Attempt(
+  private async inspectPackV2Attempt<T extends { json: unknown; reason: ProductPackV2ParseReason }>(
     taskType: LLMTaskType,
     stage: 'generate' | 'repair' | 'regenerate',
     result: Awaited<ReturnType<LlmRouterService['run']>>,
     requestedMaxOutputTokens: number,
-    parseFn: (raw: string) => ProductPackV2StepParseResult,
+    parseFn: (raw: string) => T,
   ) {
     const raw = extractLlmText(result);
     const effectiveMaxOutputTokens = await this.router.resolveTaskOutputBudget(taskType, result.modelId, requestedMaxOutputTokens);
@@ -1172,6 +1330,173 @@ function parsePackV2StepJson(raw: string, step: ProductPackV2Step): ProductPackV
   }
 }
 
+interface ProductPackV2BcgStepParseResult {
+  json: (Partial<ProductPackV2Json> & { documents: [ProductPackV2BcgDocument] }) | null;
+  reason: ProductPackV2ParseReason;
+}
+
+/**
+ * Parses the BCG step's response: reuses the generic envelope/section-key
+ * validation (parsePackV2StepJson — the model still returns `documents: [1
+ * item]` with `sections: []`), then additionally validates the structured
+ * BCG fields the generic validator doesn't know about. A document that's
+ * envelope-valid but has a missing/malformed `scorecard` or
+ * `starUpgradeStrategy` etc. fails here with 'schema_invalid_bcg_fields'
+ * rather than silently passing through as an empty-bodied document.
+ */
+function parseBcgStepJson(raw: string, step: ProductPackV2Step): ProductPackV2BcgStepParseResult {
+  const base = parsePackV2StepJson(raw, step);
+  if (!base.json) return { json: null, reason: base.reason };
+  if (base.json.documents.length !== 1) {
+    return { json: null, reason: 'schema_missing_sections' };
+  }
+  const doc = base.json.documents[0]!;
+  if (!isValidBcgStructuredFields(doc)) {
+    return { json: null, reason: 'schema_invalid_bcg_fields' };
+  }
+  return { json: { ...base.json, documents: [doc] }, reason: 'ok' };
+}
+
+function isValidBcgStructuredFields(doc: ProductPackV2Document): doc is ProductPackV2BcgDocument {
+  const d = doc as unknown as Record<string, unknown>;
+
+  const bcg = d.bcg;
+  if (!isRecord(bcg)) return false;
+  if (typeof bcg.currentPosition !== 'string' || !(BCG_POSITIONS as readonly string[]).includes(bcg.currentPosition)) return false;
+  if (typeof bcg.classificationRationale !== 'string' || bcg.classificationRationale.trim().length < 40) return false;
+  if (typeof bcg.opportunityType !== 'string' || typeof bcg.marketGrowthAssessment !== 'string') return false;
+
+  const scorecard = d.scorecard;
+  if (!Array.isArray(scorecard) || scorecard.length < 8) return false;
+  if (!(scorecard as unknown[]).every((item) => isRecord(item)
+    && typeof item.dimension === 'string'
+    && typeof item.currentScore === 'number'
+    && typeof item.rationale === 'string' && item.rationale.trim().length > 0
+    && typeof item.whatWouldRaiseIt === 'string' && item.whatWouldRaiseIt.trim().length > 0
+    && typeof item.evidenceNeeded === 'string' && item.evidenceNeeded.trim().length > 0)) return false;
+
+  const diagnosis = d.currentStateDiagnosis;
+  if (!isRecord(diagnosis) || !Array.isArray(diagnosis.weakParts) || !Array.isArray(diagnosis.promisingParts) || !Array.isArray(diagnosis.dangerousAssumptions)) return false;
+
+  const strategy = d.starUpgradeStrategy;
+  if (!isRecord(strategy)) return false;
+  const upgradeTracks = ['productUpgrades', 'positioningUpgrades', 'distributionUpgrades', 'monetizationUpgrades', 'defensibilityUpgrades', 'evidenceUpgrades'];
+  if (!upgradeTracks.every((k) => Array.isArray(strategy[k]) && (strategy[k] as unknown[]).length > 0)) return false;
+
+  const unicorn = d.unicornGradeUpsidePath;
+  if (!isRecord(unicorn)) return false;
+  if (typeof unicorn.categoryExpansionNeeded !== 'string' || !Array.isArray(unicorn.proofRequiredBeforeClaimingUpside)) return false;
+
+  const table = d.beforeAfterUpgradeTable;
+  if (!Array.isArray(table) || table.length < 6) return false;
+  if (!(table as unknown[]).every((item) => isRecord(item)
+    && typeof item.dimension === 'string'
+    && typeof item.currentScore === 'number'
+    && typeof item.weakness === 'string'
+    && typeof item.upgradeMove === 'string' && item.upgradeMove.trim().length > 0
+    && typeof item.targetScoreAfterUpgrades === 'number'
+    && typeof item.whyScoreImproves === 'string' && item.whyScoreImproves.trim().length > 0)) return false;
+
+  const verdict = d.finalBcgVerdict;
+  if (!isRecord(verdict)) return false;
+  if (typeof verdict.currentBcgPosition !== 'string' || typeof verdict.targetBcgPositionAfterUpgrades !== 'string') return false;
+  if (!Array.isArray(verdict.topFiveMovesRequired) || !Array.isArray(verdict.topFiveProofPointsRequired) || !Array.isArray(verdict.topFiveRisks)) return false;
+
+  return true;
+}
+
+function mdTable(headers: string[], rows: string[][]): string {
+  const escape = (v: string) => v.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  const headerRow = `| ${headers.join(' | ')} |`;
+  const sepRow = `|${headers.map(() => '---').join('|')}|`;
+  const bodyRows = rows.map((row) => `| ${row.map(escape).join(' | ')} |`);
+  return [headerRow, sepRow, ...bodyRows].join('\n');
+}
+
+function bulletList(items: string[]): string {
+  return items.length ? items.map((item) => `- ${item}`).join('\n') : '_(none provided)_';
+}
+
+/**
+ * Deterministically renders the BCG document's structured fields into the
+ * same `sections[]` shape every other document uses (heading/content/...),
+ * including both markdown tables — built here in code, never asked of the
+ * model, which is the whole point of the structured contract.
+ */
+function renderBcgDocumentToSections(doc: ProductPackV2BcgDocument): ProductPackV2Section[] {
+  const { bcg, scorecard, currentStateDiagnosis: diag, starUpgradeStrategy: strat, unicornGradeUpsidePath: unicorn, beforeAfterUpgradeTable, finalBcgVerdict: verdict } = doc;
+
+  const scorecardTable = mdTable(
+    ['Dimension', 'Score', 'Rationale', 'What would raise it', 'Evidence needed'],
+    scorecard.map((item) => [item.dimension, String(item.currentScore), item.rationale, item.whatWouldRaiseIt, item.evidenceNeeded]),
+  );
+  const upgradeTable = mdTable(
+    ['Dimension', 'Current score', 'Weakness', 'Upgrade move', 'Target score after upgrades', 'Why score improves'],
+    beforeAfterUpgradeTable.map((item) => [item.dimension, String(item.currentScore), item.weakness, item.upgradeMove, String(item.targetScoreAfterUpgrades), item.whyScoreImproves]),
+  );
+
+  return [
+    {
+      heading: 'A. Current BCG Position',
+      content: `**${bcg.currentPosition}** (${bcg.opportunityType})\n\n${bcg.classificationRationale}\n\nMarket growth: ${bcg.marketGrowthAssessment}\n\nRelative competitive position: ${bcg.relativeCompetitivePosition}`,
+      examples: [], implementationNotes: [], assumptions: bcg.starBlockers, risks: [], evidenceRefs: [], sourceNeeds: [],
+    },
+    {
+      heading: 'B. BCG Scorecard',
+      content: scorecardTable,
+      examples: [], implementationNotes: [], assumptions: [], risks: [], evidenceRefs: [], sourceNeeds: [],
+    },
+    {
+      heading: 'C. Current State Diagnosis',
+      content: `**Weak parts**\n${bulletList(diag.weakParts)}\n\n**Promising parts**\n${bulletList(diag.promisingParts)}\n\n**Dog-collapse risks**\n${bulletList(diag.dogRisks)}\n\n**Breakout triggers**\n${bulletList(diag.breakoutTriggers)}`,
+      examples: [], implementationNotes: [], assumptions: diag.dangerousAssumptions, risks: diag.dogRisks, evidenceRefs: [], sourceNeeds: [],
+    },
+    {
+      heading: 'D. Star Upgrade Strategy',
+      content: [
+        '**Product upgrades**', bulletList(strat.productUpgrades), '',
+        '**Positioning upgrades**', bulletList(strat.positioningUpgrades), '',
+        '**Distribution upgrades**', bulletList(strat.distributionUpgrades), '',
+        '**Monetization upgrades**', bulletList(strat.monetizationUpgrades), '',
+        '**Defensibility upgrades**', bulletList(strat.defensibilityUpgrades), '',
+        '**Evidence upgrades**', bulletList(strat.evidenceUpgrades),
+      ].join('\n'),
+      examples: [], implementationNotes: [], assumptions: [], risks: [], evidenceRefs: [], sourceNeeds: strat.evidenceUpgrades,
+    },
+    {
+      heading: 'E. Unicorn-grade Upside Path',
+      content: [
+        `Category expansion needed: ${unicorn.categoryExpansionNeeded}`,
+        `Platform/ecosystem move: ${unicorn.platformOrEcosystemMove}`,
+        `Moat needed: ${unicorn.moatNeeded}`,
+        `Distribution advantage needed: ${unicorn.distributionAdvantageNeeded}`,
+        `Pricing/LTV path: ${unicorn.pricingOrLtvPath}`,
+        `Product surface expansion: ${unicorn.productSurfaceExpansion}`,
+        '', '**Proof required before claiming this upside**', bulletList(unicorn.proofRequiredBeforeClaimingUpside),
+        '', '**What would make investors believe this**', bulletList(unicorn.investorBeliefTriggers),
+      ].join('\n'),
+      examples: [], implementationNotes: [], assumptions: unicorn.proofRequiredBeforeClaimingUpside, risks: [], evidenceRefs: [], sourceNeeds: [],
+    },
+    {
+      heading: 'F. Before / After Upgrade Table',
+      content: upgradeTable,
+      examples: [], implementationNotes: [], assumptions: [], risks: [], evidenceRefs: [], sourceNeeds: [],
+    },
+    {
+      heading: 'G. Final BCG Verdict',
+      content: [
+        `Current BCG position: ${verdict.currentBcgPosition}`,
+        `Target BCG position after upgrades: ${verdict.targetBcgPositionAfterUpgrades}`,
+        `Minimum ambition: ${bcg.minimumAmbition}. Maximum ambition: ${bcg.maximumAmbition}.`,
+        '', '**Top 5 moves required**', bulletList(verdict.topFiveMovesRequired),
+        '', '**Top 5 proof points required**', bulletList(verdict.topFiveProofPointsRequired),
+        '', '**Top 5 risks that can kill the upgrade**', bulletList(verdict.topFiveRisks),
+      ].join('\n'),
+      examples: [], implementationNotes: [], assumptions: [], risks: verdict.topFiveRisks, evidenceRefs: [], sourceNeeds: verdict.topFiveProofPointsRequired,
+    },
+  ];
+}
+
 /** Parse+validate one amended document, forcing `type`/`layer` back to the original's (the model is asked to keep them, but identity must never drift from a single-document amend). */
 function parseAmendedDocument(raw: string, original: ProductPackV2Document): ProductPackV2Document | null {
   try {
@@ -1352,6 +1677,13 @@ function summarizeStepForNextStep(
       lines.push(`- One-line thesis: ${String(result.extraFields.oneLineThesis ?? '')}`);
       if (isRecord(strategy) && strategy.name) {
         lines.push(`- Recommended strategic wedge: ${String(strategy.name)}${strategy.strategicWedge ? ` — ${String(strategy.strategicWedge)}` : ''}`);
+      }
+      break;
+    }
+    case 'bcg_star_evaluation': {
+      const bcgDoc = result.documents[0] as ProductPackV2BcgDocument | undefined;
+      if (bcgDoc?.bcg) {
+        lines.push(`- BCG position: ${bcgDoc.bcg.currentPosition} (${bcgDoc.bcg.opportunityType}) — target: ${bcgDoc.finalBcgVerdict?.targetBcgPositionAfterUpgrades ?? bcgDoc.bcg.maximumAmbition}`);
       }
       break;
     }

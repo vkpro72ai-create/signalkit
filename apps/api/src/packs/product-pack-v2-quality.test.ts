@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { runProductPackV2ContentQualityChecks, BCG_SECTION_KEY, type PackV2DocLike } from './product-pack-v2-quality';
+import {
+  runProductPackV2ContentQualityChecks,
+  BCG_SECTION_KEY,
+  type PackV2DocLike,
+  type PackV2BcgCoreLike,
+  type PackV2BcgScorecardItemLike,
+  type PackV2BcgStarUpgradeStrategyLike,
+  type PackV2BcgUnicornPathLike,
+  type PackV2BcgUpgradeTableItemLike,
+  type PackV2BcgVerdictLike,
+} from './product-pack-v2-quality';
 
 function checkFor(checks: ReturnType<typeof runProductPackV2ContentQualityChecks>, id: string) {
   const found = checks.find((c) => c.id === id);
@@ -21,62 +31,101 @@ function fillerDoc(type: string, title = type): PackV2DocLike {
   };
 }
 
-const FULL_BCG_CONTENT = `
-A. Current BCG Position
-This idea is a Question Mark: market growth is strong, but competitive position and distribution advantage are not yet proven. Differentiation is moderate and defensibility is weak because there is no data or workflow moat yet. Timing is favorable given rising demand in the category.
+// Structured BCG fields (see product-pack-v2.steps.ts's BCG_STEP_DOCUMENT_CONTRACT
+// for the canonical shape). The gate validates these directly — the backend
+// renders the actual markdown tables from them deterministically, so these
+// fixtures never contain markdown-in-JSON.
 
-B. BCG Scorecard
-| Dimension | Score | Why | What raises it | Evidence needed |
-|---|---|---|---|---|
-| Market growth | 7 | Category demand rising | Confirm with search trend data | Third-party market data |
-| Urgency of problem | 6 | Painful but not urgent | Sharper wedge | Customer interviews |
-| Willingness to pay | 5 | Unproven | Pricing test | Willingness-to-pay survey |
-| Competitive gap | 6 | Incumbents are generic | Differentiated workflow | Competitor teardown |
-| Differentiation | 5 | Some but not defensible | Unique data loop | User research |
-| Distribution | 4 | No channel proven | PLG loop | Channel experiment |
-| Retention | 5 | Habit not yet formed | Daily trigger | Retention cohort data |
-| Monetization | 5 | Pricing hypothesis only | Tiered pricing | Willingness-to-pay data |
-| Defensibility | 3 | No moat yet | Data/workflow moat | Usage data over time |
-| Evidence confidence | 4 | Mostly assumption | Interviews | Source-backed claims |
-| Venture scale | 5 | Plausible not proven | Expansion path | Market sizing research |
-| Execution feasibility | 7 | Buildable with current team | N/A | N/A |
+const BCG_SCORECARD_DIMS = [
+  'Market growth', 'Urgency of problem', 'Buyer/user willingness to pay', 'Competitive gap',
+  'Differentiation', 'Distribution access', 'Retention / switching cost', 'Monetization strength',
+  'Defensibility / moat', 'Evidence confidence', 'Venture scale potential', 'Execution feasibility',
+];
 
-C. Current State Diagnosis
-The idea is not yet a Star because distribution and defensibility are unproven. Weak parts: retention loop, moat. Promising parts: market growth, execution feasibility. Dangerous assumptions: willingness to pay. Could collapse into a Dog if distribution never materializes; could break out if the retention loop compounds into a data moat.
+const BCG_UPGRADE_TABLE_DIMS = [
+  'Market growth', 'Competitive position', 'Distribution', 'Retention', 'Monetization',
+  'Moat', 'Evidence confidence', 'Venture scale', 'Execution feasibility',
+];
 
-D. Star Upgrade Strategy
-Product upgrades: add a daily-use workflow and a data loop that compounds, raising retention and defensibility scores.
-Positioning upgrades: sharpen the category wedge and name a clear enemy (status quo manual process), raising differentiation.
-Distribution upgrades: build a product-led growth loop and a partnership channel, raising the distribution score.
-Monetization upgrades: move to usage-based pricing with an enterprise tier, raising monetization strength.
-Defensibility upgrades: accumulate a proprietary workflow/data moat over the first 12 months, raising defensibility.
-Evidence upgrades: run 20 customer interviews and a pricing test before claiming venture scale.
+function fullScorecard(): PackV2BcgScorecardItemLike[] {
+  return BCG_SCORECARD_DIMS.map((dimension, i) => ({
+    dimension,
+    currentScore: 4 + (i % 4),
+    rationale: `${dimension} rationale specific to this idea, not generic filler.`,
+    whatWouldRaiseIt: `What would raise ${dimension.toLowerCase()} for this idea.`,
+    evidenceNeeded: `Evidence needed to prove ${dimension.toLowerCase()}.`,
+  }));
+}
 
-E. Unicorn-grade Upside Path
-This could become a category leader if the data moat compounds and distribution proves repeatable, but this requires proof — not proven yet. Expansion into adjacent workflows would be needed for a plausible venture-scale outcome, and this depends on evidence from the first cohort of users.
+function fullUpgradeTable(): PackV2BcgUpgradeTableItemLike[] {
+  return BCG_UPGRADE_TABLE_DIMS.map((dimension, i) => ({
+    dimension,
+    currentScore: 4 + (i % 4),
+    weakness: `${dimension} weakness specific to this idea.`,
+    upgradeMove: `Upgrade move to raise ${dimension.toLowerCase()}.`,
+    targetScoreAfterUpgrades: 7 + (i % 2),
+    whyScoreImproves: `Why ${dimension.toLowerCase()} improves after the upgrade move.`,
+  }));
+}
 
-F. Before / After Upgrade Table
-| Dimension | Current score | Weakness | Upgrade move | Target score after upgrades | Why score improves |
-|---|---|---|---|---|---|
-| Market growth | 7 | None major | Confirm with data | 8 | Third-party validation |
-| Competitive position | 6 | Generic incumbents | Sharper wedge | 8 | Differentiation increases |
-| Distribution | 4 | No channel proven | PLG loop | 7 | Channel derisked |
-| Retention | 5 | No habit loop | Daily workflow | 8 | Habit loop formed |
-| Monetization | 5 | Pricing unproven | Usage-based tiers | 7 | Pricing validated |
-| Moat | 3 | No moat | Data/workflow moat | 7 | Compounding data |
-| Evidence confidence | 4 | Mostly assumption | Interviews + test | 7 | Evidence collected |
-| Venture scale | 5 | Plausible only | Expansion proof | 7 | Expansion validated |
-| Execution feasibility | 7 | None major | N/A | 8 | Team proven |
+const FULL_BCG_CORE: PackV2BcgCoreLike = {
+  opportunityType: 'B2B',
+  currentPosition: 'Question Mark',
+  marketGrowthAssessment: 'Category demand is rising quickly among target buyers.',
+  relativeCompetitivePosition: 'Incumbents are generic; this idea has a differentiated workflow wedge.',
+  classificationRationale: 'Market growth is strong but competitive position, distribution advantage, and defensibility are not yet proven, which places this squarely in the Question Mark quadrant rather than Star.',
+  starBlockers: ['No proven distribution channel', 'No defensibility moat yet'],
+  starPotential: 'Could become a Star if the retention loop compounds into a data moat.',
+  minimumAmbition: 'Star',
+  maximumAmbition: 'Category leader',
+};
 
-G. Final BCG Verdict
-Current BCG position: Question Mark. Target BCG position after upgrades: Star, with a unicorn-grade category-leader path as the maximum ambition. Minimum ambition: Star. Top 5 moves: build the daily workflow, prove the PLG channel, run pricing tests, start the data moat, run 20 customer interviews. Top 5 proof points: retention cohort data, channel CAC, pricing willingness data, moat usage data, expansion signal. Top 5 risks: distribution never proving out, retention not forming, pricing rejection, incumbents copying fast, data moat too slow to compound.
-`;
+const FULL_STAR_UPGRADE_STRATEGY: PackV2BcgStarUpgradeStrategyLike = {
+  productUpgrades: ['Add a daily-use workflow and a compounding data loop, raising retention and defensibility.'],
+  positioningUpgrades: ['Sharpen the category wedge and name the status-quo enemy, raising differentiation.'],
+  distributionUpgrades: ['Build a product-led growth loop and a partnership channel, raising distribution.'],
+  monetizationUpgrades: ['Move to usage-based pricing with an enterprise tier, raising monetization strength.'],
+  defensibilityUpgrades: ['Accumulate a proprietary workflow/data moat over the first year, raising defensibility.'],
+  evidenceUpgrades: ['Run 20 customer interviews and a pricing test before claiming venture scale.'],
+};
+
+const FULL_UNICORN_PATH: PackV2BcgUnicornPathLike = {
+  categoryExpansionNeeded: 'Could expand into adjacent workflows if the core loop proves out, though this requires proof.',
+  platformOrEcosystemMove: 'Could become a platform for partner integrations, not proven yet.',
+  moatNeeded: 'A compounding data/workflow moat, which depends on evidence from the first user cohort.',
+  distributionAdvantageNeeded: 'A repeatable PLG channel, still to validate.',
+  pricingOrLtvPath: 'Usage-based pricing with expansion revenue, a hypothesis not yet tested.',
+  productSurfaceExpansion: 'Could expand from a single workflow to a full suite, requires proof of the first wedge.',
+  proofRequiredBeforeClaimingUpside: ['Retention cohort data', 'Channel CAC data'],
+  investorBeliefTriggers: ['Compounding retention curve', 'Repeatable channel CAC'],
+};
+
+const FULL_BCG_VERDICT: PackV2BcgVerdictLike = {
+  currentBcgPosition: 'Question Mark',
+  targetBcgPositionAfterUpgrades: 'Star',
+  topFiveMovesRequired: ['Build the daily workflow', 'Prove the PLG channel', 'Run pricing tests', 'Start the data moat', 'Run 20 customer interviews'],
+  topFiveProofPointsRequired: ['Retention cohort data', 'Channel CAC', 'Pricing willingness data', 'Moat usage data', 'Expansion signal'],
+  topFiveRisks: ['Distribution never proving out', 'Retention not forming', 'Pricing rejection', 'Incumbents copying fast', 'Data moat too slow to compound'],
+};
+
+// The gate's own generic "no section is too shallow" check (SHALLOW_THRESHOLD,
+// applied to every document including BCG) scans `sections[]` text — this is
+// what the backend's renderBcgDocumentToSections() would have produced from
+// the structured fields above, kept short here since only its length matters.
+const FULL_BCG_RENDERED_TEXT =
+  'Structured BCG evaluation covering current position, scorecard, star upgrade strategy, unicorn-grade upside path, before/after upgrade table, and final verdict for this idea — long enough to clear the shallow-content threshold on its own.';
 
 function bcgDoc(overrides: Partial<PackV2DocLike> = {}): PackV2DocLike {
   return {
     type: BCG_SECTION_KEY,
     title: 'BCG Opportunity Evaluation & Star Upgrade Plan',
-    sections: [{ heading: 'BCG Evaluation', content: FULL_BCG_CONTENT }],
+    sections: [{ heading: 'A. Current BCG Position', content: FULL_BCG_RENDERED_TEXT }],
+    bcg: FULL_BCG_CORE,
+    scorecard: fullScorecard(),
+    starUpgradeStrategy: FULL_STAR_UPGRADE_STRATEGY,
+    unicornGradeUpsidePath: FULL_UNICORN_PATH,
+    beforeAfterUpgradeTable: fullUpgradeTable(),
+    finalBcgVerdict: FULL_BCG_VERDICT,
     ...overrides,
   };
 }
@@ -103,60 +152,103 @@ describe('runProductPackV2ContentQualityChecks — BCG', () => {
     expect(checkFor(checks, 'product_pack_missing_bcg').status).toBe('fail');
   });
 
-  it('fails product_pack_shallow_bcg when the BCG section is only a quadrant label', () => {
-    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ sections: [{ heading: 'BCG', content: 'Current BCG Position: Question Mark.' }] }) : d));
+  it('fails product_pack_shallow_bcg when the BCG position is only a bare label with no rationale', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
+      ? bcgDoc({ bcg: { currentPosition: 'Question Mark', opportunityType: 'B2B', marketGrowthAssessment: '', relativeCompetitivePosition: '', classificationRationale: 'Question Mark.' } })
+      : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_shallow_bcg').status).toBe('fail');
   });
 
-  it('fails product_pack_missing_bcg_scorecard when there is no numeric table', () => {
+  it('fails product_pack_shallow_bcg when currentPosition is not one of the four valid quadrants', () => {
     const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
-      ? bcgDoc({ sections: [{ heading: 'BCG', content: FULL_BCG_CONTENT.replace(/\|[^\n]*\n/g, '') }] })
+      ? bcgDoc({ bcg: { ...FULL_BCG_CORE, currentPosition: 'Rising Star' } })
+      : d));
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_shallow_bcg').status).toBe('fail');
+  });
+
+  it('fails product_pack_missing_bcg_scorecard when the scorecard is empty', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ scorecard: [] }) : d));
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_missing_bcg_scorecard').status).toBe('fail');
+  });
+
+  it('fails product_pack_missing_bcg_scorecard when a scorecard entry is missing required subfields', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
+      ? bcgDoc({ scorecard: [{ dimension: 'Market growth', currentScore: 7, rationale: '', whatWouldRaiseIt: '', evidenceNeeded: '' }, ...fullScorecard().slice(1)] })
       : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_missing_bcg_scorecard').status).toBe('fail');
   });
 
   it('fails product_pack_missing_star_upgrade when the Star Upgrade Strategy is absent', () => {
-    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
-      ? bcgDoc({ sections: [{ heading: 'BCG', content: FULL_BCG_CONTENT.replace(/D\. Star Upgrade Strategy[\s\S]*?(?=E\. Unicorn)/, '') }] })
-      : d));
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ starUpgradeStrategy: undefined }) : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_missing_star_upgrade').status).toBe('fail');
   });
 
-  it('fails product_pack_missing_unicorn_path when the upside path is absent', () => {
+  it('fails product_pack_missing_star_upgrade when one upgrade track is empty', () => {
     const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
-      ? bcgDoc({ sections: [{ heading: 'BCG', content: FULL_BCG_CONTENT.replace(/E\. Unicorn-grade Upside Path[\s\S]*?(?=F\. Before)/, '').replace(/unicorn[a-z-]*/gi, 'category-leading') }] })
+      ? bcgDoc({ starUpgradeStrategy: { ...FULL_STAR_UPGRADE_STRATEGY, defensibilityUpgrades: [] } })
       : d));
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    const check = checkFor(checks, 'product_pack_missing_star_upgrade');
+    expect(check.status).toBe('fail');
+    expect(check.message).toContain('defensibilityUpgrades');
+  });
+
+  it('fails product_pack_missing_unicorn_path when the upside path is absent', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ unicornGradeUpsidePath: undefined }) : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_missing_unicorn_path').status).toBe('fail');
   });
 
   it('fails product_pack_missing_unicorn_path when an unframed scale claim is made', () => {
     const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
-      ? bcgDoc({ sections: [{ heading: 'BCG', content: `${FULL_BCG_CONTENT}\nThis will become a unicorn with a $10 billion TAM.` }] })
+      ? bcgDoc({ unicornGradeUpsidePath: { ...FULL_UNICORN_PATH, categoryExpansionNeeded: 'This will become a unicorn with a $10 billion TAM.' } })
       : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_missing_unicorn_path').status).toBe('fail');
   });
 
-  it('fails product_pack_missing_upgrade_table when only the scorecard table exists', () => {
-    const singleTable = FULL_BCG_CONTENT.split('F. Before / After Upgrade Table')[0]!;
-    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ sections: [{ heading: 'BCG', content: singleTable }] }) : d));
+  it('fails product_pack_missing_upgrade_table when the before/after table is empty', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ beforeAfterUpgradeTable: [] }) : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_missing_upgrade_table').status).toBe('fail');
   });
 
-  it('fails product_pack_generic_upgrade_advice on a bare, unexplained bullet', () => {
+  it('fails product_pack_missing_upgrade_table when a row is missing an upgrade move', () => {
     const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
-      ? bcgDoc({ sections: [{ heading: 'BCG', content: `${FULL_BCG_CONTENT}\n- improve quality\n` }] })
+      ? bcgDoc({ beforeAfterUpgradeTable: [{ dimension: 'Market growth', currentScore: 7, weakness: 'w', upgradeMove: '', targetScoreAfterUpgrades: 8, whyScoreImproves: '' }, ...fullUpgradeTable().slice(1)] })
+      : d));
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_missing_upgrade_table').status).toBe('fail');
+  });
+
+  it('fails product_pack_missing_bcg_verdict when the Final BCG Verdict is absent', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY ? bcgDoc({ finalBcgVerdict: undefined }) : d));
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_missing_bcg_verdict').status).toBe('fail');
+  });
+
+  it('fails product_pack_missing_bcg_verdict when a required top-5 list is missing', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
+      ? bcgDoc({ finalBcgVerdict: { ...FULL_BCG_VERDICT, topFiveRisks: [] } })
+      : d));
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_missing_bcg_verdict').status).toBe('fail');
+  });
+
+  it('fails product_pack_generic_upgrade_advice on a bare, unexplained upgrade item', () => {
+    const docs = baseDocs().map((d) => (d.type === BCG_SECTION_KEY
+      ? bcgDoc({ starUpgradeStrategy: { ...FULL_STAR_UPGRADE_STRATEGY, productUpgrades: ['improve quality'] } })
       : d));
     const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
     expect(checkFor(checks, 'product_pack_generic_upgrade_advice').status).toBe('fail');
   });
 
-  it('passes every BCG check for a genuinely deep, complete BCG document', () => {
+  it('passes every BCG check for a genuinely deep, complete, structured BCG document', () => {
     const checks = runProductPackV2ContentQualityChecks({ documents: baseDocs(), evidenceCount: 2 });
     for (const id of [
       'product_pack_missing_bcg',
@@ -165,6 +257,7 @@ describe('runProductPackV2ContentQualityChecks — BCG', () => {
       'product_pack_missing_star_upgrade',
       'product_pack_missing_unicorn_path',
       'product_pack_missing_upgrade_table',
+      'product_pack_missing_bcg_verdict',
       'product_pack_generic_upgrade_advice',
     ]) {
       expect(checkFor(checks, id).status, id).toBe('pass');

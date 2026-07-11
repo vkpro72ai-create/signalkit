@@ -79,9 +79,10 @@ function buildStepOutputContract(step: ProductPackV2Step): string {
   const trimmed = step.extraFieldsContract.trim();
   const body = trimmed.length > 2 ? trimmed.slice(1, -1).trim() : '';
   const extra = body ? `,\n${body}` : '';
+  const documentContract = step.documentContractOverride ?? PRODUCT_PACK_V2_DOCUMENT_CONTRACT;
   return `{
   "documents": [
-    ${PRODUCT_PACK_V2_DOCUMENT_CONTRACT}
+    ${documentContract}
   ]${extra}
 }`;
 }
