@@ -2352,11 +2352,24 @@ function resolvePackV2Section(type?: string | null, title?: string | null) {
   );
 }
 
+/**
+ * Live-tested: an ASCII-only "non-letter" regex here silently stripped
+ * non-Latin scripts too — a Russian-translated title like "Пост-MVP Scope"
+ * (the model correctly translating "Post" into "Пост") collapsed to just
+ * "mvp scope", identical to the canonical "MVP Scope" title, so title
+ * matching in resolvePackV2Section falsely resolved a Post-MVP Scope
+ * document to the MVP Scope section (which sorts earlier in
+ * PRODUCT_PACK_V2_SECTIONS, so .find() returned it first) even when the
+ * document's own "type" field was already correct. \p{L}/\p{N} (Unicode
+ * letter/number classes) keep any script's letters intact so a translated
+ * title only ever collides with another translated title in the SAME
+ * language, never with an unrelated English canonical title.
+ */
 function normalizePackV2DocumentValue(value?: string | null): string {
   return (value ?? '')
     .toLowerCase()
     .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 

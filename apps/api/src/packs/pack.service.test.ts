@@ -1046,6 +1046,44 @@ describe('PackService — canonical document type enforcement (Product Pack v2 s
     expect(structureCheck.status).toBe('fail');
     expect(structureCheck.message).toContain('Post-MVP Scope');
   });
+
+  it('does not let a translated (Cyrillic) title collide with an unrelated canonical English title (live-found regression)', async () => {
+    // Live-tested root cause: resolvePackV2Section's title-matching used an
+    // ASCII-only "strip non-letters" normalizer, which silently deleted
+    // Cyrillic script entirely — "Пост-MVP Scope" (a correct Russian
+    // translation of "Post-MVP Scope") collapsed to just "mvp scope",
+    // identical to the *unrelated* canonical "MVP Scope" title, and since
+    // that section sorts earlier in PRODUCT_PACK_V2_SECTIONS, title-matching
+    // incorrectly won over the document's own (here, deliberately correct)
+    // "type" field. Both documents keep their correct, distinct types here
+    // — this only reproduces if the Cyrillic-stripping bug resurfaces.
+    const { prisma, docCreateMany } = makePrisma();
+    const buildProductStep = PRODUCT_PACK_V2_STEPS.find((s) => s.id === 'build_product')!;
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      if (step.id === 'build_product') {
+        const payload = makeStepPayload(step);
+        const mvpIndex = payload.documents.findIndex((d: { type: string }) => d.type === 'mvp_scope');
+        const postMvpIndex = payload.documents.findIndex((d: { type: string }) => d.type === 'post_mvp_scope');
+        payload.documents[mvpIndex] = { ...payload.documents[mvpIndex], title: 'Объём MVP' };
+        payload.documents[postMvpIndex] = { ...payload.documents[postMvpIndex], title: 'Пост-MVP Scope' };
+        routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(payload)));
+      } else {
+        routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
+      }
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    const docRows = createdDocRows(docCreateMany);
+    const docTypes = docRows.map((row) => row.docType);
+    expect(docTypes.filter((t) => t === 'mvp_scope')).toHaveLength(1);
+    expect(docTypes.filter((t) => t === 'post_mvp_scope')).toHaveLength(1);
+    const postMvpRow = docRows.find((row) => row.docType === 'post_mvp_scope')!;
+    expect(postMvpRow.title).toBe('Пост-MVP Scope');
+  });
 });
 
 describe('PRODUCT_PACK_V2_SECTIONS — BCG / Star Upgrade', () => {
