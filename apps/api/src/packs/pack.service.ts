@@ -68,6 +68,15 @@ interface ProductPackV2Document {
   doneDefinition: string[];
   sections: ProductPackV2Section[];
   acceptanceCriteria: string[];
+  /**
+   * Present only when canonicalizeStepDocuments() overrode the model's own
+   * type/title for canonical document identity — the model's original
+   * values, kept for debugging. Not part of the LLM contract; stripped into
+   * metadata.originalModelDocumentIdentity at persistence time.
+   */
+  _originalModelDocumentIdentity?: { type: string; title: string };
+  /** Set on every document in a step where the model's own types collided (see canonicalizeStepDocuments). */
+  _documentIdentityDuplicateDetected?: boolean;
 }
 
 // ── BCG Opportunity Evaluation (dedicated step, structured contract) ────────
@@ -1427,6 +1436,62 @@ function parseJsonLike(raw: string): unknown {
   }
 }
 
+/**
+ * Canonical document identity for one step's output: expectedDoc definitions
+ * (step.sectionKeys, in order) are the source of truth, not whatever the
+ * model put in "type"/"title". Only runs when the model returned exactly
+ * the expected number of documents — a count mismatch is handled by the
+ * caller (schema/repair path), never guessed at here.
+ *
+ * Two passes so a merely-reordered-but-correctly-typed response is left
+ * alone (order never matters for a document whose own type/title already
+ * resolves to one of this step's — still unclaimed — expected keys), while
+ * a document that drifted or duplicated another's type only falls back to
+ * positional assignment among the keys nothing else claimed:
+ *   1. Claim: for each document in array order, if its own type/title
+ *      resolves (via resolvePackV2Section) to one of this step's expected
+ *      keys AND that key isn't already claimed by an earlier document,
+ *      confirm it.
+ *   2. Fill: every unconfirmed document gets the next unclaimed expected
+ *      key, in order — this is what fixes the reported bug (a "Post-MVP
+ *      Scope" document mistagged type: "mvp_scope", colliding with the
+ *      real MVP Scope document's already-claimed key).
+ */
+function canonicalizeStepDocuments(documents: ProductPackV2Document[], step: ProductPackV2Step): ProductPackV2Document[] {
+  if (documents.length !== step.sectionKeys.length) return documents;
+
+  const originalTypes = documents.map((doc) => doc.type);
+  const duplicateTypesDetected = new Set(originalTypes).size !== originalTypes.length;
+
+  const claimedKeys = new Set<string>();
+  const confirmed: (ProductPackV2SectionKey | null)[] = documents.map((doc) => {
+    const resolved = resolvePackV2Section(doc.type, doc.title);
+    if (resolved && (step.sectionKeys as readonly string[]).includes(resolved.key) && !claimedKeys.has(resolved.key)) {
+      claimedKeys.add(resolved.key);
+      return resolved.key;
+    }
+    return null;
+  });
+
+  const remainingKeys = step.sectionKeys.filter((key) => !claimedKeys.has(key));
+  let remainingIndex = 0;
+  const finalKeys = confirmed.map((key) => key ?? remainingKeys[remainingIndex++]!);
+
+  return documents.map((doc, index) => {
+    const expectedKey = finalKeys[index]!;
+    const expectedSection = PRODUCT_PACK_V2_SECTIONS.find((section) => section.key === expectedKey);
+    const identityChanged = doc.type !== expectedKey;
+    return {
+      ...doc,
+      type: expectedKey,
+      layer: expectedSection?.layer ?? doc.layer,
+      title: doc.title && doc.title.trim() ? doc.title : (expectedSection?.title ?? doc.title),
+      ...(identityChanged ? { _originalModelDocumentIdentity: { type: doc.type, title: doc.title } } : {}),
+      ...(duplicateTypesDetected ? { _documentIdentityDuplicateDetected: true } : {}),
+    };
+  });
+}
+
 /** Parse and validate ONE step's JSON output: documents must cover exactly this step's section keys, and any fields the step owns (see validateStepExtraFields) must be present. */
 function parsePackV2StepJson(raw: string, step: ProductPackV2Step): ProductPackV2StepParseResult {
   try {
@@ -1442,26 +1507,26 @@ function parsePackV2StepJson(raw: string, step: ProductPackV2Step): ProductPackV
     }
     let documents = parsed.documents as ProductPackV2Document[];
 
-    let matchedKeys = new Set(
-      documents
-        .map((doc) => resolvePackV2Section(doc.type, doc.title))
-        .filter((section): section is typeof PRODUCT_PACK_V2_SECTIONS[number] => Boolean(section))
-        .map((section) => section.key),
-    );
-
-    // The prompt asks for documents to be non-English-titled (translated)
-    // but keeps "type" as the stable English key, in the same order as the
-    // section list — occasionally the model still drifts on "type" too
-    // (e.g. a descriptive slug instead of the exact key). If the document
-    // count matches exactly, positional order is a safe fallback rather
-    // than failing the whole step over a naming miss.
-    if (step.sectionKeys.some((key) => !matchedKeys.has(key)) && documents.length === step.sectionKeys.length) {
-      documents = documents.map((doc, index) => ({ ...doc, type: step.sectionKeys[index]! }));
-      matchedKeys = new Set(step.sectionKeys);
-    }
-
-    if (step.sectionKeys.some((key) => !matchedKeys.has(key))) {
-      return { json: null, reason: 'schema_missing_sections' };
+    if (documents.length === step.sectionKeys.length) {
+      // Exact count match: canonical document identity (type/layer, and
+      // title when the model didn't provide one) is backend-controlled —
+      // see canonicalizeStepDocuments. A model-reported "type" that drifts
+      // or duplicates another document's type in this step can no longer
+      // break document identity or fail the structure gate.
+      documents = canonicalizeStepDocuments(documents, step);
+    } else {
+      // Count doesn't match what this step expects — do not guess at
+      // identity; only accept if every expected key can still be found by
+      // type/title match among whatever the model actually returned.
+      const matchedKeys = new Set(
+        documents
+          .map((doc) => resolvePackV2Section(doc.type, doc.title))
+          .filter((section): section is typeof PRODUCT_PACK_V2_SECTIONS[number] => Boolean(section))
+          .map((section) => section.key),
+      );
+      if (step.sectionKeys.some((key) => !matchedKeys.has(key))) {
+        return { json: null, reason: 'schema_missing_sections' };
+      }
     }
 
     if (!validateStepExtraFields(step.id, parsed)) {
@@ -1992,6 +2057,8 @@ function mapPackV2DocumentToProductPackDocument(
       document: doc,
       layer: section?.layer ?? 'build',
       section: section ? { key: section.key, title: section.title } : null,
+      originalModelDocumentIdentity: doc._originalModelDocumentIdentity ?? null,
+      documentIdentityDuplicateDetected: doc._documentIdentityDuplicateDetected ?? false,
     } as unknown as Prisma.InputJsonValue,
   };
 }
@@ -2030,6 +2097,8 @@ function mapPackV2DocumentToInterimRow(
       document: doc,
       layer: section?.layer ?? 'build',
       section: section ? { key: section.key, title: section.title } : null,
+      originalModelDocumentIdentity: doc._originalModelDocumentIdentity ?? null,
+      documentIdentityDuplicateDetected: doc._documentIdentityDuplicateDetected ?? false,
       interim: true,
     } as unknown as Prisma.InputJsonValue,
   };

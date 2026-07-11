@@ -943,6 +943,111 @@ describe('PackService — BCG dedicated step (structured, table-free contract)',
   });
 });
 
+describe('PackService — canonical document type enforcement (Product Pack v2 steps)', () => {
+  // Reproduces the reported bug: build_product's real last document ("Post-MVP
+  // Scope" content/title) is tagged with type "mvp_scope" — colliding with the
+  // real MVP Scope document's already-correct type.
+  function buildProductPayloadWithMistypedPostMvp() {
+    const step = PRODUCT_PACK_V2_STEPS.find((s) => s.id === 'build_product')!;
+    const payload = makeStepPayload(step);
+    const lastIndex = payload.documents.length - 1;
+    payload.documents[lastIndex] = { ...payload.documents[lastIndex], type: 'mvp_scope', title: 'Post-MVP Scope' };
+    return payload;
+  }
+
+  function mockAllStepsWithMistypedPostMvp() {
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      const payload = step.id === 'build_product' ? buildProductPayloadWithMistypedPostMvp() : makeStepPayload(step);
+      routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(payload)));
+    }
+    return routerRun;
+  }
+
+  it('stores a "Post-MVP Scope" document mistagged type: "mvp_scope" as canonical docType post_mvp_scope, distinct from the real MVP Scope document', async () => {
+    const { prisma, docCreateMany } = makePrisma();
+    const { router } = makeRouter(mockAllStepsWithMistypedPostMvp());
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    const docRows = createdDocRows(docCreateMany);
+    const docTypes = docRows.map((row) => row.docType);
+    expect(docTypes.filter((t) => t === 'mvp_scope')).toHaveLength(1);
+    expect(docTypes.filter((t) => t === 'post_mvp_scope')).toHaveLength(1);
+    const postMvpRow = docRows.find((row) => row.docType === 'post_mvp_scope')!;
+    expect(postMvpRow.title).toBe('Post-MVP Scope');
+  });
+
+  it('preserves the model\'s original (incorrect) type/title in metadata.originalModelDocumentIdentity for debugging', async () => {
+    const { prisma, docCreateMany } = makePrisma();
+    const { router } = makeRouter(mockAllStepsWithMistypedPostMvp());
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    const docRows = createdDocRows(docCreateMany);
+    const postMvpRow = docRows.find((row) => row.docType === 'post_mvp_scope')!;
+    expect(postMvpRow.metadata.originalModelDocumentIdentity).toEqual({ type: 'mvp_scope', title: 'Post-MVP Scope' });
+    expect(postMvpRow.metadata.documentIdentityDuplicateDetected).toBe(true);
+
+    // The real MVP Scope document was never touched — no identity override recorded for it.
+    const mvpRow = docRows.find((row) => row.docType === 'mvp_scope')!;
+    expect(mvpRow.metadata.originalModelDocumentIdentity).toBeNull();
+  });
+
+  it('does not fail the structure gate when the model duplicates a type label but document count matches expected definitions', async () => {
+    const { prisma, gateCreate } = makePrisma();
+    const { router } = makeRouter(mockAllStepsWithMistypedPostMvp());
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    const gateArgs = gateCreate.mock.calls[0]![0].data;
+    const structureCheck = gateArgs.checks.find((c: { id: string }) => c.id === 'structure-gate');
+    expect(structureCheck.status).toBe('pass');
+  });
+
+  it('quality gate build-readiness is not blocked by a canonicalized-away identity collision (buildReady reflects the real gate, not the raw model labels)', async () => {
+    const { prisma } = makePrisma();
+    const { router } = makeRouter(mockAllStepsWithMistypedPostMvp());
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.generateV2ForJob(JOB_SHAPE);
+
+    expect(result.allStepsCompleted).toBe(true);
+    expect(result.qualityGate.status).not.toBe('failed');
+  });
+
+  it('still fails schema validation (not silently guessed) when a step genuinely returns fewer documents than expected', async () => {
+    const { prisma, gateCreate } = makePrisma();
+    const buildProductStep = PRODUCT_PACK_V2_STEPS.find((s) => s.id === 'build_product')!;
+    const shortPayload = { documents: makeStepDocuments(buildProductStep).slice(0, -1) }; // post_mvp_scope entirely absent, not just mistyped
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS) {
+      if (step.id === 'build_product') {
+        // generate + repair + regenerate all short — the step genuinely fails, not "fixed" by canonicalization.
+        routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(shortPayload), { outputTokens: 500 }));
+        routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(shortPayload), { outputTokens: 500 }));
+        routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(shortPayload), { outputTokens: 500 }));
+      } else {
+        routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
+      }
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    await svc.generate('w1', 'n1', { depth: 'quick_opportunity', vertical: 'b2b_saas', useLlm: true });
+
+    // build_product step failed after all 3 attempts -> pipeline stops there; only vision + bcg documents persisted.
+    const gateArgs = gateCreate.mock.calls[0]![0].data;
+    expect(gateArgs.status).toBe('failed');
+    const structureCheck = gateArgs.checks.find((c: { id: string }) => c.id === 'structure-gate');
+    expect(structureCheck.status).toBe('fail');
+    expect(structureCheck.message).toContain('Post-MVP Scope');
+  });
+});
+
 describe('PRODUCT_PACK_V2_SECTIONS — BCG / Star Upgrade', () => {
   it('includes the BCG Opportunity Evaluation & Star Upgrade Plan in the canonical section list', () => {
     const section = PRODUCT_PACK_V2_SECTIONS.find((s) => s.key === 'bcg_opportunity_evaluation_star_upgrade');
