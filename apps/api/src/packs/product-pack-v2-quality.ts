@@ -139,13 +139,42 @@ const BCG_POSITIONS = new Set(['Star', 'Question Mark', 'Cash Cow', 'Dog']);
 const UNFRAMED_SCALE_CLAIM_RE = /\b(\$?\d+\s*(billion|trillion|million)|TAM of|guaranteed unicorn|will become a unicorn|\$\d+[bBmM]\b)/i;
 const CAREFUL_FRAMING_RE = /(could become|requires proof|not proven|not yet proven|depends on|assumption|hypothes|to validate|no fabricated|not a guarantee|not guaranteed)/i;
 
-const EVIDENCE_OVERCLAIM_RE = /(evidence-backed|clinically proven|scientifically validated|generated from real market signals and evidence)/i;
-// A bare "validated"/"proven" is only a real overclaim when it asserts the
-// pack/claim itself is validated (e.g. "this is proven") — the same words
-// appear legitimately in a BCG upgrade table ("Pricing validated" as a
-// target outcome) or hedged ("not yet proven"), neither of which is a claim
-// that today's evidence backs the pack.
-const ASSERTION_PROVEN_RE = /\b(is|are|has been|have been|this is|it is)\s+(validated|proven)\b/i;
+/**
+ * Text to scan for evidence overclaiming — content/examples/implementation
+ * notes only, never headings. "Доказанные утверждения (evidence-backed
+ * claims)" and "Evidence-backed claims: none" are both structural — a
+ * heading naming a section, or a label followed by a negated/empty value —
+ * not a claim that the idea itself is validated. Only prose making a
+ * declarative assertion about the pack/product/user counts, so headings are
+ * excluded entirely and parenthetical glosses (the usual place a bilingual
+ * heading like the one above puts its English label) are stripped.
+ */
+function evidenceOverclaimText(doc: PackV2DocLike): string {
+  const sections = doc.sections ?? [];
+  return sections
+    .map((s) => [s.content ?? '', ...(s.examples ?? []), ...(s.implementationNotes ?? [])].join(' '))
+    .join('\n')
+    .replace(/\([^)]*\)/g, ' ');
+}
+
+// A bare "evidence-backed"/"validated"/"proven" is only a real overclaim when
+// it asserts the pack/product/user itself is validated (e.g. "this is
+// proven", "product is evidence-backed") — the same words appear legitimately
+// as section labels ("Evidence-backed claims"), in a BCG upgrade table
+// ("Pricing validated" as a target outcome), or hedged ("not yet proven",
+// "no evidence-backed claims yet"). Requiring the predicate word to sit
+// immediately after the linking verb (only whitespace between) means a
+// negation or hedge word in between ("is NOT proven", "is arguably proven")
+// naturally fails to match, without needing a separate negation-detector.
+const ASSERTION_PROVEN_RE = /\b(is|are|was|were|has been|have been|this is|it is)\s+(validated|proven|evidence-backed)\b/i;
+// "Clinical evidence shows/confirms/demonstrates ..." or "Research/data/studies
+// prove(s)/confirm(s) ..." — a declarative claim that some evidence exists
+// and supports the idea, distinct from a bare "Clinical Evidence" section label.
+const EVIDENCE_SHOWS_RE = /\b(clinical(?:ly)?\s+evidence|research|data|studies)\s+(shows?|demonstrates?|confirms?|proves?)\b/i;
+// Standalone phrases that are always a full declarative claim on their own,
+// never a bare label — "clinically proven"/"scientifically validated" as
+// adjective phrases, or the literal overclaim sentence fragment.
+const EVIDENCE_OVERCLAIM_PHRASE_RE = /(clinically proven|scientifically validated|generated from real market signals and evidence)/i;
 
 const STAR_UPGRADE_TRACKS = ['productUpgrades', 'positioningUpgrades', 'distributionUpgrades', 'monetizationUpgrades', 'defensibilityUpgrades'] as const;
 
@@ -320,12 +349,17 @@ export function runProductPackV2ContentQualityChecks(input: ProductPackV2Content
     contaminated,
   ));
 
-  // 10) Evidence mismatch — no overclaiming when there is no evidence.
+  // 10) Evidence mismatch — no overclaiming when there is no evidence. Scans
+  // content/examples/implementation notes only (never headings — see
+  // evidenceOverclaimText) so structural labels like "Evidence-backed
+  // claims" (as a heading) never trip this, only a substantive declarative
+  // claim that the pack/product/user is validated/proven/evidence-backed.
   let evidenceMismatchDocs: string[] = [];
   if (evidenceCount === 0) {
     evidenceMismatchDocs = documents.filter((d) => {
-      const text = docText(d);
-      return text.split('\n').some((line) => EVIDENCE_OVERCLAIM_RE.test(line) || ASSERTION_PROVEN_RE.test(line));
+      const text = evidenceOverclaimText(d);
+      return text.split('\n').some((line) =>
+        ASSERTION_PROVEN_RE.test(line) || EVIDENCE_SHOWS_RE.test(line) || EVIDENCE_OVERCLAIM_PHRASE_RE.test(line));
     }).map((d) => d.type);
   }
   checks.push(mk(

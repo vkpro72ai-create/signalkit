@@ -324,6 +324,66 @@ describe('runProductPackV2ContentQualityChecks — general content quality', () 
     expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('pass');
   });
 
+  it('passes product_pack_evidence_mismatch when "evidence-backed claims" is only a section heading', () => {
+    const docs = baseDocs([]).map((d) =>
+      d.type === 'founder_investor_vision'
+        ? { ...d, sections: [{ heading: 'Доказанные утверждения (evidence-backed claims)', content: 'На данный момент нет внешних подтверждённых данных, специфичных для этого продукта. Пакет является стратегической стартовой гипотезой.' }] }
+        : d,
+    );
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 0 });
+    expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('pass');
+  });
+
+  it('passes product_pack_evidence_mismatch for "No evidence-backed claims yet"', () => {
+    const docs = baseDocs([]).map((d) =>
+      d.type === 'founder_investor_vision'
+        ? { ...d, sections: [{ heading: 'Evidence status', content: 'No evidence-backed claims yet. Evidence-backed claims: none.' }] }
+        : d,
+    );
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 0 });
+    expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('pass');
+  });
+
+  it('passes product_pack_evidence_mismatch for "requires evidence collection"', () => {
+    const docs = baseDocs([]).map((d) =>
+      d.type === 'founder_investor_vision'
+        ? { ...d, sections: [{ heading: 'x', content: 'This claim requires evidence collection before it can be trusted.' }] }
+        : d,
+    );
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 0 });
+    expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('pass');
+  });
+
+  it('fails product_pack_evidence_mismatch for the substantive claim "product is evidence-backed"', () => {
+    const docs = baseDocs([]).map((d) =>
+      d.type === 'founder_investor_vision'
+        ? { ...d, sections: [{ heading: 'x', content: 'This product is evidence-backed and ready for launch.' }] }
+        : d,
+    );
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 0 });
+    expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('fail');
+  });
+
+  it('fails product_pack_evidence_mismatch for the substantive claim "validated by real market signals"', () => {
+    const docs = baseDocs([]).map((d) =>
+      d.type === 'founder_investor_vision'
+        ? { ...d, sections: [{ heading: 'x', content: 'The idea is validated by real market signals from early adopters.' }] }
+        : d,
+    );
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 0 });
+    expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('fail');
+  });
+
+  it('fails product_pack_evidence_mismatch for "Clinical evidence shows..." and "Users are proven to..."', () => {
+    const docs = baseDocs([]).map((d) =>
+      d.type === 'founder_investor_vision'
+        ? { ...d, sections: [{ heading: 'x', content: 'Clinical evidence shows strong efficacy. Users are proven to adopt the habit within a week.' }] }
+        : d,
+    );
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 0 });
+    expect(checkFor(checks, 'product_pack_evidence_mismatch').status).toBe('fail');
+  });
+
   it('fails product_pack_encoding_corruption on mojibake text', () => {
     // A run of consecutive Latin-1 Supplement accented letters — the
     // character class real mojibake (misdecoded UTF-8) clusters into.
