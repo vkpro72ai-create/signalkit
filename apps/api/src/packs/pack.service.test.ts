@@ -85,9 +85,30 @@ interface StepJsonOptions {
 }
 
 /** One step's `documents[]`, scoped to exactly that step's section keys — mirrors the contract in product-pack-v2.builder.ts. */
+// data_model / api_integration_requirements are held to a stricter depth bar
+// (product_pack_shallow_technical_section — see product-pack-v2-quality.ts)
+// than the generic one-section fixture below clears: real generation is
+// expected to write one section per entity/endpoint group, not a single
+// pointer line. This fixture models that shape with plausible, product-
+// specific-looking (if generic-domain) content for a fictional "Clinic
+// Copilot" niche, matching what a real deep generation looks like.
+const DEEP_TECHNICAL_SECTIONS: Record<'data_model' | 'api_integration_requirements', Array<{ heading: string; content: string }>> = {
+  data_model: [
+    { heading: 'Patient', content: 'Represents a clinic patient record. Fields: id (UUID, internal), fullName (string, personal), dateOfBirth (date, sensitive), phone (string, personal), consentGivenAt (datetime, internal, source of truth for whether reminders may be sent). Scoped to a single clinic workspace. Lifecycle: active -> archived on discharge. Relations: has_many Appointment, has_many Reminder.' },
+    { heading: 'Appointment', content: 'A scheduled visit between a patient and a clinician. Fields: id, patientId (FK), clinicianId (FK), scheduledFor (datetime), status (enum: booked/confirmed/completed/no_show/cancelled), notes (text, sensitive). Owned by the clinic workspace. Audit: status changes are logged with actor and timestamp for compliance reporting.' },
+    { heading: 'Reminder', content: 'An outbound notification tied to an Appointment. Fields: id, appointmentId (FK), channel (sms/email), sentAt, deliveryStatus. Source of truth for delivery status is the provider webhook, not client state. Delete/export: reminders are purged 90 days after the linked appointment per retention policy.' },
+  ],
+  api_integration_requirements: [
+    { heading: 'Booking endpoints', content: 'POST /clinics/:clinicId/appointments creates an appointment; requires clinician-role JWT; request { patientId, clinicianId, scheduledFor }; response the created Appointment; side effects: queues a Reminder job. GET /clinics/:clinicId/appointments/:id returns one appointment scoped to the caller\'s clinic; 404 if outside workspace scope, 403 if caller lacks clinic access.' },
+    { heading: 'Reminder delivery integration', content: 'External integration with an SMS provider (Twilio-equivalent) via an outbound webhook consumer at POST /webhooks/sms-status, which updates Reminder.deliveryStatus. Async: reminders are sent by a background job triggered on appointment confirmation, not synchronously from the booking request, to keep the booking endpoint fast.' },
+    { heading: 'Error handling and rate limits', content: 'Booking conflicts (double-booking a clinician) return 409 with the conflicting appointment id. The reminder-send endpoint is rate-limited per clinic to avoid provider throttling; exceeding it returns 429 with a retry-after header. Acceptance: a booking made while offline and retried must not create a duplicate appointment (idempotency key required).' },
+  ],
+};
+
 function makeStepDocuments(step: StepDef, options: StepJsonOptions = {}) {
   const evidenceCount = options.evidenceCount ?? 2;
   return sectionsForStep(step).map((section) => {
+    const deepTechnical = DEEP_TECHNICAL_SECTIONS[section.key as 'data_model' | 'api_integration_requirements'];
     return {
       type: section.key,
       layer: section.layer,
@@ -99,25 +120,36 @@ function makeStepDocuments(step: StepDef, options: StepJsonOptions = {}) {
       howToUse: 'Use it as guidance.',
       connections: ['product_vision'],
       doneDefinition: ['Reviewed and approved'],
-      sections: [
-        {
-          heading: 'Overview',
-          content: options.unsourcedClaim && section.key === 'market_context'
-            // Still padded past the shallow-content threshold — this branch
-            // tests the unsourced-claim -> "Assumption / needs source:"
-            // normalization, not section depth.
-            ? 'According to reports, this market is growing rapidly. This section otherwise explains what it is, why it exists, who uses it, and how it connects to the rest of the product.'
-            // Long enough to clear product_pack_section_too_shallow (>150 chars) —
-            // real generation is always far longer than a one-line placeholder.
-            : `Content for ${section.key}. This section explains what it is, why it exists, who uses it, and how it connects to the rest of the product, with product-specific detail a cold reader can act on.`,
-          examples: ['Example'],
-          implementationNotes: ['Note'],
-          assumptions: ['Assumption'],
-          risks: ['Risk'],
-          evidenceRefs: evidenceCount > 0 ? ['Source 1'] : [],
-          sourceNeeds: [],
-        },
-      ],
+      sections: deepTechnical
+        ? deepTechnical.map((entry) => ({
+            heading: entry.heading,
+            content: entry.content,
+            examples: ['Example'],
+            implementationNotes: ['Note'],
+            assumptions: ['Assumption'],
+            risks: ['Risk'],
+            evidenceRefs: evidenceCount > 0 ? ['Source 1'] : [],
+            sourceNeeds: [],
+          }))
+        : [
+            {
+              heading: 'Overview',
+              content: options.unsourcedClaim && section.key === 'market_context'
+                // Still padded past the shallow-content threshold — this branch
+                // tests the unsourced-claim -> "Assumption / needs source:"
+                // normalization, not section depth.
+                ? 'According to reports, this market is growing rapidly. This section otherwise explains what it is, why it exists, who uses it, and how it connects to the rest of the product.'
+                // Long enough to clear product_pack_section_too_shallow (>150 chars) —
+                // real generation is always far longer than a one-line placeholder.
+                : `Content for ${section.key}. This section explains what it is, why it exists, who uses it, and how it connects to the rest of the product, with product-specific detail a cold reader can act on.`,
+              examples: ['Example'],
+              implementationNotes: ['Note'],
+              assumptions: ['Assumption'],
+              risks: ['Risk'],
+              evidenceRefs: evidenceCount > 0 ? ['Source 1'] : [],
+              sourceNeeds: [],
+            },
+          ],
       acceptanceCriteria: ['Criterion 1'],
     };
   });

@@ -134,6 +134,25 @@ const REPLACEMENT_CHAR_RE = /�/;
 
 const GENERIC_ENTITIES = new Set(['user', 'users', 'workspace', 'workspaces', 'ai', 'item', 'items', 'account', 'accounts']);
 
+// Data Model / API Integration Requirements are the two documents most prone
+// to being left as a one-line "see the structured fields above" pointer,
+// since this step's contract also asks for a separate, richly-structured
+// dataModel/apiContracts JSON array — the model can (and did, live-tested)
+// pour all its real effort into that structured field and leave the
+// document's own sections/prose as filler, which still technically clears
+// the generic SHALLOW_THRESHOLD used for every other document.
+const TECHNICAL_SECTION_TYPES = ['data_model', 'api_integration_requirements'];
+const MIN_TECHNICAL_SECTION_COUNT = 3;
+const MIN_TECHNICAL_TEXT_LENGTH = 400;
+
+/** Any `/path`-shaped token in free text — used to find endpoint mentions inside a document's prose, not just the structured apiContracts field. */
+const PATH_TOKEN_RE = /\/[a-z][a-z0-9_/-]{2,}/gi;
+// Trailing slash tolerated: a path-with-param token like "/users/:id" gets
+// truncated to "/users/" by PATH_TOKEN_RE (":" isn't a token character), so
+// the trailing "/" must still classify as generic rather than accidentally
+// reading as a distinguishing extra segment.
+const GENERIC_API_PATH_RE = /^\/(api\/)?(v\d+\/)?(users?|items?|accounts?|workspaces?)(\/[a-z0-9_-]+)?\/?$/i;
+
 const BCG_POSITIONS = new Set(['Star', 'Question Mark', 'Cash Cow', 'Dog']);
 
 const UNFRAMED_SCALE_CLAIM_RE = /\b(\$?\d+\s*(billion|trillion|million)|TAM of|guaranteed unicorn|will become a unicorn|\$\d+[bBmM]\b)/i;
@@ -324,19 +343,46 @@ export function runProductPackV2ContentQualityChecks(input: ProductPackV2Content
     shallowDocs,
   ));
 
-  // 8) No generic CRUD / Item screen.
+  // 7b) Data Model / API Integration Requirements specifically must be
+  // entity/endpoint-level detail, not a summary pointer at the separate
+  // structured dataModel/apiContracts fields — a stricter bar than the
+  // generic SHALLOW_THRESHOLD above, since a single "see the data model
+  // above" section can clear 150 characters without saying anything real.
+  const shallowTechnicalDocs = documents
+    .filter((d) => TECHNICAL_SECTION_TYPES.includes(d.type))
+    .filter((d) => (d.sections ?? []).length < MIN_TECHNICAL_SECTION_COUNT || docText(d).trim().length < MIN_TECHNICAL_TEXT_LENGTH)
+    .map((d) => d.type);
+  checks.push(mk(
+    'product_pack_shallow_technical_section',
+    'Data Model and API/Integration Requirements are entity/endpoint-level, not a summary pointer',
+    shallowTechnicalDocs.length === 0 ? 'pass' : 'fail',
+    shallowTechnicalDocs.length === 0
+      ? 'Data Model and API/Integration Requirements contain real, per-entity/per-endpoint detail.'
+      : `Too shallow for a technical spec — needs at least ${MIN_TECHNICAL_SECTION_COUNT} real sections and ${MIN_TECHNICAL_TEXT_LENGTH}+ characters of substantive content (not a pointer to the structured fields elsewhere in the pack): ${shallowTechnicalDocs.join(', ')}`,
+    shallowTechnicalDocs,
+  ));
+
+  // 8) No generic CRUD / Item screen / generic-only API paths.
   const entities = dataModel.map((e) => e.entity?.trim().toLowerCase()).filter((e): e is string => Boolean(e));
   const allEntitiesGeneric = entities.length > 0 && entities.every((e) => GENERIC_ENTITIES.has(e));
   const itemScreenDocs = documents.filter((d) => /item screen/i.test(docText(d)) || /item screen/i.test(d.title)).map((d) => d.type);
-  const genericCrud = allEntitiesGeneric || itemScreenDocs.length > 0;
+  const apiDoc = findByType(documents, 'api_integration_requirements');
+  const apiDocPaths = apiDoc ? [...new Set((docText(apiDoc).match(PATH_TOKEN_RE) ?? []).map((p) => p.toLowerCase()))] : [];
+  const apiDocGenericOnly = apiDocPaths.length > 0 && apiDocPaths.every((p) => GENERIC_API_PATH_RE.test(p));
+  const genericCrudDocs = [...itemScreenDocs, ...(apiDocGenericOnly ? ['api_integration_requirements'] : [])];
+  const genericCrud = allEntitiesGeneric || genericCrudDocs.length > 0;
   checks.push(mk(
     'product_pack_generic_crud_output',
     'No generic CRUD / Item screen output',
     genericCrud ? 'fail' : 'pass',
     genericCrud
-      ? (allEntitiesGeneric ? `Data model is only generic entities (${entities.join(', ')}) — design entities specific to this product.` : `Generic "Item screen" placeholder found in: ${itemScreenDocs.join(', ')}`)
-      : 'Entities and screens are product-specific.',
-    itemScreenDocs,
+      ? (allEntitiesGeneric
+          ? `Data model is only generic entities (${entities.join(', ')}) — design entities specific to this product.`
+          : itemScreenDocs.length > 0
+            ? `Generic "Item screen" placeholder found in: ${itemScreenDocs.join(', ')}`
+            : `API / Integration Requirements only lists generic CRUD paths (${apiDocPaths.join(', ')}) — add product-specific endpoints, or explain why these generic ones are genuinely required for this product.`)
+      : 'Entities, screens, and API endpoints are product-specific.',
+    genericCrudDocs,
   ));
 
   // 9) Context contamination — the pack must never reference the tool itself.

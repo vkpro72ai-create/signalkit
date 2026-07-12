@@ -436,3 +436,85 @@ describe('runProductPackV2ContentQualityChecks — general content quality', () 
     expect(failed, JSON.stringify(failed, null, 2)).toEqual([]);
   });
 });
+
+describe('runProductPackV2ContentQualityChecks — Data Model / API Integration Requirements depth', () => {
+  // Live-tested root cause: this step's contract also asks for a separate,
+  // richly-structured dataModel/apiContracts JSON field, and the model can
+  // pour all its real effort there while leaving the document's own
+  // sections as a one-line pointer — which still clears the generic
+  // SHALLOW_THRESHOLD (150 chars) used for every other document.
+  function deepDataModelDoc(): PackV2DocLike {
+    return {
+      type: 'data_model',
+      title: 'Data Model',
+      sections: [
+        { heading: 'Patient', content: 'Represents a clinic patient record. Fields: id (UUID, internal), fullName (string, personal), dateOfBirth (date, sensitive), consentGivenAt (datetime, internal, source of truth for reminder eligibility). Scoped to a single clinic workspace. Lifecycle: active -> archived on discharge. Relations: has_many Appointment.' },
+        { heading: 'Appointment', content: 'A scheduled visit between a patient and a clinician. Fields: id, patientId (FK), clinicianId (FK), scheduledFor (datetime), status (enum: booked/confirmed/completed/no_show/cancelled), notes (text, sensitive). Owned by the clinic workspace. Audit: status changes are logged with actor and timestamp.' },
+        { heading: 'Reminder', content: 'An outbound notification tied to an Appointment. Fields: id, appointmentId (FK), channel, sentAt, deliveryStatus. Source of truth for delivery status is the provider webhook. Delete/export: purged 90 days after the linked appointment per retention policy.' },
+      ],
+    };
+  }
+
+  function deepApiDoc(): PackV2DocLike {
+    return {
+      type: 'api_integration_requirements',
+      title: 'API / Integration Requirements',
+      sections: [
+        { heading: 'Booking endpoints', content: 'POST /clinics/:clinicId/appointments creates an appointment; requires clinician-role JWT; request { patientId, clinicianId, scheduledFor }; response the created Appointment; side effect: queues a Reminder job. GET /clinics/:clinicId/appointments/:id is scoped to the caller\'s clinic; 404 outside scope, 403 without access.' },
+        { heading: 'Reminder delivery integration', content: 'External SMS provider integration via webhook consumer at POST /webhooks/sms-status, which updates Reminder.deliveryStatus. Async: reminders are sent by a background job triggered on appointment confirmation, not synchronously from the booking request.' },
+        { heading: 'Error handling and rate limits', content: 'Booking conflicts (double-booking a clinician) return 409 with the conflicting appointment id. The reminder-send endpoint is rate-limited per clinic. Acceptance: a booking retried after a dropped connection must not create a duplicate appointment (idempotency key required).' },
+      ],
+    };
+  }
+
+  it('fails product_pack_shallow_technical_section for a shallow (single-section pointer) data_model document', () => {
+    const docs = baseDocs([fillerDoc('data_model', 'Data Model'), deepApiDoc()]);
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    const check = checkFor(checks, 'product_pack_shallow_technical_section');
+    expect(check.status).toBe('fail');
+    expect(check.documentTypes).toContain('data_model');
+  });
+
+  it('fails product_pack_shallow_technical_section for a shallow (single-section pointer) api_integration_requirements document', () => {
+    const docs = baseDocs([deepDataModelDoc(), fillerDoc('api_integration_requirements', 'API / Integration Requirements')]);
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    const check = checkFor(checks, 'product_pack_shallow_technical_section');
+    expect(check.status).toBe('fail');
+    expect(check.documentTypes).toContain('api_integration_requirements');
+  });
+
+  it('passes product_pack_shallow_technical_section for a genuinely deep, product-specific data_model', () => {
+    const docs = baseDocs([deepDataModelDoc(), deepApiDoc()]);
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_shallow_technical_section').status).toBe('pass');
+  });
+
+  it('passes product_pack_shallow_technical_section for a genuinely deep, product-specific api_integration_requirements', () => {
+    const docs = baseDocs([deepDataModelDoc(), deepApiDoc()]);
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_shallow_technical_section').status).toBe('pass');
+  });
+
+  it('fails product_pack_generic_crud_output when api_integration_requirements only lists generic CRUD paths', () => {
+    const genericApiDoc: PackV2DocLike = {
+      type: 'api_integration_requirements',
+      title: 'API / Integration Requirements',
+      sections: [
+        { heading: 'Endpoints', content: 'GET /users returns the list of users. POST /users creates a user. GET /items lists items for the current account. This section otherwise explains the endpoints in enough detail to clear the generic shallow-content threshold on its own so only the generic-CRUD check is under test here.' },
+        { heading: 'More endpoints', content: 'PATCH /users/:id updates a user record. DELETE /items/:id removes an item. GET /accounts returns account settings for the workspace, padded further so this document also clears the section-count and length bar and only the generic-CRUD-path check is what is being exercised by this test case.' },
+        { heading: 'Auth', content: 'All endpoints above require a bearer token. Standard 401/403/500 error codes apply uniformly, again padded to keep this test isolated to the generic-path detection rather than the shallow-technical-section check, which is covered by its own dedicated test cases elsewhere in this file.' },
+      ],
+    };
+    const docs = baseDocs([deepDataModelDoc(), genericApiDoc]);
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    const check = checkFor(checks, 'product_pack_generic_crud_output');
+    expect(check.status).toBe('fail');
+    expect(check.documentTypes).toContain('api_integration_requirements');
+  });
+
+  it('passes product_pack_generic_crud_output when api_integration_requirements has product-specific endpoints alongside a generic one', () => {
+    const docs = baseDocs([deepDataModelDoc(), deepApiDoc()]);
+    const checks = runProductPackV2ContentQualityChecks({ documents: docs, evidenceCount: 2 });
+    expect(checkFor(checks, 'product_pack_generic_crud_output').status).toBe('pass');
+  });
+});
