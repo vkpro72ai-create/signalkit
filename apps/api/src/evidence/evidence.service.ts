@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import type { ClaimType, SignalType } from '@signalkit/shared';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type { ClaimType, SignalType, SourceAdapterType } from '@signalkit/shared';
 import { assessClaim, isClaimGrounded } from '@signalkit/evidence';
 import { PrismaService } from '../prisma/prisma.service';
+import { listAdapterDescriptors } from '../sources/adapters';
 import type {
   CreateClaimDto,
   CreateAssumptionDto,
@@ -22,8 +23,21 @@ const SIGNAL_MAP: Record<SignalType, { evidenceType: string; claimType: ClaimTyp
   timing: { evidenceType: 'observation', claimType: 'timing' },
 };
 
+/** Adapters that scan public sources automatically (as opposed to manual URL/note add). */
+const AUTO_SCAN_ADAPTERS: SourceAdapterType[] = ['search_result', 'reddit', 'product_hunt', 'app_store_review'];
+
+/** Env var each auto-scan adapter reads its key from — surfaced to the UI as a concrete next step. */
+const ADAPTER_ENV_VAR: Partial<Record<SourceAdapterType, string>> = {
+  search_result: 'SEARCH_API_KEY',
+  reddit: 'REDDIT_API_TOKEN',
+  product_hunt: 'PRODUCT_HUNT_TOKEN',
+  app_store_review: 'APP_STORE_FEED_KEY',
+};
+
 @Injectable()
 export class EvidenceService {
+  private readonly logger = new Logger(EvidenceService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -84,6 +98,76 @@ export class EvidenceService {
     }
 
     return { evidence: signals.length, claims };
+  }
+
+  /**
+   * Contextual evidence scan for an opportunity. Honest by construction: it
+   * synthesizes grounded claims from whatever public signals have already been
+   * ingested for the opportunity's research context, and reports the true state
+   * of automatic public-source scanning (the external adapters are stubs until
+   * an API key is configured — never fabricate claims). Returns one of:
+   * claims_found | no_strong_claims | configuration_needed | failed.
+   */
+  async scanForNiche(workspaceId: string, nicheId: string) {
+    const niche = await this.prisma.niche.findFirst({
+      where: { id: nicheId, workspaceId },
+      select: { id: true, projectId: true },
+    });
+    if (!niche) throw new NotFoundException('Opportunity not found');
+    const projectId = niche.projectId;
+
+    // Automatic public-source scanning depends on the external adapters. Report
+    // their real configuration status so the UI can point the user at Settings.
+    const adapters = listAdapterDescriptors().filter((a) => AUTO_SCAN_ADAPTERS.includes(a.type));
+    const configured = adapters.filter((a) => a.configured);
+    const missingConfiguration = adapters
+      .filter((a) => !a.configured)
+      .map((a) => ({
+        type: a.type,
+        name: a.name,
+        envVar: ADAPTER_ENV_VAR[a.type] ?? null,
+        hint: `To enable auto-scan via ${a.name}, configure ${ADAPTER_ENV_VAR[a.type] ?? 'its API key'} in Settings.`,
+      }));
+
+    try {
+      const result = await this.synthesize(workspaceId, projectId);
+      const [evidenceItems, claimRows, assumptions, unresolvedQuestions] = await Promise.all([
+        this.prisma.evidenceItem.count({ where: { projectId } }),
+        this.prisma.claim.findMany({ where: { projectId }, select: { id: true, confidenceLevel: true } }),
+        this.prisma.assumption.count({ where: { projectId } }),
+        this.prisma.unresolvedQuestion.count({ where: { projectId } }),
+      ]);
+      const contradictions = claimRows.length
+        ? await this.prisma.contradiction.count({ where: { claimId: { in: claimRows.map((c) => c.id) } } })
+        : 0;
+      const verifiedClaims = claimRows.filter((c) => c.confidenceLevel === 'high' || c.confidenceLevel === 'medium').length;
+
+      let status: 'claims_found' | 'no_strong_claims' | 'configuration_needed';
+      if (result.claims > 0) status = 'claims_found';
+      else if (configured.length === 0) status = 'configuration_needed';
+      else status = 'no_strong_claims';
+
+      return {
+        status,
+        signalsScanned: result.evidence,
+        evidenceItems,
+        claims: claimRows.length,
+        verifiedClaims,
+        assumptions,
+        unresolvedQuestions,
+        contradictions,
+        autoScanAdapters: adapters.map((a) => ({ type: a.type, name: a.name, configured: a.configured })),
+        missingConfiguration,
+      };
+    } catch (err) {
+      this.logger.warn(`Evidence scan failed for niche ${nicheId}: ${String(err)}`);
+      return {
+        status: 'failed' as const,
+        message: err instanceof Error ? err.message : String(err),
+        autoScanAdapters: adapters.map((a) => ({ type: a.type, name: a.name, configured: a.configured })),
+        missingConfiguration,
+      };
+    }
   }
 
   /** Create a claim explicitly — REFUSED if it has neither evidence nor an assumption. */

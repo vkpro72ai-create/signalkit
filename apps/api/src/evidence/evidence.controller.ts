@@ -21,6 +21,13 @@ export class EvidenceController {
     return this.evidence.synthesize(ws, pid);
   }
 
+  @Post('niches/:nicheId/evidence/scan')
+  @RequirePermissions('niche:discover')
+  @ApiOperation({ summary: 'Contextual evidence scan for an opportunity (honest states: claims_found | no_strong_claims | configuration_needed | failed; never fabricates)' })
+  scan(@Param('workspaceId') ws: string, @Param('nicheId') nicheId: string) {
+    return this.evidence.scanForNiche(ws, nicheId);
+  }
+
   @Get('projects/:projectId/evidence/graph')
   @RequirePermissions('project:read')
   @ApiOperation({ summary: 'Full evidence graph with per-claim assessment' })

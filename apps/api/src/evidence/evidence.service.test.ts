@@ -91,3 +91,52 @@ describe('EvidenceService — trust rules', () => {
     expect(claimCreate).toHaveBeenCalled();
   });
 });
+
+describe('EvidenceService.scanForNiche — honest states, never fabricates', () => {
+  function makeScanPrisma(over: { signals?: unknown[]; claims?: Array<{ id: string; confidenceLevel: string }> } = {}) {
+    return {
+      niche: { findFirst: vi.fn().mockResolvedValue({ id: 'n1', projectId: 'p1' }) },
+      project: { findFirst: vi.fn().mockResolvedValue({ id: 'p1', marketLanguage: 'en', targetCountry: 'US' }) },
+      trendSignal: { findMany: vi.fn().mockResolvedValue(over.signals ?? []) },
+      claim: {
+        deleteMany: vi.fn().mockResolvedValue({}),
+        create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: 'c1', ...data })),
+        findMany: vi.fn().mockResolvedValue(over.claims ?? []),
+      },
+      evidenceItem: {
+        deleteMany: vi.fn().mockResolvedValue({}),
+        create: vi.fn().mockResolvedValue({ id: 'e1' }),
+        findMany: vi.fn().mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+          Promise.resolve((where.id.in ?? []).map((id) => ({ id, relevanceScore: 0.9, sourceQuality: 0.9, freshnessScore: 1, summary: id, sourceRefId: 'sref-1' }))),
+        ),
+        count: vi.fn().mockResolvedValue((over.claims ?? []).length),
+      },
+      claimEvidenceLink: { create: vi.fn().mockResolvedValue({}) },
+      contradiction: { count: vi.fn().mockResolvedValue(0) },
+      assumption: { count: vi.fn().mockResolvedValue(0) },
+      unresolvedQuestion: { count: vi.fn().mockResolvedValue(0) },
+    } as unknown as PrismaService;
+  }
+
+  it('reports configuration_needed (with a concrete env-var hint) when nothing can be scanned and no adapter is configured', async () => {
+    const svc = new EvidenceService(makeScanPrisma());
+    const res = await svc.scanForNiche('w1', 'n1');
+    expect(res.status).toBe('configuration_needed');
+    // Never fabricates claims.
+    expect((res as { claims?: number }).claims ?? 0).toBe(0);
+    // Surfaces a concrete next step (env var to configure).
+    expect(res.missingConfiguration.some((m) => Boolean(m.envVar))).toBe(true);
+  });
+
+  it('reports claims_found when grounded claims are synthesized from ingested signals', async () => {
+    const svc = new EvidenceService(
+      makeScanPrisma({
+        signals: [{ signalType: 'demand', text: 'lots of demand', sourceRefIds: ['sref-1'], strengthScore: 0.9, freshnessScore: 1, sourceQuality: 0.9 }],
+        claims: [{ id: 'c1', confidenceLevel: 'high' }],
+      }),
+    );
+    const res = await svc.scanForNiche('w1', 'n1');
+    expect(res.status).toBe('claims_found');
+    expect(res.verifiedClaims).toBe(1);
+  });
+});
