@@ -7,28 +7,13 @@
  */
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import type { Route } from 'next';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { spacing, radius, border, typography, colorFor } from '@signalkit/ui';
 import { SUPPORTED_LOCALES, type LocaleCode } from '@signalkit/i18n';
 import { useI18n } from '../lib/i18n';
+import { NAV } from '../lib/nav-config';
 import { palette } from './ui';
-import type { MessageKey } from '@signalkit/i18n';
-
-/** Primary navigation — product sections only. Design System is an internal
- * dev route and is intentionally NOT listed here (reachable by direct URL). */
-const NAV: { href: Route; key: MessageKey }[] = [
-  { href: '/signalkit', key: 'nav.home' },
-  { href: '/signalkit/projects', key: 'nav.projects' },
-  { href: '/signalkit/opportunities', key: 'nav.opportunities' },
-  { href: '/signalkit/sources', key: 'nav.sources' },
-  { href: '/signalkit/packs', key: 'nav.packs' },
-  { href: '/signalkit/exports', key: 'nav.exports' },
-  { href: '/signalkit/settings/llm', key: 'nav.aiEngine' },
-  { href: '/signalkit/settings/language', key: 'nav.language' },
-  { href: '/signalkit/settings/account', key: 'nav.account' },
-];
 
 const LOCALE_LABEL: Record<LocaleCode, string> = {
   en: 'English',

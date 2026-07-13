@@ -20,8 +20,10 @@ import {
   palette,
 } from '../../../../components/ui';
 import { EvidencePanel } from '../../../../components/evidence-panel';
+import { LineageBar } from '../../../../components/lineage-bar';
+import { FounderVerdict } from '../../../../components/founder-verdict';
 import { useI18n, useT } from '../../../../lib/i18n';
-import { apiGet, apiPost, firstWorkspaceId, packListApi, type PackListItem } from '../../../../lib/api';
+import { apiGet, apiPost, firstWorkspaceId, packListApi, decisionApi, type PackListItem, type LineageView } from '../../../../lib/api';
 
 interface Dim { dimension: string; score: number; weight: number; explanation: string; assumptionBased: boolean }
 interface NicheDetail {
@@ -191,6 +193,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionInfo, setActionInfo] = useState<string | null>(null);
+  const [lineage, setLineage] = useState<LineageView | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -202,6 +205,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
         setScenarios(await apiGet<Scenarios>(`/workspaces/${workspaceId}/niches/${id}/scenarios`).catch(() => null));
         setVenture(await apiGet<VentureThesisRow>(`/workspaces/${workspaceId}/niches/${id}/venture-thesis`).catch(() => null));
         setPacks(await packListApi.listForNiche(workspaceId, id).catch(() => []));
+        setLineage(await decisionApi.nicheLineage(workspaceId, id).catch(() => null));
         setState('ready');
       } catch {
         setState('error');
@@ -256,6 +260,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div style={{ maxWidth: 980 }}>
+      {lineage && <LineageBar lineage={lineage} current="opportunity" />}
       <PageHeader
         title={niche.title}
         subtitle={niche.oneLiner}
@@ -292,6 +297,12 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
           <div style={{ color: palette.subtle, fontSize: typography.size.sm }}>{actionInfo}</div>
         </Card>
       )}
+
+      {/* Founder Verdict — the founder's own conviction, kept separate from the
+          AI scoring shown above/below. */}
+      <div style={{ marginBottom: spacing.lg }}>
+        <FounderVerdict nicheId={id} />
+      </div>
 
       {score ? (
         <Card style={{ marginBottom: spacing.lg }}>
@@ -460,7 +471,7 @@ export default function NicheDetailPage({ params }: { params: Promise<{ id: stri
           </Card>
         )}
 
-        {tab === 'evidence' && ws && <EvidencePanel ws={ws} projectId={niche.projectId} />}
+        {tab === 'evidence' && ws && <EvidencePanel ws={ws} projectId={niche.projectId} nicheId={niche.id} />}
       </div>
     </div>
   );

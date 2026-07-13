@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { spacing, radius, border, typography, colorFor } from '@signalkit/ui';
 import { Badge } from './ui';
 import { apiGet } from '../lib/api';
+import { useT } from '../lib/i18n';
+import type { MessageKey } from '@signalkit/i18n';
 
 interface GenerationStepView {
   stepKey: string;
@@ -44,17 +46,14 @@ interface GenerationStatusView {
 const IN_PROGRESS = new Set(['queued', 'running']);
 const TERMINAL = new Set(['completed', 'partially_ready', 'failed', 'cancelled']);
 
-const STEP_LABELS: Record<string, string> = {
-  vision: 'Vision',
-  bcg_star_evaluation: 'BCG Evaluation & Star Upgrade',
-  build_product: 'Build — Product',
-  build_design: 'Build — Design',
-  build_engineering: 'Build — Engineering',
-  execution: 'Execution',
-  qira_backlog: 'Qira Backlog',
-  ai_agent_bundle: 'AI Agent Bundle',
-  evidence: 'Evidence',
-};
+const STEP_KEYS = new Set([
+  'vision', 'bcg_star_evaluation', 'build_product', 'build_design',
+  'build_engineering', 'execution', 'qira_backlog', 'ai_agent_bundle', 'evidence',
+]);
+
+function stepLabel(t: (key: MessageKey) => string, stepKey: string): string {
+  return STEP_KEYS.has(stepKey) ? t(`gen.step.${stepKey}` as MessageKey) : stepKey;
+}
 
 function statusColor(status: GenerationStatusView['status']) {
   if (status === 'completed') return 'success';
@@ -64,6 +63,7 @@ function statusColor(status: GenerationStatusView['status']) {
 }
 
 export function PackGenerationStatusBanner({ workspaceId, packId }: { workspaceId: string; packId: string }) {
+  const t = useT();
   const [job, setJob] = useState<GenerationStatusView | null>(null);
   const [hidden, setHidden] = useState(false);
 
@@ -88,7 +88,7 @@ export function PackGenerationStatusBanner({ workspaceId, packId }: { workspaceI
   if (hidden || !job || (job.status === 'completed' && job.buildReady)) return null;
 
   const c = colorFor(statusColor(job.status), 'light');
-  const currentStepLabel = job.currentStep ? (STEP_LABELS[job.currentStep] ?? job.currentStep) : null;
+  const currentStepLabel = job.currentStep ? stepLabel(t, job.currentStep) : null;
 
   return (
     <div
@@ -102,13 +102,13 @@ export function PackGenerationStatusBanner({ workspaceId, packId }: { workspaceI
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
-          <Badge variant={statusColor(job.status)}>{statusLabel(job)}</Badge>
+          <Badge variant={statusColor(job.status)}>{statusLabel(t, job)}</Badge>
           {currentStepLabel && IN_PROGRESS.has(job.status) ? (
-            <span style={{ fontSize: typography.size.sm, color: c.fg }}>Generating: {currentStepLabel}…</span>
+            <span style={{ fontSize: typography.size.sm, color: c.fg }}>{t('gen.generating').replace('{step}', currentStepLabel)}</span>
           ) : null}
         </div>
         <span style={{ fontSize: typography.size.xs, color: c.fg }}>
-          {job.readyDocumentCount}/{job.totalExpectedDocumentCount} documents ready
+          {t('gen.docsReady').replace('{ready}', String(job.readyDocumentCount)).replace('{total}', String(job.totalExpectedDocumentCount))}
         </span>
       </div>
 
@@ -120,21 +120,17 @@ export function PackGenerationStatusBanner({ workspaceId, packId }: { workspaceI
 
       {job.status === 'failed' ? (
         <p style={{ marginTop: spacing.sm, fontSize: typography.size.sm, color: c.fg }}>
-          Failed at step {currentStepLabel ?? 'unknown'}{job.errorCode ? ` — ${job.errorCode}` : ''}
+          {t('gen.failedAt').replace('{step}', currentStepLabel ?? '—')}{job.errorCode ? ` — ${job.errorCode}` : ''}
           {job.errorReason ? `: ${job.errorReason}` : ''}
         </p>
       ) : null}
 
       {job.status === 'partially_ready' ? (
-        <p style={{ marginTop: spacing.sm, fontSize: typography.size.sm, color: c.fg }}>
-          Partially ready — not Build-Ready yet. Some documents are visible below, but generation stopped before every step finished.
-        </p>
+        <p style={{ marginTop: spacing.sm, fontSize: typography.size.sm, color: c.fg }}>{t('gen.partiallyReady')}</p>
       ) : null}
 
       {job.status === 'completed' && !job.buildReady ? (
-        <p style={{ marginTop: spacing.sm, fontSize: typography.size.sm, color: c.fg }}>
-          Generation finished, but this pack is not Build-Ready yet — check the quality gate below.
-        </p>
+        <p style={{ marginTop: spacing.sm, fontSize: typography.size.sm, color: c.fg }}>{t('gen.completedNotBuildReady')}</p>
       ) : null}
 
       {TERMINAL.has(job.status) ? (
@@ -151,8 +147,8 @@ export function PackGenerationStatusBanner({ workspaceId, packId }: { workspaceI
                 color: colorFor(step.status === 'completed' ? 'success' : step.status === 'failed' ? 'failed' : 'muted', 'light').fg,
               }}
             >
-              {STEP_LABELS[step.stepKey] ?? step.stepKey}
-              {step.repairCount > 0 ? ' (repaired)' : ''}
+              {stepLabel(t, step.stepKey)}
+              {step.repairCount > 0 ? t('gen.repaired') : ''}
             </span>
           ))}
         </div>
@@ -161,14 +157,14 @@ export function PackGenerationStatusBanner({ workspaceId, packId }: { workspaceI
   );
 }
 
-function statusLabel(job: GenerationStatusView): string {
+function statusLabel(t: (key: MessageKey) => string, job: GenerationStatusView): string {
   switch (job.status) {
-    case 'queued': return 'Queued';
-    case 'running': return 'Generating';
-    case 'partially_ready': return 'Partially ready';
-    case 'completed': return job.buildReady ? 'Build-Ready' : 'Completed';
-    case 'failed': return 'Failed';
-    case 'cancelled': return 'Cancelled';
+    case 'queued': return t('gen.status.queued');
+    case 'running': return t('gen.status.running');
+    case 'partially_ready': return t('gen.status.partially_ready');
+    case 'completed': return job.buildReady ? t('gen.status.buildReady') : t('gen.status.completed');
+    case 'failed': return t('gen.status.failed');
+    case 'cancelled': return t('gen.status.cancelled');
     default: return job.status;
   }
 }

@@ -17,6 +17,10 @@ import {
 } from '../../../../components/ui';
 import { Markdown } from '../../../../components/markdown';
 import { PackGenerationStatusBanner } from '../../../../components/pack-generation-status';
+import { LineageBar } from '../../../../components/lineage-bar';
+import { PackDiagnostics } from '../../../../components/pack-diagnostics';
+import { ImplementationManifest } from '../../../../components/implementation-manifest';
+import { PromotionGate } from '../../../../components/promotion-gate';
 import { useT } from '../../../../lib/i18n';
 import {
   apiGet,
@@ -25,8 +29,10 @@ import {
   firstWorkspaceId,
   commentApi,
   packApi,
+  decisionApi,
   type DocumentCommentView,
   type ApplyCommentsResult,
+  type LineageView,
 } from '../../../../lib/api';
 import type { Translator } from '@signalkit/i18n';
 
@@ -224,10 +230,19 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
   async function loadBlueprint() {
     if (!ws || !pack) return;
     setShowBlueprint(true);
+    setShowImplementation(false);
+    setShowPromote(false);
     try {
       setBlueprint(await apiGet<BlueprintView>(`/workspaces/${ws}/packs/${pack.id}/build-blueprint`));
     } catch { /* non-fatal */ }
   }
+
+  // Object lineage (Research → Opportunity → Pack → Project)
+  const [lineage, setLineage] = useState<LineageView | null>(null);
+
+  // Implementation-prompt manifest + human promotion gate panels
+  const [showImplementation, setShowImplementation] = useState(false);
+  const [showPromote, setShowPromote] = useState(false);
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -248,6 +263,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
     const p = await apiGet<Pack>(`/workspaces/${workspaceId}/packs/${pid}`);
     setPack(p);
     void loadOpenCommentsSummary(workspaceId, pid);
+    void decisionApi.packLineage(workspaceId, pid).then(setLineage).catch(() => setLineage(null));
     const firstDoc = p.documents[0];
     if (firstDoc) {
       setSelected(firstDoc.id);
@@ -477,6 +493,7 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
 
   return (
     <div style={{ maxWidth: 1500 }}>
+      {lineage && <LineageBar lineage={lineage} current="pack" />}
       <PageHeader
         title={displayTitle}
         subtitle={
@@ -506,6 +523,11 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
       {state === 'ready' && pack && (
         <>
           {ws && <PackGenerationStatusBanner workspaceId={ws} packId={pack.id} />}
+          {ws && (
+            <div style={{ marginBottom: spacing.md }}>
+              <PackDiagnostics packId={pack.id} onRetry={() => void load()} />
+            </div>
+          )}
 
           {/* Quality gate row */}
           <div style={{ display: 'flex', gap: spacing.xs, marginBottom: spacing.md, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -535,6 +557,18 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
             <Button variant={showBlueprint ? 'secondary' : 'ghost'} onClick={() => (showBlueprint ? setShowBlueprint(false) : void loadBlueprint())}>
               {showBlueprint ? t('pack.blueprint.back') : t('pack.blueprint.open')}
             </Button>
+            <Button
+              variant={showImplementation ? 'secondary' : 'ghost'}
+              onClick={() => { setShowImplementation((v) => !v); setShowBlueprint(false); setShowPromote(false); }}
+            >
+              {t('manifest.title')}
+            </Button>
+            <Button
+              variant={showPromote ? 'secondary' : 'ghost'}
+              onClick={() => { setShowPromote((v) => !v); setShowBlueprint(false); setShowImplementation(false); }}
+            >
+              {t('promote.title')}
+            </Button>
           </div>
 
           {applyResult && (
@@ -549,7 +583,15 @@ export default function ProductPackReader({ params }: { params: Promise<{ id: st
             <BlueprintPanel blueprint={blueprint} t={t} />
           )}
 
-          {!showBlueprint && (
+          {showImplementation && (
+            <Card><ImplementationManifest packId={pack.id} /></Card>
+          )}
+
+          {showPromote && (
+            <PromotionGate packId={pack.id} />
+          )}
+
+          {!showBlueprint && !showImplementation && !showPromote && (
           <div className="grid-sidebar-b" style={{ display: 'grid', gridTemplateColumns: '200px 1fr 240px', gap: spacing.lg, alignItems: 'start' }}>
 
             {/* LEFT — Document navigation */}

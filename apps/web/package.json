@@ -9,7 +9,8 @@
     "start": "next start -p 3000",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "next lint",
-    "clean": "rimraf .next"
+    "clean": "rimraf .next",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@signalkit/i18n": "workspace:*",

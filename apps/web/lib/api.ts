@@ -56,6 +56,7 @@ async function apiSend<T>(method: string, path: string, body?: unknown): Promise
 
 export const apiPost = <T>(path: string, body?: unknown) => apiSend<T>('POST', path, body);
 export const apiPut = <T>(path: string, body?: unknown) => apiSend<T>('PUT', path, body);
+export const apiPatch = <T>(path: string, body?: unknown) => apiSend<T>('PATCH', path, body);
 export const apiDelete = <T>(path: string) => apiSend<T>('DELETE', path);
 
 export interface CountryView {
@@ -488,3 +489,97 @@ export const ROLE_BRIEF_TYPES = [
 
 export type ExportTypeId = typeof EXPORT_TYPES[number]['id'];
 export type RoleBriefId = typeof ROLE_BRIEF_TYPES[number]['id'];
+
+// ── Human decision layer, lineage, diagnostics, manifest, evidence scan ──────
+
+export type FounderDecision = 'undecided' | 'explore' | 'generate_pack' | 'postpone' | 'reject' | 'ready_to_commit';
+export type AmbitionMode = 'cash_flow_business' | 'venture_scale' | 'unicorn_ambition';
+
+export interface FounderVerdictView {
+  mine: { rating: number | null; comment: string; decision: FounderDecision } | null;
+  others: { userId: string; rating: number | null; comment: string; decision: FounderDecision; user: { displayName: string | null; email: string } }[];
+}
+
+export interface ReadinessView {
+  buildReady: boolean;
+  ventureReady: boolean;
+  unicornPotential: boolean;
+  qualityGateStatus: string;
+  ventureScaleLevel: string;
+  topRisks: string[];
+  promotable: boolean;
+  alreadyPromoted: boolean;
+}
+
+export interface ImplementationProjectView {
+  id: string;
+  ambitionMode: AmbitionMode;
+  founderRatingSnapshot: number | null;
+  founderCommentSnapshot: string;
+  buildReadySnapshot: boolean;
+  ventureReadySnapshot: boolean;
+  unicornPotentialSnapshot: boolean;
+  topRisksSnapshot: string[];
+  committedAt: string;
+  status: string;
+  niche: { id: string; title: string };
+  pack: { id: string; title: string; status: string };
+  researchProject: { id: string; name: string };
+  createdBy?: { id: string; displayName: string | null; email: string };
+  lineage?: LineageView;
+}
+
+export interface LineageView {
+  research: { id: string; name: string } | null;
+  opportunity: { id: string; title: string } | null;
+  pack?: { id: string; title: string; status: string } | null;
+  packs?: { id: string; title: string; status: string }[];
+  project: { id: string; status?: string } | null;
+}
+
+export interface ManifestPromptView {
+  promptId: string; title: string; workstream: string; groupingConfidence: 'low' | 'medium' | 'high';
+  phase: number; sequence: number; targetAgent: string; objective: string;
+  dependsOn: string[]; blocks: string[]; parallelizable: string[]; requiredContext: string[];
+  expectedFiles: string[]; instructions: string; acceptanceCriteria: string[]; verification: string[];
+  forbiddenShortcuts: string[]; handoffNotes: string;
+}
+export interface ImplementationManifestView {
+  totalPrompts: number; workstreams: string[]; sprints: number[]; prompts: ManifestPromptView[];
+}
+
+export interface PackDiagnosticsView {
+  jobId: string; packId: string; status: string; overallProgress: number; currentStep: string | null;
+  steps: { stepKey: string; status: string; provider: string | null; model: string | null; attemptCount: number; repairCount: number; errorCode: string | null; errorReason: string | null }[];
+  readyDocumentCount: number; totalExpectedDocumentCount: number; buildReady: boolean;
+  errorCode: string | null; errorReason: string | null;
+  failedStep: string | null; lastSuccessfulStep: string | null; retryable: boolean; contextChanged?: boolean;
+  generationMode: string;
+}
+
+export interface EvidenceScanView {
+  status: 'claims_found' | 'no_strong_claims' | 'configuration_needed' | 'failed';
+  signalsScanned?: number; evidenceItems?: number; claims?: number; verifiedClaims?: number;
+  assumptions?: number; unresolvedQuestions?: number; contradictions?: number;
+  autoScanAdapters: { type: string; name: string; configured: boolean }[];
+  missingConfiguration: { type: string; name: string; envVar: string | null; hint: string }[];
+  message?: string;
+}
+
+export const decisionApi = {
+  getFounderVerdict: (ws: string, nicheId: string) => apiGet<FounderVerdictView>(`/workspaces/${ws}/niches/${nicheId}/founder-verdict`),
+  putFounderVerdict: (ws: string, nicheId: string, body: { rating?: number | null; comment?: string; decision?: FounderDecision }) =>
+    apiPut(`/workspaces/${ws}/niches/${nicheId}/founder-verdict`, body),
+  getReadiness: (ws: string, packId: string) => apiGet<ReadinessView>(`/workspaces/${ws}/packs/${packId}/readiness`),
+  promote: (ws: string, packId: string, body: { ambitionMode: AmbitionMode; commitmentConfirmed: boolean; reviewedRisks: boolean }) =>
+    apiPost<ImplementationProjectView>(`/workspaces/${ws}/packs/${packId}/promote`, body),
+  listProjects: (ws: string) => apiGet<ImplementationProjectView[]>(`/workspaces/${ws}/implementation-projects`),
+  getProject: (ws: string, id: string) => apiGet<ImplementationProjectView>(`/workspaces/${ws}/implementation-projects/${id}`),
+  updateProject: (ws: string, id: string, body: { status: string }) => apiPatch<ImplementationProjectView>(`/workspaces/${ws}/implementation-projects/${id}`, body),
+  nicheLineage: (ws: string, nicheId: string) => apiGet<LineageView>(`/workspaces/${ws}/niches/${nicheId}/lineage`),
+  packLineage: (ws: string, packId: string) => apiGet<LineageView>(`/workspaces/${ws}/packs/${packId}/lineage`),
+  manifest: (ws: string, packId: string) => apiGet<ImplementationManifestView>(`/workspaces/${ws}/packs/${packId}/implementation-manifest`),
+  diagnostics: (ws: string, packId: string) => apiGet<PackDiagnosticsView>(`/workspaces/${ws}/packs/${packId}/diagnostics`),
+  retryPack: (ws: string, packId: string) => apiPost<PackDiagnosticsView>(`/workspaces/${ws}/packs/${packId}/retry`),
+  evidenceScan: (ws: string, nicheId: string) => apiPost<EvidenceScanView>(`/workspaces/${ws}/niches/${nicheId}/evidence/scan`),
+};
