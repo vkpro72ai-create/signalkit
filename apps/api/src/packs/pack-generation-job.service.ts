@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { optionalEnv } from '@signalkit/config';
@@ -11,6 +11,7 @@ export type PackGenerationModeInput = 'standard' | 'strong_model';
 
 interface PackGenerationJobData {
   jobId: string;
+  resume?: boolean;
 }
 
 const QUEUE_NAME = 'pack-generation-jobs';
@@ -49,7 +50,7 @@ export class PackGenerationJobService implements OnModuleInit, OnModuleDestroy {
       this.worker = new Worker<PackGenerationJobData>(
         QUEUE_NAME,
         async (job) => {
-          await this.process(job.data.jobId);
+          await this.process(job.data.jobId, job.data.resume ?? false);
         },
         { connection: this.connection },
       );
@@ -154,9 +155,91 @@ export class PackGenerationJobService implements OnModuleInit, OnModuleDestroy {
     return job;
   }
 
+  /**
+   * The failed-pack diagnostic wall: the latest job for a pack plus derived
+   * signals the UI needs — whether the opportunity's context changed after the
+   * run started (which would make a resume inconsistent), so the UI can warn
+   * "restart recommended" before the user chooses resume vs. regenerate.
+   */
+  async getDiagnosticsForPack(workspaceId: string, packId: string) {
+    const job = await this.getJobForPack(workspaceId, packId);
+    const niche = await this.prisma.niche.findUnique({
+      where: { id: job.nicheId },
+      select: { updatedAt: true },
+    });
+    const contextChanged = Boolean(job.startedAt && niche && niche.updatedAt > job.startedAt);
+    return { job, contextChanged };
+  }
+
+  /**
+   * Retry a failed / partially-ready job IN PLACE: reuse the same pack, keep
+   * completed steps' outputs, and re-run only the failed/remaining steps
+   * (resume). Refuses if the job is not in a terminal state, or if any
+   * completed step lacks a resumable payload (in which case the client should
+   * regenerate a fresh pack instead).
+   */
+  async retry(workspaceId: string, jobId: string) {
+    const job = await this.prisma.productPackGenerationJob.findFirst({
+      where: { id: jobId, workspaceId },
+      include: { steps: true },
+    });
+    if (!job) throw new NotFoundException('Pack generation job not found');
+    if (job.status !== 'failed' && job.status !== 'partially_ready') {
+      throw new ConflictException({
+        code: 'not_retryable',
+        message: 'Only a failed or partially-ready generation job can be retried.',
+      });
+    }
+
+    // A resume can only skip completed steps whose structured output survived.
+    const unavailable = job.steps
+      .filter((step) => step.status === 'completed')
+      .filter((step) => {
+        const meta = (step.metadata ?? {}) as { resumePayload?: unknown; resumePayloadOmitted?: boolean };
+        return meta.resumePayloadOmitted || !meta.resumePayload;
+      })
+      .map((step) => step.stepKey);
+    if (unavailable.length > 0) {
+      throw new ConflictException({
+        code: 'resume_unavailable',
+        message: `Cannot resume — completed step(s) ${unavailable.join(', ')} have no resumable payload. Regenerate the pack instead.`,
+      });
+    }
+
+    // Reset every non-completed step back to pending; keep completed steps.
+    await this.prisma.productPackGenerationStep.updateMany({
+      where: { jobId, status: { in: ['failed', 'pending', 'running', 'repairing'] } },
+      data: { status: 'pending', errorCode: null, errorReason: null },
+    });
+
+    const retryCount = Number(((job.metadata ?? {}) as { retryCount?: number }).retryCount ?? 0) + 1;
+    await this.prisma.productPackGenerationJob.update({
+      where: { id: jobId },
+      data: {
+        status: 'queued',
+        errorCode: null,
+        errorReason: null,
+        completedAt: null,
+        metadata: { ...((job.metadata ?? {}) as object), retryCount },
+      },
+    });
+
+    if (this.queue) {
+      await this.queue.add('generate', { jobId, resume: true });
+    } else {
+      setImmediate(() => {
+        this.process(jobId, true).catch((err: Error) => {
+          this.logger.error(`Inline pack generation retry failed for ${jobId}: ${err.message}`);
+        });
+      });
+    }
+
+    return this.getJob(workspaceId, jobId);
+  }
+
   // ── Worker body ──────────────────────────────────────────────────────────
 
-  async process(jobId: string): Promise<void> {
+  async process(jobId: string, resume = false): Promise<void> {
     const job = await this.prisma.productPackGenerationJob.findUnique({ where: { id: jobId } });
     if (!job) {
       this.logger.error(`Pack generation job ${jobId} not found`);
@@ -169,7 +252,7 @@ export class PackGenerationJobService implements OnModuleInit, OnModuleDestroy {
     });
 
     try {
-      const result = await this.packService.generateV2ForJob(job);
+      const result = await this.packService.generateV2ForJob(job, { resume });
       // "Build-ready" requires every step to have completed AND the quality
       // gate to not be a hard fail — a 'warnings' gate (e.g. starter-hypothesis
       // evidence with no sources) is still a usable, exportable pack elsewhere

@@ -167,6 +167,17 @@ describe('PackGenerationJobService.process — job lifecycle + buildReady', () =
     expect(finalUpdateCall.data.errorReason).toBeTruthy();
   });
 
+  it('passes the resume flag through to the pack service when processing a retried job', async () => {
+    const { prisma, jobFindUnique } = makePrisma();
+    jobFindUnique.mockResolvedValue({ id: 'job1', workspaceId: 'w1', nicheId: 'n1', packId: 'pk1', depth: 'quick_opportunity', verticalTemplate: 'b2b_saas', language: null });
+    const { packService, generateV2ForJob } = makePackService();
+    const service = new PackGenerationJobService(prisma, packService);
+
+    await service.process('job1', true);
+
+    expect(generateV2ForJob).toHaveBeenCalledWith(expect.anything(), { resume: true });
+  });
+
   it('does not bypass quality gates in strong_model mode — buildReady still requires a non-failed gate', async () => {
     // strong_model generation always fails at create() until a strong model is configured
     // (see the describe block above), so this asserts the invariant on the shared
@@ -185,5 +196,105 @@ describe('PackGenerationJobService.process — job lifecycle + buildReady', () =
 
     const finalUpdateCall = jobUpdate.mock.calls.at(-1)![0];
     expect(finalUpdateCall.data.buildReady).toBe(false);
+  });
+});
+
+describe('PackGenerationJobService.retry — in-place resume from the failed step', () => {
+  const completedStep = (stepKey: string) => ({
+    stepKey,
+    status: 'completed',
+    metadata: { aiRun: { primary: {} }, resumePayload: { documents: [], extraFields: {} } },
+  });
+  const failedStep = (stepKey: string) => ({ stepKey, status: 'failed', metadata: {} });
+
+  function makeRetryPrisma(job: Record<string, unknown>) {
+    const stepUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const jobUpdate = vi.fn().mockResolvedValue({});
+    const jobFindFirst = vi.fn().mockResolvedValue(job);
+    const prisma = {
+      productPackGenerationJob: { findFirst: jobFindFirst, update: jobUpdate },
+      productPackGenerationStep: { updateMany: stepUpdateMany },
+    } as unknown as PrismaService;
+    return { prisma, stepUpdateMany, jobUpdate };
+  }
+
+  beforeEach(() => vi.stubEnv('REDIS_URL', ''));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('resets only non-completed steps, keeps completed steps, and requeues with resume=true', async () => {
+    const job = {
+      id: 'job1', workspaceId: 'w1', status: 'partially_ready', metadata: { retryCount: 0 },
+      steps: [completedStep('vision'), completedStep('bcg_star_evaluation'), failedStep('build_product')],
+    };
+    const { prisma, stepUpdateMany, jobUpdate } = makeRetryPrisma(job);
+    const { packService } = makePackService();
+    const service = new PackGenerationJobService(prisma, packService);
+    const processSpy = vi.spyOn(service as any, 'process').mockResolvedValue(undefined);
+    (service as any).getJob = vi.fn().mockResolvedValue({ id: 'job1', packId: 'pk1', status: 'queued', steps: [] });
+
+    await service.retry('w1', 'job1');
+
+    // Only failed/pending/running/repairing steps are reset — completed steps are untouched.
+    expect(stepUpdateMany).toHaveBeenCalledWith({
+      where: { jobId: 'job1', status: { in: ['failed', 'pending', 'running', 'repairing'] } },
+      data: { status: 'pending', errorCode: null, errorReason: null },
+    });
+    // Job goes back to queued with a bumped retryCount and cleared error.
+    const upd = jobUpdate.mock.calls.at(-1)![0];
+    expect(upd.data.status).toBe('queued');
+    expect(upd.data.errorCode).toBeNull();
+    expect(upd.data.metadata.retryCount).toBe(1);
+    // Inline path re-processes in resume mode.
+    await new Promise((r) => setImmediate(r));
+    expect(processSpy).toHaveBeenCalledWith('job1', true);
+  });
+
+  it('refuses to retry a non-terminal job', async () => {
+    const job = { id: 'job1', workspaceId: 'w1', status: 'running', metadata: {}, steps: [] };
+    const { prisma } = makeRetryPrisma(job);
+    const { packService } = makePackService();
+    const service = new PackGenerationJobService(prisma, packService);
+    await expect(service.retry('w1', 'job1')).rejects.toMatchObject({ response: expect.objectContaining({ code: 'not_retryable' }) });
+  });
+
+  it('refuses to resume when a completed step has no resumable payload', async () => {
+    const job = {
+      id: 'job1', workspaceId: 'w1', status: 'failed', metadata: {},
+      steps: [{ stepKey: 'vision', status: 'completed', metadata: { resumePayloadOmitted: true } }, failedStep('bcg_star_evaluation')],
+    };
+    const { prisma } = makeRetryPrisma(job);
+    const { packService } = makePackService();
+    const service = new PackGenerationJobService(prisma, packService);
+    await expect(service.retry('w1', 'job1')).rejects.toMatchObject({ response: expect.objectContaining({ code: 'resume_unavailable' }) });
+  });
+});
+
+describe('PackGenerationJobService.getDiagnosticsForPack — context-drift detection', () => {
+  function makeDiagPrisma(job: Record<string, unknown>, nicheUpdatedAt: Date) {
+    const prisma = {
+      productPackGenerationJob: { findFirst: vi.fn().mockResolvedValue(job) },
+      niche: { findUnique: vi.fn().mockResolvedValue({ updatedAt: nicheUpdatedAt }) },
+    } as unknown as PrismaService;
+    return prisma;
+  }
+
+  it('flags contextChanged when the opportunity was edited after the run started', async () => {
+    const started = new Date('2026-07-01T00:00:00Z');
+    const job = { id: 'job1', packId: 'pk1', nicheId: 'n1', status: 'failed', startedAt: started, steps: [] };
+    const prisma = makeDiagPrisma(job, new Date('2026-07-02T00:00:00Z'));
+    const { packService } = makePackService();
+    const service = new PackGenerationJobService(prisma, packService);
+    const res = await service.getDiagnosticsForPack('w1', 'pk1');
+    expect(res.contextChanged).toBe(true);
+  });
+
+  it('does not flag contextChanged when the opportunity is unchanged since the run', async () => {
+    const started = new Date('2026-07-03T00:00:00Z');
+    const job = { id: 'job1', packId: 'pk1', nicheId: 'n1', status: 'failed', startedAt: started, steps: [] };
+    const prisma = makeDiagPrisma(job, new Date('2026-07-01T00:00:00Z'));
+    const { packService } = makePackService();
+    const service = new PackGenerationJobService(prisma, packService);
+    const res = await service.getDiagnosticsForPack('w1', 'pk1');
+    expect(res.contextChanged).toBe(false);
   });
 });

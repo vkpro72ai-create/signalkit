@@ -336,6 +336,21 @@ const PACK_V2_TASK_TYPE: LLMTaskType = 'product_vision_generation';
 const PACK_V2_TIMEOUT_MS = 500_000;
 const PACK_V2_DEBUG_RAW_LOGGING = /^(1|true|yes)$/i.test(process.env.DEBUG_PRODUCT_PACK_V2 ?? '');
 
+// A completed step stores its structured output (documents + extraFields) in
+// its ProductPackGenerationStep.metadata so a later job run can resume from the
+// failed step WITHOUT re-running the LLM for already-completed steps. Postgres
+// jsonb tolerates large blobs, but we cap the persisted payload so a pathologically
+// large step can never bloat the row — above this the step is marked
+// non-resumable and the job falls back to a fresh regenerate (see loadResumeState).
+const RESUME_PAYLOAD_MAX_BYTES = 4_000_000;
+
+/** A single completed step's reconstructable output, rehydrated on resume. */
+interface PackV2StepResult {
+  documents: ProductPackV2Document[];
+  extraFields: Record<string, unknown>;
+  aiRun: PackV2AiRun;
+}
+
 const FALLBACK_EXECUTION_HANDOFF: ProductPackV2ExecutionHandoff = {
   mode: 'team_studio_and_ai_agent',
   qiraBacklogDraft: null,
@@ -467,16 +482,23 @@ export class PackService {
     return { pack, ctx, projectId };
   }
 
-  /** Runs the full V2 pipeline for an already-created job + pack row, with per-step progress tracking and staged document persistence. Called by PackGenerationJobService's (queued or inline) worker — never awaited by the HTTP request that created the job. */
-  async generateV2ForJob(job: {
-    id: string;
-    workspaceId: string;
-    nicheId: string;
-    packId: string;
-    depth: string;
-    verticalTemplate: string;
-    language: string | null;
-  }) {
+  /** Runs the full V2 pipeline for an already-created job + pack row, with per-step progress tracking and staged document persistence. Called by PackGenerationJobService's (queued or inline) worker — never awaited by the HTTP request that created the job.
+   *
+   * When `resume` is set (a retry of a failed/partial job), completed steps are
+   * rehydrated from their persisted structured output and skipped — only the
+   * failed/remaining steps re-run, against the SAME pack. */
+  async generateV2ForJob(
+    job: {
+      id: string;
+      workspaceId: string;
+      nicheId: string;
+      packId: string;
+      depth: string;
+      verticalTemplate: string;
+      language: string | null;
+    },
+    options: { resume?: boolean } = {},
+  ) {
     const opts: GeneratePackOptions = {
       depth: job.depth as ProductPackDepth,
       vertical: job.verticalTemplate as VerticalTemplate,
@@ -485,10 +507,57 @@ export class PackService {
     };
     const ctx = await this.gatherContext(job.workspaceId, job.nicheId, opts);
     const requiredDocs = DEPTH_DOCUMENTS[opts.depth];
+
+    let resumeState: Map<string, PackV2StepResult> | undefined;
+    if (options.resume) {
+      const loaded = await this.loadResumeState(job.id);
+      if (loaded.unavailable.length > 0) {
+        throw new BadRequestException({
+          code: 'resume_unavailable',
+          message: `Cannot resume — completed step(s) missing a resumable payload: ${loaded.unavailable.join(', ')}. Regenerate the pack instead.`,
+        });
+      }
+      resumeState = loaded.state;
+    }
+
     return this.generatePackV2(job.workspaceId, job.nicheId, opts, ctx, requiredDocs, {
       jobId: job.id,
       pack: { id: job.packId },
+      resumeState,
     });
+  }
+
+  /**
+   * Rebuild the completed-step outputs for a job from persisted step metadata
+   * so a resume can skip their LLM calls. A step whose payload was omitted
+   * (too large — see RESUME_PAYLOAD_MAX_BYTES) or predates this feature is
+   * reported as `unavailable`, which makes the job non-resumable.
+   */
+  private async loadResumeState(
+    jobId: string,
+  ): Promise<{ state: Map<string, PackV2StepResult>; unavailable: string[] }> {
+    const steps = await this.prisma.productPackGenerationStep.findMany({
+      where: { jobId, status: 'completed' },
+    });
+    const state = new Map<string, PackV2StepResult>();
+    const unavailable: string[] = [];
+    for (const step of steps) {
+      const meta = (step.metadata ?? {}) as {
+        aiRun?: PackV2AiRun;
+        resumePayload?: { documents: ProductPackV2Document[]; extraFields: Record<string, unknown> };
+        resumePayloadOmitted?: boolean;
+      };
+      if (meta.resumePayloadOmitted || !meta.resumePayload || !meta.aiRun) {
+        unavailable.push(step.stepKey);
+        continue;
+      }
+      state.set(step.stepKey, {
+        documents: meta.resumePayload.documents,
+        extraFields: meta.resumePayload.extraFields,
+        aiRun: meta.aiRun,
+      });
+    }
+    return { state, unavailable };
   }
 
   /**
@@ -515,7 +584,7 @@ export class PackService {
     opts: GeneratePackOptions,
     ctx: PackContext,
     _requiredDocs: readonly DocumentType[],
-    jobContext?: { jobId: string; pack: { id: string } },
+    jobContext?: { jobId: string; pack: { id: string }; resumeState?: Map<string, PackV2StepResult> },
   ) {
     const projectId = await this.projectIdForNiche(workspaceId, nicheId);
     const pack = jobContext
@@ -544,8 +613,22 @@ export class PackService {
     let pipelineError: unknown = null;
     let allStepsCompleted = true;
     const totalSteps = PRODUCT_PACK_V2_STEPS.length;
+    const resumeState = jobContext?.resumeState;
 
     for (const [stepIndex, step] of PRODUCT_PACK_V2_STEPS.entries()) {
+      // Resume: a previously-completed step is reused verbatim from its
+      // persisted output — no LLM call, no regeneration, and no re-persist (its
+      // ProductPackGenerationStep row is already 'completed' and its interim
+      // documents already exist; the final transaction rebuilds the full set).
+      const cached = resumeState?.get(step.id);
+      if (cached) {
+        documents.push(...cached.documents);
+        mergeStepFields(extraFields, cached.extraFields);
+        stepAiRuns[step.id] = cached.aiRun;
+        priorSummaries.push(summarizeStepForNextStep(step, cached));
+        continue;
+      }
+
       const stepStartedAt = Date.now();
       if (jobId) await this.markGenerationStepRunning(jobId, step.id);
       try {
@@ -558,7 +641,7 @@ export class PackService {
         priorSummaries.push(summarizeStepForNextStep(step, stepResult));
         if (jobId) {
           const documentIds = await this.persistInterimStepDocuments(stepResult.documents, ctx, opts, pack.id);
-          await this.markGenerationStepCompleted(jobId, step.id, stepResult.aiRun, Date.now() - stepStartedAt, documentIds);
+          await this.markGenerationStepCompleted(jobId, step.id, stepResult, Date.now() - stepStartedAt, documentIds);
           await this.updateJobProgress(jobId, {
             currentStep: step.id,
             progressPercent: Math.round(((stepIndex + 1) / totalSteps) * 100),
@@ -667,13 +750,18 @@ export class PackService {
   private async markGenerationStepCompleted(
     jobId: string,
     stepKey: string,
-    aiRun: PackV2AiRun,
+    stepResult: PackV2StepResult,
     durationMs: number,
     documentIds: string[],
   ): Promise<void> {
+    const { aiRun } = stepResult;
     const attemptCount = 1 + (aiRun.repair ? 1 : 0) + (aiRun.regenerate ? 1 : 0);
     const repairCount = (aiRun.repair ? 1 : 0) + (aiRun.regenerate ? 1 : 0);
     const finalAttempt = aiRun.regenerate ?? aiRun.repair ?? aiRun.primary;
+    // Persist the structured output alongside the aiRun so a later resume can
+    // rebuild this step without re-calling the LLM — unless it is too large,
+    // in which case the step is flagged non-resumable (see loadResumeState).
+    const metadata = { aiRun, ...this.buildResumePayloadMetadata(stepResult) };
     await this.prisma.productPackGenerationStep.upsert({
       where: { jobId_stepKey: { jobId, stepKey } },
       create: {
@@ -682,16 +770,29 @@ export class PackService {
         provider: finalAttempt.provider, model: finalAttempt.modelId, maxOutputTokens: finalAttempt.effectiveMaxOutputTokens,
         inputTokens: finalAttempt.inputTokens, outputTokens: finalAttempt.outputTokens,
         documentIds: documentIds as unknown as Prisma.InputJsonValue,
-        metadata: { aiRun } as unknown as Prisma.InputJsonValue,
+        metadata: metadata as unknown as Prisma.InputJsonValue,
       },
       update: {
         status: 'completed', completedAt: new Date(), durationMs, attemptCount, repairCount,
         provider: finalAttempt.provider, model: finalAttempt.modelId, maxOutputTokens: finalAttempt.effectiveMaxOutputTokens,
         inputTokens: finalAttempt.inputTokens, outputTokens: finalAttempt.outputTokens,
         documentIds: documentIds as unknown as Prisma.InputJsonValue,
-        metadata: { aiRun } as unknown as Prisma.InputJsonValue,
+        metadata: metadata as unknown as Prisma.InputJsonValue,
       },
     });
+  }
+
+  /** Serialize a step's resumable output, or flag it omitted if it exceeds the size cap. */
+  private buildResumePayloadMetadata(
+    stepResult: PackV2StepResult,
+  ): { resumePayload: { documents: ProductPackV2Document[]; extraFields: Record<string, unknown> } } | { resumePayloadOmitted: true } {
+    const payload = { documents: stepResult.documents, extraFields: stepResult.extraFields };
+    const size = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+    if (size > RESUME_PAYLOAD_MAX_BYTES) {
+      this.logger.warn(`Resume payload for a pack step is ${size} bytes (> ${RESUME_PAYLOAD_MAX_BYTES}); marking it non-resumable.`);
+      return { resumePayloadOmitted: true };
+    }
+    return { resumePayload: payload };
   }
 
   private async markGenerationStepFailed(jobId: string, stepKey: string, error: unknown, durationMs: number): Promise<void> {

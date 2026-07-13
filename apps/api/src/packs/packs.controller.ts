@@ -54,6 +54,29 @@ export class PacksController {
     return shapeJobStatus(await this.jobs.getJob(ws, jobId));
   }
 
+  @Get('packs/:packId/diagnostics')
+  @RequirePermissions('pack:read')
+  @ApiOperation({ summary: 'Failed-pack diagnostic wall: last successful/failed step, doc counts, model, attempts, retryability, context-drift warning' })
+  async diagnostics(@Param('workspaceId') ws: string, @Param('packId') packId: string) {
+    const { job, contextChanged } = await this.jobs.getDiagnosticsForPack(ws, packId);
+    return { ...shapeJobStatus(job), contextChanged };
+  }
+
+  @Post('pack-generation-jobs/:jobId/retry')
+  @RequirePermissions('pack:generate')
+  @ApiOperation({ summary: 'Retry a failed/partial job in place — reuse completed steps, re-run only the failed/remaining steps (same pack)' })
+  async retryJob(@Param('workspaceId') ws: string, @Param('jobId') jobId: string) {
+    return shapeJobStatus(await this.jobs.retry(ws, jobId));
+  }
+
+  @Post('packs/:packId/retry')
+  @RequirePermissions('pack:generate')
+  @ApiOperation({ summary: 'Retry the latest failed/partial generation job for a pack in place (resume from the failed step)' })
+  async retryPack(@Param('workspaceId') ws: string, @Param('packId') packId: string) {
+    const latest = await this.jobs.getJobForPack(ws, packId);
+    return shapeJobStatus(await this.jobs.retry(ws, latest.id));
+  }
+
   @Get('niches/:nicheId/packs')
   @RequirePermissions('pack:read')
   @ApiOperation({ summary: 'List packs for a niche' })
@@ -99,6 +122,18 @@ export class PacksController {
 
 /** Shapes a ProductPackGenerationJob (+ steps) row into the polling contract the frontend expects. */
 function shapeJobStatus(job: Awaited<ReturnType<PackGenerationJobService['getJob']>>) {
+  // Steps are ordered by createdAt asc, which matches the canonical step order.
+  const failedStep = job.steps.find((step) => step.status === 'failed');
+  const completedSteps = job.steps.filter((step) => step.status === 'completed');
+  const lastSuccessfulStep = completedSteps.length > 0 ? completedSteps[completedSteps.length - 1].stepKey : null;
+  // In-place resume is possible only from a terminal job whose completed steps
+  // all still carry a resumable payload.
+  const isTerminalRetryable = job.status === 'failed' || job.status === 'partially_ready';
+  const allCompletedResumable = completedSteps.every((step) => {
+    const meta = (step.metadata ?? {}) as { resumePayload?: unknown; resumePayloadOmitted?: boolean };
+    return Boolean(meta.resumePayload) && !meta.resumePayloadOmitted;
+  });
+  const retryable = isTerminalRetryable && allCompletedResumable;
   return {
     jobId: job.id,
     packId: job.packId,
@@ -125,6 +160,10 @@ function shapeJobStatus(job: Awaited<ReturnType<PackGenerationJobService['getJob
     buildReady: job.buildReady,
     errorCode: job.errorCode,
     errorReason: job.errorReason,
+    // Failed-pack diagnostic fields.
+    failedStep: failedStep?.stepKey ?? null,
+    lastSuccessfulStep,
+    retryable,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
   };

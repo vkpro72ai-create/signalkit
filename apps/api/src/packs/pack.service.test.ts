@@ -1359,4 +1359,50 @@ describe('PackService.generateV2ForJob — per-step progress tracking + staged a
     expect(result.allStepsCompleted).toBe(true);
     expect(result.qualityGate.status).not.toBe('failed');
   });
+
+  it('resume: reuses the already-completed step(s) from persisted payloads and only re-runs the remaining steps', async () => {
+    const { prisma } = makePrisma();
+    // First step (vision) is already completed with a resumable payload; the rest are pending.
+    const visionStep = PRODUCT_PACK_V2_STEPS[0]!;
+    const visionPayload = makeStepPayload(visionStep) as { documents: unknown[] } & Record<string, unknown>;
+    const { documents: visionDocs, ...visionExtra } = visionPayload;
+    (prisma.productPackGenerationStep as any).findMany = vi.fn().mockResolvedValue([
+      {
+        stepKey: visionStep.id,
+        status: 'completed',
+        metadata: {
+          aiRun: { primary: { provider: 'openai', modelId: 'm1', effectiveMaxOutputTokens: 1, inputTokens: 1, outputTokens: 1 } },
+          resumePayload: { documents: visionDocs, extraFields: visionExtra },
+        },
+      },
+    ]);
+    // Router answers ONLY for the steps after vision — if resume tried to
+    // regenerate vision, it would consume a response meant for a later step and
+    // the counts below would not line up.
+    const routerRun = vi.fn();
+    for (const step of PRODUCT_PACK_V2_STEPS.slice(1)) {
+      routerRun.mockResolvedValueOnce(makeLlmResult(JSON.stringify(makeStepPayload(step))));
+    }
+    const { router } = makeRouter(routerRun);
+    const svc = new PackService(prisma, router);
+
+    const result = await svc.generateV2ForJob(JOB_SHAPE, { resume: true });
+
+    // Exactly one LLM call per remaining step — the completed vision step was NOT regenerated.
+    expect(routerRun).toHaveBeenCalledTimes(PRODUCT_PACK_V2_STEPS.length - 1);
+    expect(result.allStepsCompleted).toBe(true);
+  });
+
+  it('resume: refuses when a completed step has no resumable payload (must regenerate instead)', async () => {
+    const { prisma } = makePrisma();
+    (prisma.productPackGenerationStep as any).findMany = vi.fn().mockResolvedValue([
+      { stepKey: PRODUCT_PACK_V2_STEPS[0]!.id, status: 'completed', metadata: { resumePayloadOmitted: true } },
+    ]);
+    const { router } = makeRouter(vi.fn());
+    const svc = new PackService(prisma, router);
+
+    await expect(svc.generateV2ForJob(JOB_SHAPE, { resume: true })).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'resume_unavailable' }),
+    });
+  });
 });
