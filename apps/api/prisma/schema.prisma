@@ -129,6 +129,25 @@ enum PackGenerationMode {
   strong_model
 }
 
+// Founder's personal decision on an opportunity (separate from AI scoring).
+// Prisma enum (not a free string) so a typo can never reach the DB.
+enum FounderDecision {
+  undecided
+  explore
+  generate_pack
+  postpone
+  reject
+  ready_to_commit
+}
+
+// Founder-selected ambition for a promoted implementation project. Ambition
+// is a founder framing choice — it never gates buildReady.
+enum AmbitionMode {
+  cash_flow_business
+  venture_scale
+  unicorn_ambition
+}
+
 enum RiskLevel {
   low
   medium
@@ -170,6 +189,8 @@ model User {
   auditEvents     AuditLog[]        @relation("AuditActor")
   createdProjects Project[]         @relation("ProjectCreator")
   llmConnections  UserLLMConnection[]
+  founderVerdicts OpportunityFounderVerdict[]
+  committedProjects ImplementationProject[] @relation("ImplementationProjectCreator")
 }
 
 model Workspace {
@@ -300,6 +321,10 @@ model Region {
 // Projects & search context
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// DEPRECATED name: this model is a Research / Opportunity-Search context
+/// (market scope + discovery goal + its opportunities), NOT an implementation
+/// project. Real, founder-committed projects live in `ImplementationProject`.
+/// Kept under this name for backward compatibility — do not repurpose its rows.
 model Project {
   id                  String        @id @default(cuid())
   workspaceId         String
@@ -325,6 +350,7 @@ model Project {
   sourceRefs     SourceReference[]
   signals        TrendSignal[]
   niches         Niche[]
+  implementationProjects ImplementationProject[] @relation("ResearchProject")
 
   @@index([workspaceId])
 }
@@ -472,6 +498,8 @@ model Niche {
   claims         Claim[]
   packs          ProductDocumentPack[]
   ventureTheses  VentureThesis[]
+  founderVerdicts        OpportunityFounderVerdict[]
+  implementationProjects ImplementationProject[]
 
   @@index([projectId])
 }
@@ -530,6 +558,68 @@ model VentureThesis {
 
   @@index([nicheId])
   @@index([projectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Human decision layer — founder verdict + promoted implementation projects
+// (additive, backwards-compatible). Kept SEPARATE from AI scoring: a high AI
+// score never auto-promotes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A founder's personal, per-user verdict on an opportunity (Niche). One row
+/// per (niche, user) so multi-founder workspaces each keep their own rating;
+/// promotion uses the committing founder's own verdict.
+model OpportunityFounderVerdict {
+  id          String          @id @default(cuid())
+  workspaceId String
+  nicheId     String
+  userId      String
+  rating      Int?            // 1–5 personal rating (nullable = not yet rated)
+  comment     String          @default("")
+  decision    FounderDecision @default(undecided)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  niche Niche @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([nicheId, userId])
+  @@index([nicheId])
+  @@index([workspaceId])
+}
+
+/// A real, founder-committed implementation project. Created ONLY via the
+/// explicit promotion gate (Build-Ready pack + founder commitment) — never
+/// automatically. Snapshots the decision inputs at commitment time.
+model ImplementationProject {
+  id                     String       @id @default(cuid())
+  workspaceId            String
+  researchProjectId      String       // the source Research/Search-context Project
+  nicheId                String       // the promoted opportunity
+  packId                 String       // the selected Build-Ready Product Pack
+  founderRatingSnapshot  Int?
+  founderCommentSnapshot String       @default("")
+  ambitionMode           AmbitionMode
+  buildReadySnapshot     Boolean      @default(false)
+  ventureReadySnapshot   Boolean      @default(false)
+  unicornPotentialSnapshot Boolean    @default(false)
+  // Top risks / kill-reasons frozen from the VentureThesis at promotion time.
+  topRisksSnapshot       Json         @default("[]")
+  committedAt            DateTime     @default(now())
+  status                 String       @default("active") // active | paused | archived
+  createdById            String
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  researchProject Project             @relation("ResearchProject", fields: [researchProjectId], references: [id], onDelete: Cascade)
+  niche           Niche               @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  pack            ProductDocumentPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  createdBy       User                @relation("ImplementationProjectCreator", fields: [createdById], references: [id])
+
+  @@unique([packId]) // one implementation project per pack — re-promotion returns the existing one
+  @@index([workspaceId])
+  @@index([nicheId])
+  @@index([researchProjectId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -683,6 +773,7 @@ model ProductDocumentPack {
 
   niche     Niche                 @relation(fields: [nicheId], references: [id], onDelete: Cascade)
   documents ProductPackDocument[]
+  implementationProject ImplementationProject?
 
   @@index([nicheId])
 }
@@ -833,6 +924,10 @@ model DocumentVersion {
   changeSummary          String   @default("")
   authorId               String?
   generatedBy            String   @default("human")
+  // Provenance of an AI-generated version (null for human edits) — surfaced by
+  // the "why this changed" decision-history UI.
+  provider               String?
+  model                  String?
   linkedResearchUpdateId String?
   affectedClaimIds       Json     @default("[]")
   affectedAssumptionIds  Json     @default("[]")
