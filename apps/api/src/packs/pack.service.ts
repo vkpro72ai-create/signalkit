@@ -16,6 +16,7 @@ import { LlmRouterService } from '../llm/llm-router.service';
 import { buildPackContext, type PackContext, type PackContextInput, type PackScore } from './context';
 import { DEPTH_DOCUMENTS, buildDocument } from './templates';
 import { buildBuildBlueprint } from './blueprint';
+import { buildImplementationManifest, type AiAgentPromptInput } from './implementation-manifest';
 import { runQualityGates, type DocForGate } from './quality-gates';
 import { runProductPackV2ContentQualityChecks } from './product-pack-v2-quality';
 import {
@@ -1139,6 +1140,17 @@ export class PackService {
     const existing = await this.prisma.buildBlueprint.findFirst({ where: { packId }, orderBy: { createdAt: 'desc' } });
     if (existing) return existing;
     return this.regenerateBlueprint(workspaceId, packId);
+  }
+
+  /**
+   * Deterministic implementation-prompt manifest for a pack: organizes the
+   * already-generated ai_agent_bundle prompt sequence into workstreams/sprints
+   * with ordering + dependencies. Pure post-processing — no LLM call.
+   */
+  async getImplementationManifest(workspaceId: string, packId: string) {
+    const pack = await this.getPack(workspaceId, packId);
+    const metadata = 'metadata' in pack ? pack.metadata : undefined;
+    return buildImplementationManifest(extractAiAgentPromptBundle(metadata));
   }
 
   /** Regenerate the Build Blueprint from the current pack context. */
@@ -2493,6 +2505,25 @@ function extractPackV2Metadata(
     }
   }
   return null;
+}
+
+/** Pull the ai_agent_bundle prompt sequence out of a loaded pack's metadata (empty if none). */
+function extractAiAgentPromptBundle(metadata: unknown): AiAgentPromptInput[] {
+  if (!isRecord(metadata)) return [];
+  const handoff = metadata.executionHandoff;
+  if (!isRecord(handoff) || !Array.isArray(handoff.aiAgentPromptBundleDraft)) return [];
+  return handoff.aiAgentPromptBundleDraft
+    .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+    .map((entry) => ({
+      title: typeof entry.title === 'string' ? entry.title : 'Untitled step',
+      targetAgent: typeof entry.targetAgent === 'string' ? entry.targetAgent : 'generic',
+      purpose: typeof entry.purpose === 'string' ? entry.purpose : '',
+      promptBody: typeof entry.promptBody === 'string' ? entry.promptBody : '',
+      relatedSections: Array.isArray(entry.relatedSections) ? entry.relatedSections.filter((s): s is string => typeof s === 'string') : [],
+      expectedFiles: Array.isArray(entry.expectedFiles) ? entry.expectedFiles.filter((s): s is string => typeof s === 'string') : [],
+      tests: Array.isArray(entry.tests) ? entry.tests.filter((s): s is string => typeof s === 'string') : [],
+      finalReportFormat: Array.isArray(entry.finalReportFormat) ? entry.finalReportFormat.filter((s): s is string => typeof s === 'string') : [],
+    }));
 }
 
 function normalizePackTitle(title: string): string {

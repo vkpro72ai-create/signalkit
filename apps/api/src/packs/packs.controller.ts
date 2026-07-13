@@ -118,6 +118,13 @@ export class PacksController {
   regenerateBlueprint(@Param('workspaceId') ws: string, @Param('packId') packId: string) {
     return this.packs.regenerateBlueprint(ws, packId);
   }
+
+  @Get('packs/:packId/implementation-manifest')
+  @RequirePermissions('pack:read')
+  @ApiOperation({ summary: 'Deterministic implementation-prompt manifest (workstreams, sprints, ordered bounded prompts with dependencies)' })
+  implementationManifest(@Param('workspaceId') ws: string, @Param('packId') packId: string) {
+    return this.packs.getImplementationManifest(ws, packId);
+  }
 }
 
 /** Shapes a ProductPackGenerationJob (+ steps) row into the polling contract the frontend expects. */

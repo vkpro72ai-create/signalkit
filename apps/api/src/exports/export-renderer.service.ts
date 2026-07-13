@@ -15,6 +15,11 @@ import {
   DOCUMENT_FILENAME,
   ROLE_BRIEF_DOCUMENTS,
 } from '@signalkit/exports';
+import {
+  buildImplementationManifest,
+  renderManifestFiles,
+  type AiAgentPromptInput,
+} from '../packs/implementation-manifest';
 
 export interface PackDocumentRow {
   id: string;
@@ -185,6 +190,16 @@ export class ExportRendererService {
       zip.file('ANALYTICS_EVENTS.json', JSON.stringify(ev.blueprint.analyticsEvents, null, 2));
       zip.file('VALIDATION_RULES.md', this.blueprintValidationMd(ev.blueprint, t));
       zip.file('EMPTY_LOADING_ERROR_STATES.md', this.blueprintStatesMd(ev.blueprint, t));
+    }
+
+    // Ordered implementation-prompt manifest: one bounded prompt per file,
+    // grouped into sprint-XX/<workstream>/ folders (deterministic — no LLM).
+    const bundle = extractAiAgentPromptBundleFromDocuments(documents);
+    if (bundle.length > 0) {
+      const impl = buildImplementationManifest(bundle);
+      for (const file of renderManifestFiles(impl)) {
+        zip.file(file.path, file.content);
+      }
     }
 
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
@@ -547,4 +562,32 @@ export class ExportRendererService {
     };
     return t(titles[role]);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Extract the ai_agent_bundle prompt sequence from the pack documents' metadata. */
+function extractAiAgentPromptBundleFromDocuments(documents: PackDocumentRow[]): AiAgentPromptInput[] {
+  for (const doc of documents) {
+    if (!isRecord(doc.metadata)) continue;
+    const packMetadata = doc.metadata.packMetadata;
+    if (!isRecord(packMetadata)) continue;
+    const handoff = packMetadata.executionHandoff;
+    if (!isRecord(handoff) || !Array.isArray(handoff.aiAgentPromptBundleDraft)) continue;
+    return handoff.aiAgentPromptBundleDraft
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+      .map((entry) => ({
+        title: typeof entry.title === 'string' ? entry.title : 'Untitled step',
+        targetAgent: typeof entry.targetAgent === 'string' ? entry.targetAgent : 'generic',
+        purpose: typeof entry.purpose === 'string' ? entry.purpose : '',
+        promptBody: typeof entry.promptBody === 'string' ? entry.promptBody : '',
+        relatedSections: Array.isArray(entry.relatedSections) ? entry.relatedSections.filter((s): s is string => typeof s === 'string') : [],
+        expectedFiles: Array.isArray(entry.expectedFiles) ? entry.expectedFiles.filter((s): s is string => typeof s === 'string') : [],
+        tests: Array.isArray(entry.tests) ? entry.tests.filter((s): s is string => typeof s === 'string') : [],
+        finalReportFormat: Array.isArray(entry.finalReportFormat) ? entry.finalReportFormat.filter((s): s is string => typeof s === 'string') : [],
+      }));
+  }
+  return [];
 }
