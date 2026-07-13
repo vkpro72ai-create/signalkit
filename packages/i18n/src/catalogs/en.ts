@@ -335,6 +335,18 @@ export const en = {
   'opportunities.developError': 'Could not develop this idea',
   'opportunities.ideaTooShort': 'Please write at least 40 characters.',
 
+  // Discovery brief gating (Find opportunities tab)
+  'discoveryBrief.required': 'Required',
+  'discoveryBrief.completedCount': 'Brief completed: {count} of {total} required fields',
+  'discoveryBrief.completeMoreFields.one': 'Complete 1 more required field to start discovery.',
+  'discoveryBrief.completeMoreFields.other': 'Complete {count} more required fields to start discovery.',
+  'discoveryBrief.geographyLabel': 'Geography / market',
+  'discoveryBrief.geographySetFromSearch': 'Set when this Opportunity Search was created',
+  'discoveryBrief.pageLevelError': 'Please complete the required brief fields to start finding opportunities.',
+  'discoveryBrief.inlineMissing': 'This field is required.',
+  'discoveryBrief.notRunYetTitle': "Search hasn't run yet",
+  'discoveryBrief.notRunYetBody': 'Complete the brief above so SignalKit can find opportunities for your context.',
+
   'pack.subtitle': 'Build-Ready Product Pack · {depth} · {count} documents',
   'pack.subtitleFallback': 'Build-Ready Product Pack.',
   'pack.export': 'Export pack',

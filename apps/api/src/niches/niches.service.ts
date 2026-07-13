@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   buildScenarios,
   computeMarketScore,
@@ -89,6 +89,30 @@ export class NichesService {
     userId?: string,
   ) {
     const project = await this.requireProject(workspaceId, projectId);
+
+    // The Opportunities page's "Find opportunities" tab collects a discovery
+    // brief (topic/direction, audience, product type) before allowing a run —
+    // mode:'find_opportunities' is the signal that this call came from that
+    // gated brief UI (as opposed to the Home dashboard's open-ended "radar
+    // scan", which intentionally omits mode and stays unscoped). Enforce
+    // completeness ONLY for the brief-driven flow — never call the LLM, never
+    // touch existing niches, on an incomplete brief.
+    if (dto.mode === 'find_opportunities') {
+      const missingFields: string[] = [];
+      if (!dto.directions?.some((value) => value.trim().length > 0)) missingFields.push('topic');
+      if (!dto.audiences?.some((value) => value.trim().length > 0)) missingFields.push('audience');
+      if (!dto.productFormats?.some((value) => value.trim().length > 0)) missingFields.push('productType');
+      if (missingFields.length > 0) {
+        throw new UnprocessableEntityException({
+          // `code` mirrors `errorCode` so the web client's generic error
+          // parser (which reads `code` on every other endpoint) can surface
+          // this one the same way, without changing that shared parser.
+          code: 'opportunity_search_context_incomplete',
+          errorCode: 'opportunity_search_context_incomplete',
+          missingFields,
+        });
+      }
+    }
 
     // Discovery is a full replace, not an append (see the deleteMany below) —
     // it cascades to delete every Product Document Pack built on the

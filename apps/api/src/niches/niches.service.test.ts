@@ -149,6 +149,67 @@ describe('NichesService', () => {
     expect(userPrompt).toContain('this is only the language to write in');
   });
 
+  describe('discover — brief completeness gate (mode: find_opportunities only)', () => {
+    it('rejects with 422 opportunity_search_context_incomplete and lists every missing field, without calling the LLM', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      await expect(
+        new NichesService(prisma, evidence, router).discover('w1', 'p1', { mode: 'find_opportunities' }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'opportunity_search_context_incomplete', errorCode: 'opportunity_search_context_incomplete', missingFields: ['topic', 'audience', 'productType'] },
+      });
+      expect(router.run).not.toHaveBeenCalled();
+      expect(prisma.niche.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.niche.create).not.toHaveBeenCalled();
+    });
+
+    it('lists only the fields that are actually missing', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      await expect(
+        new NichesService(prisma, evidence, router).discover('w1', 'p1', {
+          mode: 'find_opportunities',
+          directions: ['AI / Automation'],
+          productFormats: ['SaaS'],
+        }),
+      ).rejects.toMatchObject({
+        response: { errorCode: 'opportunity_search_context_incomplete', missingFields: ['audience'] },
+      });
+      expect(router.run).not.toHaveBeenCalled();
+    });
+
+    it('treats "Any direction" (empty string) and whitespace-only values as not completed', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      await expect(
+        new NichesService(prisma, evidence, router).discover('w1', 'p1', {
+          mode: 'find_opportunities',
+          directions: [''],
+          audiences: ['   '],
+          productFormats: ['SaaS'],
+        }),
+      ).rejects.toMatchObject({
+        response: { errorCode: 'opportunity_search_context_incomplete', missingFields: ['topic', 'audience'] },
+      });
+      expect(router.run).not.toHaveBeenCalled();
+    });
+
+    it('allows discovery once topic, audience, and product type are all present', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      await new NichesService(prisma, evidence, router).discover('w1', 'p1', {
+        mode: 'find_opportunities',
+        directions: ['AI / Automation'],
+        audiences: ['SMB owners'],
+        productFormats: ['SaaS'],
+      });
+      expect(router.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not gate the open-ended radar scan (no mode set) — an unrelated flow must not be affected', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      await new NichesService(prisma, evidence, router).discover('w1', 'p1', { confirmReplace: false });
+      expect(router.run).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('refuses to re-run discovery on a project with existing niches unless confirmReplace is set', async () => {
     const { prisma, evidence, router } = makeDeps([]);
     (prisma.niche.count as ReturnType<typeof vi.fn>).mockResolvedValue(3);

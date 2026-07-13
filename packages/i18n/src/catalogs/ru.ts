@@ -270,6 +270,17 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'opportunities.developError': 'Не удалось развить эту идею',
   'opportunities.ideaTooShort': 'Напишите, пожалуйста, не менее 40 символов.',
 
+  'discoveryBrief.required': 'Обязательное поле',
+  'discoveryBrief.completedCount': 'Бриф заполнен: {count} из {total} обязательных полей',
+  'discoveryBrief.completeMoreFields.one': 'Заполните ещё 1 обязательное поле, чтобы начать поиск.',
+  'discoveryBrief.completeMoreFields.other': 'Заполните ещё {count} обязательных поля, чтобы начать поиск.',
+  'discoveryBrief.geographyLabel': 'География / рынок',
+  'discoveryBrief.geographySetFromSearch': 'Указано при создании этого поиска возможностей',
+  'discoveryBrief.pageLevelError': 'Заполните обязательные поля брифа, чтобы начать поиск возможностей.',
+  'discoveryBrief.inlineMissing': 'Это поле обязательно для заполнения.',
+  'discoveryBrief.notRunYetTitle': 'Поиск ещё не запускался',
+  'discoveryBrief.notRunYetBody': 'Заполните бриф выше, чтобы SignalKit нашёл возможности по вашему контексту.',
+
   'pack.subtitle': 'Готовый к сборке пакет продукта · {depth} · документов: {count}',
   'pack.subtitleFallback': 'Готовый к сборке пакет продукта.',
   'pack.export': 'Экспортировать пакет',
