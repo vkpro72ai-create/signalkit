@@ -57,7 +57,7 @@ function makePacks() {
     runGates: vi.fn().mockResolvedValue({ status: 'passed', passedCount: 5, warnCount: 0, failCount: 0 }),
     regenerateOne: vi.fn().mockResolvedValue('Regenerated body'),
     isV2Document: vi.fn().mockReturnValue(false),
-    amendDocumentV2: vi.fn().mockResolvedValue({ body: 'Amended body', document: { type: 'product_vision', title: 'Amended' } }),
+    amendDocumentV2: vi.fn().mockResolvedValue({ body: 'Amended body', document: { type: 'product_vision', title: 'Amended' }, provider: 'openai', model: 'gpt-x' }),
   };
 }
 
@@ -65,19 +65,26 @@ function makeRouter() {
   return { run: vi.fn().mockResolvedValue({ content: 'New body', validation: { ok: true } }) };
 }
 
+function makeAudit() {
+  return { record: vi.fn().mockResolvedValue(undefined) };
+}
+
 function makeService(docOverrides: Record<string, unknown> = {}) {
   const prisma = makePrisma(docOverrides);
   const router = makeRouter();
   const packs = makePacks();
+  const audit = makeAudit();
   return {
     svc: new GovernanceService(
       prisma as unknown as PrismaService,
       router as unknown as LlmRouterService,
       packs as unknown as PackService,
+      audit as unknown as import('../audit/audit.service').AuditService,
     ),
     prisma,
     router,
     packs,
+    audit,
   };
 }
 
@@ -115,6 +122,7 @@ describe('GovernanceService.saveDocument', () => {
       prisma as unknown as PrismaService,
       makeRouter() as unknown as LlmRouterService,
       makePacks() as unknown as PackService,
+      makeAudit() as unknown as import('../audit/audit.service').AuditService,
     );
     await expect(svc.saveDocument('ws1', 'bad', 'doc1', 'user1', { body: 'x' })).rejects.toThrow(NotFoundException);
   });
@@ -208,6 +216,16 @@ describe('GovernanceService.regenerateDocument', () => {
       }),
     );
   });
+
+  it('records model/provider provenance on an LLM-regenerated version and writes an audit event', async () => {
+    const { svc, prisma, packs, audit } = makeService();
+    packs.isV2Document.mockReturnValue(true);
+    await svc.regenerateDocument('ws1', 'pack1', 'doc1', 'user1', ['clarify pricing']);
+    expect(prisma.documentVersion.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ generatedBy: 'llm', provider: 'openai', model: 'gpt-x' }) }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'document.regenerated', subjectId: 'doc1' }));
+  });
 });
 
 // ── GovernanceService.applyPackComments ──────────────────────────────────────
@@ -234,7 +252,7 @@ describe('GovernanceService.applyPackComments', () => {
     const router = makeRouter();
     const packs = makePacks();
     packs.isV2Document.mockReturnValue(true);
-    const svc = new GovernanceService(prisma as unknown as PrismaService, router as unknown as LlmRouterService, packs as unknown as PackService);
+    const svc = new GovernanceService(prisma as unknown as PrismaService, router as unknown as LlmRouterService, packs as unknown as PackService, makeAudit() as unknown as import('../audit/audit.service').AuditService);
 
     const result = await svc.applyPackComments('ws1', 'pack1', 'user1');
 
@@ -256,7 +274,7 @@ describe('GovernanceService.applyPackComments', () => {
     packs.amendDocumentV2.mockImplementation((_ws: string, _packId: string, documentId: string) =>
       documentId === 'doc1' ? Promise.reject(new Error('llm_timeout')) : Promise.resolve({ body: 'Amended body', document: { type: 'market_context', title: 'Amended' } }),
     );
-    const svc = new GovernanceService(prisma as unknown as PrismaService, router as unknown as LlmRouterService, packs as unknown as PackService);
+    const svc = new GovernanceService(prisma as unknown as PrismaService, router as unknown as LlmRouterService, packs as unknown as PackService, makeAudit() as unknown as import('../audit/audit.service').AuditService);
 
     const result = await svc.applyPackComments('ws1', 'pack1', 'user1');
 
@@ -307,6 +325,7 @@ describe('GovernanceService.validateAssumption', () => {
       prisma as unknown as PrismaService,
       makeRouter() as unknown as LlmRouterService,
       makePacks() as unknown as PackService,
+      makeAudit() as unknown as import('../audit/audit.service').AuditService,
     );
     await expect(svc.validateAssumption('ws1', 'bad', { status: 'supported' })).rejects.toThrow(NotFoundException);
   });

@@ -1298,7 +1298,7 @@ export class PackService {
     packId: string,
     documentId: string,
     instructions: string[],
-  ): Promise<{ body: string; document: ProductPackV2Document }> {
+  ): Promise<{ body: string; document: ProductPackV2Document; provider: string; model: string }> {
     const doc = await this.prisma.productPackDocument.findFirst({ where: { id: documentId, packId } });
     if (!doc) throw new NotFoundException('Document not found');
     const pack = await this.prisma.productDocumentPack.findFirst({ where: { id: packId, workspaceId } });
@@ -1321,11 +1321,13 @@ export class PackService {
     const prompt = buildProductPackV2AmendPrompt(original, instructions);
     const firstRun = await this.runPackPrompt(workspaceId, packId, pack.projectId, language, prompt, PACK_V2_TASK_TYPE, maxOutputTokens);
     let updated = parseAmendedDocument(extractLlmText(firstRun), original);
+    let finalRun = firstRun;
 
     if (!updated) {
       const repairPrompt = buildProductPackV2AmendRepairPrompt(original, extractLlmText(firstRun));
       const repairRun = await this.runPackPrompt(workspaceId, packId, pack.projectId, language, repairPrompt, PACK_V2_TASK_TYPE, maxOutputTokens);
       updated = parseAmendedDocument(extractLlmText(repairRun), original);
+      finalRun = repairRun;
     }
 
     if (!updated) {
@@ -1335,7 +1337,9 @@ export class PackService {
       });
     }
 
-    return { body: documentToMarkdown(updated), document: updated };
+    // Surface the provider/model that produced the amendment so governance can
+    // record it as version provenance ("why this changed" decision history).
+    return { body: documentToMarkdown(updated), document: updated, provider: finalRun.provider, model: finalRun.modelId };
   }
 
   // ── internals ───────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmRouterService } from '../llm/llm-router.service';
+import { AuditService } from '../audit/audit.service';
 import { PackService } from './pack.service';
 import type { SaveDocumentDto, ValidateAssumptionDto } from './dto/governance.dto';
 
@@ -32,12 +33,20 @@ const ACTION_STATUS: Record<ReviewAction, string> = {
 // Actions that require pack:approve permission
 const APPROVE_ACTIONS: ReviewAction[] = ['approve', 'lock', 'archive'];
 
+// Review transitions worth an audit entry (governance decision history).
+const REVIEW_AUDIT_ACTION: Partial<Record<ReviewAction, 'document.approved' | 'document.locked' | 'document.changes_requested'>> = {
+  approve: 'document.approved',
+  lock: 'document.locked',
+  request_changes: 'document.changes_requested',
+};
+
 @Injectable()
 export class GovernanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly router: LlmRouterService,
     private readonly packs: PackService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Save document body — creates a DocumentVersion and re-runs quality gates. */
@@ -80,6 +89,15 @@ export class GovernanceService {
     // Re-run pack quality gates and update per-doc status
     await this.refreshQualityGates(workspaceId, packId);
 
+    await this.audit.record({
+      workspaceId,
+      action: 'document.saved',
+      actorId: userId,
+      subjectType: 'document',
+      subjectId: documentId,
+      metadata: { packId, version: nextVersion, changeSummary: dto.changeSummary ?? 'Manual edit' },
+    });
+
     return updated;
   }
 
@@ -106,10 +124,19 @@ export class GovernanceService {
     versionId: string,
   ) {
     const v = await this.getVersion(workspaceId, packId, documentId, versionId);
-    return this.saveDocument(workspaceId, packId, documentId, userId, {
+    const updated = await this.saveDocument(workspaceId, packId, documentId, userId, {
       body: v.body,
       changeSummary: `Restored from version ${v.version}`,
     });
+    await this.audit.record({
+      workspaceId,
+      action: 'document.restored',
+      actorId: userId,
+      subjectType: 'document',
+      subjectId: documentId,
+      metadata: { packId, restoredFromVersion: v.version },
+    });
+    return updated;
   }
 
   async setReviewStatus(
@@ -136,10 +163,24 @@ export class GovernanceService {
       );
     }
 
-    return this.prisma.productPackDocument.update({
+    const updated = await this.prisma.productPackDocument.update({
       where: { id: documentId },
       data: { status: targetStatus as Parameters<typeof this.prisma.productPackDocument.update>[0]['data']['status'], updatedAt: new Date() },
     });
+
+    const auditAction = REVIEW_AUDIT_ACTION[action];
+    if (auditAction) {
+      await this.audit.record({
+        workspaceId,
+        action: auditAction,
+        actorId: userId,
+        subjectType: 'document',
+        subjectId: documentId,
+        metadata: { packId, from: currentStatus, to: targetStatus },
+      });
+    }
+
+    return updated;
   }
 
   /**
@@ -177,6 +218,9 @@ export class GovernanceService {
         changeSummary: instructions.length > 0 ? 'Regenerated with reviewer feedback' : 'Regenerated',
         authorId: userId,
         generatedBy: 'llm',
+        // Provenance for the "why this changed" decision-history view.
+        provider: amendResult?.provider ?? null,
+        model: amendResult?.model ?? null,
         affectedClaimIds: [] as unknown as Prisma.InputJsonValue,
         affectedAssumptionIds: [] as unknown as Prisma.InputJsonValue,
       },
@@ -193,6 +237,16 @@ export class GovernanceService {
     });
 
     await this.refreshQualityGates(workspaceId, packId);
+
+    await this.audit.record({
+      workspaceId,
+      action: 'document.regenerated',
+      actorId: userId,
+      subjectType: 'document',
+      subjectId: documentId,
+      metadata: { packId, version: nextVersion, provider: amendResult?.provider ?? null, model: amendResult?.model ?? null, withFeedback: instructions.length > 0 },
+    });
+
     return updated;
   }
 
