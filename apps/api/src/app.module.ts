@@ -17,6 +17,7 @@ import { SourcesModule } from './sources/sources.module';
 import { EvidenceModule } from './evidence/evidence.module';
 import { NichesModule } from './niches/niches.module';
 import { PacksModule } from './packs/packs.module';
+import { ImplementationProjectsModule } from './implementation-projects/implementation-projects.module';
 import { ExportsModule } from './exports/exports.module';
 import { HealthController } from './health/health.controller';
 
@@ -42,6 +43,7 @@ import { HealthController } from './health/health.controller';
     EvidenceModule,
     NichesModule,
     PacksModule,
+    ImplementationProjectsModule,
     ExportsModule,
   ],
   controllers: [HealthController],
