@@ -229,6 +229,12 @@ export class NichesService {
       );
     }
 
+    // A search that just found its first opportunities is no longer an empty
+    // draft — flip it to active so it reads correctly in the research list.
+    if (project.status === 'draft') {
+      await this.prisma.project.update({ where: { id: projectId }, data: { status: 'active' } });
+    }
+
     const usage = await this.prisma.lLMUsageLog.findFirst({
       where: { workspaceId, projectId, taskType: 'niche_generation' },
       orderBy: { createdAt: 'desc' },
@@ -459,6 +465,10 @@ export class NichesService {
       extra: { intakeMode: 'founder_idea', founderIdeaText: idea },
     });
 
+    if (project.status === 'draft') {
+      await this.prisma.project.update({ where: { id: projectId }, data: { status: 'active' } });
+    }
+
     return {
       niches: 1,
       opportunities: [opportunity],
@@ -688,6 +698,22 @@ export class NichesService {
       include: { scores: { orderBy: { createdAt: 'desc' }, take: 1 } },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * Delete every opportunity in this project that was never promoted to an
+   * Implementation Project — the "rejected" ones. Used to tidy up a search
+   * after a winner is picked (or to clear out a dead end) without deleting
+   * the whole research context. Never touches a promoted niche: it's the
+   * provenance link (`Project -> Pack -> Opportunity -> ImplementationProject`)
+   * the archived search exists to preserve.
+   */
+  async clearRejected(workspaceId: string, projectId: string) {
+    await this.requireProject(workspaceId, projectId);
+    const { count } = await this.prisma.niche.deleteMany({
+      where: { workspaceId, projectId, implementationProjects: { none: {} } },
+    });
+    return { deletedCount: count };
   }
 
   /** Optional projectId scopes this to one project's opportunities — same shape/fields either way, so the Radar (per-project) and Opportunities (workspace-wide) pages can't silently disagree on what "top opportunities" means. */

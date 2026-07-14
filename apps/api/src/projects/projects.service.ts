@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GeoService } from '../geo/geo.service';
 import type { CreateProjectDto } from './dto/project.dto';
@@ -44,9 +44,16 @@ export class ProjectsService {
     });
   }
 
-  listForWorkspace(workspaceId: string) {
+  /**
+   * A research context that promoted an opportunity auto-archives (see
+   * NichesService/ImplementationProjectsService), and finished/dead-end
+   * searches get archived manually — so the default view hides `archived`
+   * to keep the list to what's actually still being worked. Pass
+   * `includeArchived` for the full history (e.g. an "archive" tab).
+   */
+  listForWorkspace(workspaceId: string, opts: { includeArchived?: boolean } = {}) {
     return this.prisma.project.findMany({
-      where: { workspaceId },
+      where: opts.includeArchived ? { workspaceId } : { workspaceId, status: { not: 'archived' } },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -57,5 +64,46 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
     return project;
+  }
+
+  /**
+   * Archive (hide from the default list) or reactivate a research context.
+   * This is the safe default for "I'm done with this search" — reversible,
+   * unlike `delete`. This is the manual path; promoting a pack to an
+   * Implementation Project (ImplementationProjectsService.promote) archives
+   * the source research context automatically the same way.
+   */
+  async setArchived(workspaceId: string, id: string, archived: boolean) {
+    await this.getById(workspaceId, id);
+    return this.prisma.project.update({
+      where: { id },
+      data: { status: archived ? 'archived' : 'active' },
+    });
+  }
+
+  /**
+   * Deleting a project cascades (in the DB schema) through its search
+   * contexts, niches/opportunities, and Product Document Packs — including
+   * any `ImplementationProject` a founder already committed to building.
+   * That last piece is real, founder-owned work, not disposable research
+   * scratch, so this stays permanently blocked once one exists — archive
+   * it instead, which is what happens automatically on promotion anyway.
+   */
+  async delete(workspaceId: string, id: string) {
+    await this.getById(workspaceId, id);
+
+    const committedCount = await this.prisma.implementationProject.count({
+      where: { researchProjectId: id },
+    });
+    if (committedCount > 0) {
+      throw new ConflictException({
+        code: 'project_has_committed_implementation',
+        errorCode: 'project_has_committed_implementation',
+        implementationCount: committedCount,
+      });
+    }
+
+    await this.prisma.project.delete({ where: { id } });
+    return { id, deleted: true };
   }
 }

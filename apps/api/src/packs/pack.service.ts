@@ -1219,8 +1219,29 @@ export class PackService {
       orderBy: { createdAt: 'desc' },
       include: { documents: true },
     });
-    if (packs.length === 0) return [];
+    return this.attachLatestGates(packs);
+  }
 
+  /**
+   * List every pack in the workspace (optionally scoped to one research
+   * project) in a single pair of queries — the workspace-wide "Пакеты
+   * документов" page used to fetch niches workspace-wide and then call
+   * `listForNiche` once per niche in a sequential loop; with dozens of
+   * niches across many research contexts that N+1 round-trip chain is what
+   * made the page look stuck on "Loading…" (each request is fast, but
+   * awaiting 50+ of them one at a time is not).
+   */
+  async listForWorkspace(workspaceId: string, projectId?: string) {
+    const packs = await this.prisma.productDocumentPack.findMany({
+      where: { workspaceId, ...(projectId ? { projectId } : {}) },
+      orderBy: { createdAt: 'desc' },
+      include: { documents: true, niche: { select: { id: true, title: true } } },
+    });
+    return this.attachLatestGates(packs);
+  }
+
+  private async attachLatestGates<T extends { id: string }>(packs: T[]): Promise<(T & { qualityGate: unknown })[]> {
+    if (packs.length === 0) return [];
     const gates = await this.prisma.qualityGateResult.findMany({
       where: { packId: { in: packs.map((pack) => pack.id) } },
       orderBy: { createdAt: 'desc' },
@@ -1229,7 +1250,6 @@ export class PackService {
     for (const gate of gates) {
       if (!latestGateByPack.has(gate.packId)) latestGateByPack.set(gate.packId, gate);
     }
-
     return packs.map((pack) => ({ ...pack, qualityGate: latestGateByPack.get(pack.id) ?? null }));
   }
 

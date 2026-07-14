@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import { spacing, radius, border, typography, colorFor } from '@signalkit/ui';
 import { SUPPORTED_LOCALES, type LocaleCode } from '@signalkit/i18n';
 import { useI18n } from '../lib/i18n';
-import { NAV } from '../lib/nav-config';
+import { NAV_HOME, NAV_GROUPS, type NavItem } from '../lib/nav-config';
 import { palette } from './ui';
 
 const LOCALE_LABEL: Record<LocaleCode, string> = {
@@ -70,6 +70,33 @@ export function MarketSelector({ market }: { market?: string }) {
   );
 }
 
+function isActive(pathname: string, href: string): boolean {
+  return href === '/signalkit' ? pathname === '/signalkit' : pathname.startsWith(href);
+}
+
+function SidebarLink({ item, active, onNavigate }: { item: NavItem; active: boolean; onNavigate: () => void }) {
+  const { t } = useI18n();
+  const accent = colorFor('opportunity');
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      style={{
+        padding: `${spacing.sm}px ${spacing.md}px`,
+        borderRadius: radius.md,
+        borderInlineStart: `3px solid ${active ? accent.border : 'transparent'}`,
+        fontSize: typography.size.sm,
+        fontWeight: active ? typography.weight.semibold : typography.weight.regular,
+        color: active ? palette.ink : palette.subtle,
+        background: active ? accent.bg : 'transparent',
+        textDecoration: 'none',
+      }}
+    >
+      {t(item.key)}
+    </Link>
+  );
+}
+
 function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
   const pathname = usePathname();
   const { t } = useI18n();
@@ -90,29 +117,26 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
       <div style={{ fontSize: typography.size.lg, fontWeight: typography.weight.bold, padding: `${spacing.sm}px ${spacing.sm}px ${spacing.lg}px` }}>
         {t('app.name')}
       </div>
-      {NAV.map((item) => {
-        const active = item.href === '/signalkit' ? pathname === '/signalkit' : pathname.startsWith(item.href);
-        const accent = colorFor('opportunity');
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={onNavigate}
+      <SidebarLink item={NAV_HOME} active={isActive(pathname, NAV_HOME.href)} onNavigate={onNavigate} />
+      {NAV_GROUPS.map((group) => (
+        <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs, marginTop: spacing.sm }}>
+          <div
             style={{
-              padding: `${spacing.sm}px ${spacing.md}px`,
-              borderRadius: radius.md,
-              borderInlineStart: `3px solid ${active ? accent.border : 'transparent'}`,
-              fontSize: typography.size.sm,
-              fontWeight: active ? typography.weight.semibold : typography.weight.regular,
-              color: active ? palette.ink : palette.subtle,
-              background: active ? accent.bg : 'transparent',
-              textDecoration: 'none',
+              padding: `${spacing.sm}px ${spacing.md}px 0`,
+              fontSize: 11,
+              fontWeight: typography.weight.semibold,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: palette.subtle,
             }}
           >
-            {t(item.key)}
-          </Link>
-        );
-      })}
+            {t(group.key)}
+          </div>
+          {group.items.map((item) => (
+            <SidebarLink key={item.href} item={item} active={isActive(pathname, item.href)} onNavigate={onNavigate} />
+          ))}
+        </div>
+      ))}
     </nav>
   );
 }

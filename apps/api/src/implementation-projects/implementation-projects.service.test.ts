@@ -25,6 +25,7 @@ function makeService(f: Fixture = {}) {
 
   const prisma = {
     productDocumentPack: { findFirst: vi.fn().mockResolvedValue(pack) },
+    project: { update: vi.fn().mockResolvedValue({ id: 'research1', status: 'archived' }) },
     niche: { findFirst: vi.fn().mockResolvedValue(niche) },
     productPackGenerationJob: { findFirst: vi.fn().mockResolvedValue(f.job ?? null) },
     qualityGateResult: { findFirst: vi.fn().mockResolvedValue(f.gate ?? null) },
@@ -97,7 +98,7 @@ describe('ImplementationProjectsService — promotion gate', () => {
   });
 
   it('creates a project when build-ready + full founder commitment, snapshotting the verdict + ambition', async () => {
-    const { svc, created, audit } = makeService({
+    const { svc, prisma, created, audit } = makeService({
       job: buildReadyJob,
       gate: passedGate,
       verdict: ratedVerdict,
@@ -115,14 +116,21 @@ describe('ImplementationProjectsService — promotion gate', () => {
     });
     expect(created[0].topRisksSnapshot).toEqual(['No distribution edge']);
     expect((audit.record as any)).toHaveBeenCalledOnce();
+    // Promoting an opportunity auto-archives the research context it came
+    // from, so it drops out of the default "Opportunity Search" list.
+    expect((prisma.project.update as any)).toHaveBeenCalledWith({
+      where: { id: 'research1' },
+      data: { status: 'archived' },
+    });
   });
 
-  it('is idempotent — returns the existing project instead of creating a duplicate', async () => {
+  it('is idempotent — returns the existing project instead of creating a duplicate, and does not re-archive', async () => {
     const existing = { id: 'ip-existing', packId: 'pack1' };
-    const { svc, created } = makeService({ existingProject: existing, job: buildReadyJob, gate: passedGate, verdict: ratedVerdict });
+    const { svc, prisma, created } = makeService({ existingProject: existing, job: buildReadyJob, gate: passedGate, verdict: ratedVerdict });
     const res = await svc.promote('ws1', 'pack1', 'user1', fullCommit);
     expect(res).toBe(existing);
     expect(created).toHaveLength(0);
+    expect((prisma.project.update as any)).not.toHaveBeenCalled();
   });
 
   it('404s for an unknown pack', async () => {

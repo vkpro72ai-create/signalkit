@@ -66,4 +66,19 @@ describe('resolveActiveProjectId — exact Research scoping', () => {
   it('returns null when there are no projects at all', () => {
     expect(resolveActiveProjectId([], null)).toBeNull();
   });
+
+  it('skips an archived (promoted/finished) search when picking the fallback, landing on the newest one still in progress', () => {
+    const withArchived = [{ id: 'p1', status: 'archived' }, { id: 'p2', status: 'active' }, { id: 'p3', status: 'draft' }];
+    expect(resolveActiveProjectId(withArchived, null)).toBe('p2');
+  });
+
+  it('still honors an explicit id even if that search is archived', () => {
+    const withArchived = [{ id: 'p1', status: 'archived' }, { id: 'p2', status: 'active' }];
+    expect(resolveActiveProjectId(withArchived, 'p1')).toBe('p1');
+  });
+
+  it('falls back to the first project (even archived) if every project is archived', () => {
+    const allArchived = [{ id: 'p1', status: 'archived' }, { id: 'p2', status: 'archived' }];
+    expect(resolveActiveProjectId(allArchived, null)).toBe('p1');
+  });
 });

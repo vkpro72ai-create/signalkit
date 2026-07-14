@@ -4,11 +4,13 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { EvidenceService } from '../evidence/evidence.service';
 import type { LlmRouterService } from '../llm/llm-router.service';
 
-function makeDeps(signals: unknown[]) {
+function makeDeps(signals: unknown[], projectOverrides: Record<string, unknown> = {}) {
   const nicheScoreCreate = vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'sc1', ...data }));
   const nicheCreate = vi.fn().mockResolvedValue({ id: 'n1', projectId: 'p1', workspaceId: 'w1', title: 'Clinic AI Inbox', oneLiner: 'Inbox automation' });
   const ventureCreate = vi.fn().mockResolvedValue({ id: 'vt1' });
   const usageFindFirst = vi.fn().mockResolvedValue({ id: 'usage1', createdAt: new Date('2026-07-02T00:00:00.000Z') });
+  const projectUpdate = vi.fn().mockResolvedValue({});
+  const nicheDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
   const prisma = {
     project: {
       findFirst: vi.fn().mockResolvedValue({
@@ -20,6 +22,8 @@ function makeDeps(signals: unknown[]) {
         defaultOutputLanguage: 'tr',
         marketScope: 'global',
         targetCountries: [],
+        status: 'active',
+        ...projectOverrides,
       }),
       findUnique: vi.fn().mockResolvedValue({
         id: 'p1',
@@ -29,10 +33,11 @@ function makeDeps(signals: unknown[]) {
         marketScope: 'global',
         targetCountries: [],
       }),
+      update: projectUpdate,
     },
     trendSignal: { findMany: vi.fn().mockResolvedValue(signals) },
     niche: {
-      deleteMany: vi.fn().mockResolvedValue({}),
+      deleteMany: nicheDeleteMany,
       create: nicheCreate,
       findFirst: vi.fn().mockResolvedValue({ id: 'n1', projectId: 'p1', workspaceId: 'w1', language: 'tr', title: 'Clinic AI Inbox' }),
       findMany: vi.fn().mockResolvedValue([]),
@@ -86,7 +91,7 @@ function makeDeps(signals: unknown[]) {
       estimatedCost: 0.0042,
     }),
   } as unknown as LlmRouterService;
-  return { prisma, evidence, router, nicheScoreCreate, nicheCreate, ventureCreate, usageFindFirst };
+  return { prisma, evidence, router, nicheScoreCreate, nicheCreate, ventureCreate, usageFindFirst, projectUpdate, nicheDeleteMany };
 }
 
 describe('NichesService', () => {
@@ -236,6 +241,38 @@ describe('NichesService', () => {
     expect(systemPrompt).toContain("FOUNDER'S STATED IDEA / GOAL");
   });
 
+  describe('project lifecycle — draft flips to active on first discovery', () => {
+    it('flips a draft project to active after opportunities are discovered', async () => {
+      const { prisma, evidence, router, projectUpdate } = makeDeps([], { status: 'draft' });
+      await new NichesService(prisma, evidence, router).discover('w1', 'p1');
+      expect(projectUpdate).toHaveBeenCalledWith({ where: { id: 'p1' }, data: { status: 'active' } });
+    });
+
+    it('leaves an already-active project alone (no redundant write)', async () => {
+      const { prisma, evidence, router, projectUpdate } = makeDeps([], { status: 'active' });
+      await new NichesService(prisma, evidence, router).discover('w1', 'p1');
+      expect(projectUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clearRejected', () => {
+    it('deletes only niches with no promoted implementation project', async () => {
+      const { prisma, evidence, router, nicheDeleteMany } = makeDeps([]);
+      nicheDeleteMany.mockResolvedValueOnce({ count: 3 });
+      const out = await new NichesService(prisma, evidence, router).clearRejected('w1', 'p1');
+      expect(nicheDeleteMany).toHaveBeenCalledWith({
+        where: { workspaceId: 'w1', projectId: 'p1', implementationProjects: { none: {} } },
+      });
+      expect(out).toEqual({ deletedCount: 3 });
+    });
+
+    it('404s for an unknown project', async () => {
+      const { prisma, evidence, router } = makeDeps([]);
+      (prisma.project.findFirst as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+      await expect(new NichesService(prisma, evidence, router).clearRejected('w1', 'missing')).rejects.toThrow('Project not found');
+    });
+  });
+
   describe('createFromIdea', () => {
     it('rejects an idea shorter than 40 characters without calling the LLM', async () => {
       const { prisma, evidence, router, nicheCreate } = makeDeps([]);
@@ -270,6 +307,14 @@ describe('NichesService', () => {
       const prompt = router.run.mock.calls[0]![0].messages[1].content;
       expect(prompt).toContain(idea);
       expect(prompt).toContain("FOUNDER'S IDEA");
+    });
+
+    it('flips a draft project to active once a founder idea is developed into an opportunity', async () => {
+      const { prisma, evidence, router, projectUpdate } = makeDeps([], { status: 'draft' });
+      const idea =
+        "A lifelong personal health companion app for women, with a personal AI agent that knows her from menarche to old age and can share access with family or a doctor.";
+      await new NichesService(prisma, evidence, router).createFromIdea('w1', 'p1', { founderIdea: idea });
+      expect(projectUpdate).toHaveBeenCalledWith({ where: { id: 'p1' }, data: { status: 'active' } });
     });
 
     it('tells the model not to infer target market/audience from the output language (regression: Russian idea should not force a Russian-speaking audience)', async () => {

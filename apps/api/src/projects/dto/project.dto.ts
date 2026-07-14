@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { MARKET_SCOPES, type MarketScope } from '@signalkit/shared';
 
 const SCOPES = MARKET_SCOPES as readonly string[];
@@ -44,4 +44,10 @@ export class CreateProjectDto {
   @IsOptional()
   @IsString()
   marketLanguage?: string;
+}
+
+export class SetProjectArchivedDto {
+  @ApiProperty({ description: 'true to archive (hide from the default list), false to reactivate' })
+  @IsBoolean()
+  archived!: boolean;
 }

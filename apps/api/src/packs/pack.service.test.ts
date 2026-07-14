@@ -398,6 +398,43 @@ describe('PackService', () => {
     expect(out[1]!.qualityGate).toBeNull(); // no gate rows for pk2 — must be null, not undefined
   });
 
+  it('listForWorkspace fetches every pack in one query (not one per niche) and still attaches the latest gate', async () => {
+    const { prisma } = makePrisma();
+    (prisma.productDocumentPack.findMany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'pk1', title: 'Pack One', projectId: 'p1', documents: [{ id: 'd1' }], niche: { id: 'n1', title: 'Niche One' } },
+    ]);
+    (prisma.qualityGateResult.findMany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'g1', packId: 'pk1', status: 'passed', createdAt: new Date('2026-07-02') },
+    ]);
+    const { router } = makeRouter();
+    const svc = new PackService(prisma, router);
+
+    const out = await svc.listForWorkspace('w1');
+
+    expect(prisma.productDocumentPack.findMany).toHaveBeenCalledWith({
+      where: { workspaceId: 'w1' },
+      orderBy: { createdAt: 'desc' },
+      include: { documents: true, niche: { select: { id: true, title: true } } },
+    });
+    expect(out[0]!.qualityGate?.status).toBe('passed');
+    expect(out[0]!.niche.title).toBe('Niche One');
+  });
+
+  it('listForWorkspace scopes to one project when a projectId is given', async () => {
+    const { prisma } = makePrisma();
+    (prisma.productDocumentPack.findMany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const { router } = makeRouter();
+    const svc = new PackService(prisma, router);
+
+    await svc.listForWorkspace('w1', 'p1');
+
+    expect(prisma.productDocumentPack.findMany).toHaveBeenCalledWith({
+      where: { workspaceId: 'w1', projectId: 'p1' },
+      orderBy: { createdAt: 'desc' },
+      include: { documents: true, niche: { select: { id: true, title: true } } },
+    });
+  });
+
   it('generates a full build-ready pack deterministically (no LLM), with metadata + quality gates', async () => {
     const { prisma, docCreate, gateCreate } = makePrisma();
     const { router, run } = makeRouter();

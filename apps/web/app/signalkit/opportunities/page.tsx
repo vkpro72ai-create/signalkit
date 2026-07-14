@@ -104,6 +104,7 @@ function OpportunitiesPageInner() {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [opportunities, setOpportunities] = useState<GeneratedOpportunityCard[]>([]);
   const [busy, setBusy] = useState(false);
+  const [clearingRejected, setClearingRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<AiRunMetadata | null>(null);
   const [direction, setDirection] = useState('');
@@ -142,7 +143,11 @@ function OpportunitiesPageInner() {
       const workspaceId = await firstWorkspaceId();
       setWs(workspaceId);
       if (!workspaceId) return setState('no_project');
-      const projects = await workspaceApi.listProjects(workspaceId);
+      // includeArchived: an explicit ?project= link (e.g. from an Implementation
+      // Project's "source search" provenance link) must still resolve even
+      // though promoted/finished searches are archived and hidden from the
+      // default research list.
+      const projects = await workspaceApi.listProjects(workspaceId, { includeArchived: true });
       // Honor the exact Research/Search Context the user came from (e.g. the
       // ?project= redirect right after creating a new Opportunity Search) —
       // never silently fall back to an arbitrary project when a specific one
@@ -275,6 +280,29 @@ function OpportunitiesPageInner() {
       setError(e instanceof Error ? e.message : t('opportunities.developError'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Removes every opportunity in this search that was never promoted to an
+   * Implementation Project. For cleaning up after a winner is picked (or a
+   * dead end) without deleting the whole research context — the promoted
+   * niche/pack are untouched, since the backend only deletes niches with no
+   * linked ImplementationProject.
+   */
+  async function clearRejected() {
+    if (!ws || !pid || clearingRejected) return;
+    const confirmed = window.confirm(t('opportunities.clearRejectedConfirm'));
+    if (!confirmed) return;
+    setClearingRejected(true);
+    setError(null);
+    try {
+      await opportunityApi.clearRejected(ws, pid);
+      setOpportunities(await opportunityApi.listAll(ws, pid));
+    } catch {
+      setError(t('opportunities.clearRejectedError'));
+    } finally {
+      setClearingRejected(false);
     }
   }
 
@@ -604,6 +632,11 @@ function OpportunitiesPageInner() {
         />
       ) : (
         <Card>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: spacing.sm }}>
+            <Button variant="ghost" onClick={() => void clearRejected()} disabled={clearingRejected}>
+              {clearingRejected ? t('opportunities.clearingRejected') : t('opportunities.clearRejected')}
+            </Button>
+          </div>
           <Table
             columns={buildOpportunityColumns(t, (row) => sorted.indexOf(row) + 1)}
             rows={sorted}

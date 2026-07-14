@@ -166,6 +166,16 @@ export class ImplementationProjectsService {
       include: this.projectInclude,
     });
 
+    // The research context did its job — an opportunity got picked and
+    // committed. Archive it so the "Opportunity Search" list stays down to
+    // searches still in progress; the promoted niche/pack/verdict stay
+    // reachable from here (ImplementationProject.researchProjectId) as the
+    // provenance trail, not from the research list itself.
+    await this.prisma.project.update({
+      where: { id: pack.projectId },
+      data: { status: 'archived' },
+    });
+
     await this.audit.record({
       workspaceId,
       action: 'implementation_project.promoted',

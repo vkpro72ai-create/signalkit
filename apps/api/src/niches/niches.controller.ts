@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.service';
@@ -40,6 +40,13 @@ export class NichesController {
   @ApiOperation({ summary: 'List niches (with latest score)' })
   list(@Param('workspaceId') ws: string, @Param('projectId') pid: string) {
     return this.niches.list(ws, pid);
+  }
+
+  @Delete('projects/:projectId/niches/rejected')
+  @RequirePermissions('niche:discover')
+  @ApiOperation({ summary: 'Delete every opportunity in this project that was never promoted to an Implementation Project' })
+  clearRejected(@Param('workspaceId') ws: string, @Param('projectId') pid: string) {
+    return this.niches.clearRejected(ws, pid);
   }
 
   @Get('niches')

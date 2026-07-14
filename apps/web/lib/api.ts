@@ -110,9 +110,14 @@ export const workspaceApi = {
       name,
       slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
     }),
-  listProjects: (workspaceId: string) => apiGet<ProjectView[]>(`/workspaces/${workspaceId}/projects`),
+  listProjects: (workspaceId: string, opts?: { includeArchived?: boolean }) =>
+    apiGet<ProjectView[]>(`/workspaces/${workspaceId}/projects${opts?.includeArchived ? '?includeArchived=true' : ''}`),
   createProject: (workspaceId: string, name: string, goal?: string) =>
     apiPost<ProjectView>(`/workspaces/${workspaceId}/projects`, { name, goal, marketScope: 'global' }),
+  archiveProject: (workspaceId: string, id: string, archived: boolean) =>
+    apiPatch<ProjectView>(`/workspaces/${workspaceId}/projects/${id}/archive`, { archived }),
+  deleteProject: (workspaceId: string, id: string) =>
+    apiDelete<{ id: string; deleted: boolean }>(`/workspaces/${workspaceId}/projects/${id}`),
   getSettings: (workspaceId: string) => apiGet<WorkspaceSettingsView>(`/workspaces/${workspaceId}/settings`),
   updateSettings: (workspaceId: string, body: Partial<Pick<WorkspaceSettingsView, 'aiEngineName'>>) =>
     apiPut<WorkspaceSettingsView>(`/workspaces/${workspaceId}/settings`, body),
@@ -219,6 +224,8 @@ export const opportunityApi = {
     apiPost<DiscoverOpportunitiesResult>(`/workspaces/${workspaceId}/projects/${projectId}/niches/from-idea`, body),
   radarSummary: (workspaceId: string, projectId: string) =>
     apiGet<RadarSummary>(`/workspaces/${workspaceId}/projects/${projectId}/radar-summary`),
+  clearRejected: (workspaceId: string, projectId: string) =>
+    apiDelete<{ deletedCount: number }>(`/workspaces/${workspaceId}/projects/${projectId}/niches/rejected`),
 };
 
 export interface PackListItem {
@@ -230,9 +237,16 @@ export interface PackListItem {
   qualityGate: { status: string } | null;
 }
 
+export interface WorkspacePackListItem extends PackListItem {
+  projectId: string;
+  niche: { id: string; title: string };
+}
+
 export const packListApi = {
   listForNiche: (workspaceId: string, nicheId: string) =>
     apiGet<PackListItem[]>(`/workspaces/${workspaceId}/niches/${nicheId}/packs`),
+  listForWorkspace: (workspaceId: string, projectId?: string) =>
+    apiGet<WorkspacePackListItem[]>(`/workspaces/${workspaceId}/packs${projectId ? `?projectId=${projectId}` : ''}`),
 };
 
 export interface DocumentCommentView {

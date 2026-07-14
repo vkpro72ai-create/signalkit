@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { LocaleCode } from '@signalkit/shared';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator';
@@ -82,6 +82,13 @@ export class PacksController {
   @ApiOperation({ summary: 'List packs for a niche' })
   list(@Param('workspaceId') ws: string, @Param('nicheId') nicheId: string) {
     return this.packs.listForNiche(ws, nicheId);
+  }
+
+  @Get('packs')
+  @RequirePermissions('pack:read')
+  @ApiOperation({ summary: 'List every pack in the workspace in one query, optionally scoped to one research project (?projectId=)' })
+  listAll(@Param('workspaceId') ws: string, @Query('projectId') projectId?: string) {
+    return this.packs.listForWorkspace(ws, projectId);
   }
 
   @Get('packs/:packId')
