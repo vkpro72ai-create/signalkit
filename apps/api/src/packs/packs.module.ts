@@ -24,6 +24,6 @@ import { CommentsService } from './comments.service';
   imports: [LlmModule],
   controllers: [PacksController, GovernanceController],
   providers: [PackService, PackGenerationJobService, GovernanceService, ResearchService, CommentsService],
-  exports: [PackService, PackGenerationJobService],
+  exports: [PackService, PackGenerationJobService, ResearchService],
 })
 export class PacksModule {}

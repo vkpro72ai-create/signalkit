@@ -307,6 +307,92 @@ interface ImplementationProjectRow {
   };
 }
 
+interface DiscoveryOpportunityRow {
+  id: string;
+  name: string;
+  oneLiner: string;
+  riskLevel: string;
+  projectId: string;
+  targetMarket: string | null;
+  evidenceCount: number;
+  opportunityScore: number;
+  confidence: { level: string; value: number };
+}
+
+interface DiscoveryResultRow {
+  niches: number;
+  opportunities: DiscoveryOpportunityRow[];
+  generation: { provider: string; model: string; mode: string };
+}
+
+export function toDiscoveryResultDto(result: DiscoveryResultRow) {
+  return {
+    opportunityCount: result.niches,
+    opportunities: result.opportunities.map((o) => ({
+      id: o.id,
+      title: o.name,
+      oneLiner: o.oneLiner,
+      riskLevel: o.riskLevel,
+      projectId: o.projectId,
+      targetMarket: o.targetMarket,
+      evidenceCount: o.evidenceCount,
+      opportunityScore: o.opportunityScore,
+      confidence: o.confidence,
+    })),
+    generation: { provider: result.generation.provider, model: result.generation.model, mode: result.generation.mode },
+  };
+}
+
+interface FounderVerdictRow {
+  rating: number | null;
+  comment: string;
+  decision: string;
+  updatedAt: Date;
+}
+
+export function toFounderVerdictDto(verdict: FounderVerdictRow) {
+  return { rating: verdict.rating, comment: verdict.comment, decision: verdict.decision, updatedAt: verdict.updatedAt };
+}
+
+interface ResearchNoteRow {
+  id: string;
+  title: string;
+  type: string;
+  content: string;
+  language: string;
+  createdAt: Date;
+}
+
+export function toResearchNoteDto(note: ResearchNoteRow) {
+  return { id: note.id, title: note.title, type: note.type, content: note.content, language: note.language, createdAt: note.createdAt };
+}
+
+interface ExportJobRow {
+  id: string;
+  packId: string;
+  type: string;
+  language: string;
+  status: string;
+  errorCode: string | null;
+  createdAt: Date;
+  artifact?: { fileName: string; mimeType: string; sizeBytes: number } | null;
+}
+
+export function toExportJobDto(job: ExportJobRow) {
+  return {
+    id: job.id,
+    packId: job.packId,
+    type: job.type,
+    language: job.language,
+    status: job.status,
+    errorCode: job.errorCode,
+    createdAt: job.createdAt,
+    artifact: job.artifact
+      ? { fileName: job.artifact.fileName, mimeType: job.artifact.mimeType, sizeBytes: job.artifact.sizeBytes }
+      : null,
+  };
+}
+
 export function toImplementationProjectDto(project: ImplementationProjectRow) {
   return {
     id: project.id,

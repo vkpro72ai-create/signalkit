@@ -2,10 +2,28 @@ import type { Permission } from '@signalkit/shared';
 
 /**
  * MCP scopes are existing RBAC `Permission` strings, not a parallel
- * vocabulary — Phase A1 only ever grants the read-only subset a `viewer`
- * role already holds. Extend when Phase B/C add write/generation tools.
+ * vocabulary. Phase A1 granted only the read-only subset a `viewer` role
+ * already holds; Phase B adds the write/execute permissions the operator
+ * tool loop needs (create/discover/generate/approve/export) — each MCP tool
+ * still re-checks the caller's live role via PermissionsService on top of
+ * this grant, so a session can never do more than its connecting user's
+ * actual workspace role allows.
  */
-export const MCP_SUPPORTED_SCOPES: Permission[] = ['workspace:read', 'project:read', 'niche:read', 'pack:read'];
+export const MCP_SUPPORTED_SCOPES: Permission[] = [
+  'workspace:read',
+  'project:read',
+  'project:create',
+  'project:update',
+  'niche:read',
+  'niche:discover',
+  'pack:read',
+  'pack:edit',
+  'pack:generate',
+  'pack:approve',
+  'comment:create',
+  'export:read',
+  'export:create',
+];
 
 export const MCP_ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1h
 export const MCP_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30; // 30d

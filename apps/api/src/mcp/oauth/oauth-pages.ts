@@ -52,8 +52,17 @@ export function consentPage(opts: {
   const scopeLabels: Record<string, string> = {
     'workspace:read': 'Read workspace details',
     'project:read': 'Read research contexts',
+    'project:create': 'Create research contexts',
+    'project:update': 'Archive/reactivate research contexts',
     'niche:read': 'Read opportunities',
+    'niche:discover': 'Discover and create opportunities',
     'pack:read': 'Read Product Packs and generation status',
+    'pack:edit': 'Save research notes on Product Packs',
+    'pack:generate': 'Start Product Pack generation',
+    'pack:approve': 'Promote a Product Pack to an implementation project',
+    'comment:create': 'Set your founder verdict on opportunities',
+    'export:read': 'Check export status',
+    'export:create': 'Create exports',
   };
   const scopesHtml = opts.scopes.map((s) => `<div>• ${escapeHtml(scopeLabels[s] ?? s)}</div>`).join('');
   const workspaceOptions = opts.workspaces

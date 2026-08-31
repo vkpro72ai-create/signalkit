@@ -16,8 +16,12 @@ function makeToolsService() {
   const workspaces = {
     getById: vi.fn().mockResolvedValue({ id: 'ws1', name: 'Acme Lab', slug: 'acme', settings: null }),
   } as never;
-  const noop = { listForWorkspace: vi.fn(), getById: vi.fn(), listAll: vi.fn(), get: vi.fn(), ventureThesis: vi.fn(), getPack: vi.fn(), getDiagnosticsForPack: vi.fn() } as never;
-  return new McpToolsService(permissions, audit, workspaces, noop, noop, noop, noop, noop);
+  const noop = {
+    listForWorkspace: vi.fn(), getById: vi.fn(), listAll: vi.fn(), get: vi.fn(), ventureThesis: vi.fn(),
+    getPack: vi.fn(), getDiagnosticsForPack: vi.fn(), create: vi.fn(), setArchived: vi.fn(), discover: vi.fn(),
+    createFromIdea: vi.fn(), upsertFounderVerdict: vi.fn(), promote: vi.fn(), getJob: vi.fn(),
+  } as never;
+  return new McpToolsService(permissions, audit, workspaces, noop, noop, noop, noop, noop, noop, noop);
 }
 
 /** The transport defaults to SSE responses (not enableJsonResponse) — parse the
@@ -66,13 +70,17 @@ describe('McpController — authentication', () => {
 describe('McpController — Streamable HTTP handshake (real transport, mocked app services)', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('accepts initialize and lists exactly the 8 Phase A1 read tools', async () => {
+  it('accepts initialize and lists all 18 Phase A1 + Phase B tools', async () => {
     const mcpAuth = {
       verifyRequest: vi.fn().mockResolvedValue({
         sessionId: 's1',
         workspaceId: 'ws1',
         userId: 'user1',
-        scopes: ['workspace:read', 'project:read', 'niche:read', 'pack:read'],
+        scopes: [
+          'workspace:read', 'project:read', 'project:create', 'project:update',
+          'niche:read', 'niche:discover', 'pack:read', 'pack:edit', 'pack:generate',
+          'pack:approve', 'comment:create', 'export:read', 'export:create',
+        ],
         clientName: 'Test Client',
       }),
     } as unknown as McpAuthService;
@@ -125,6 +133,16 @@ describe('McpController — Streamable HTTP handshake (real transport, mocked ap
             'get_workspace_context',
             'list_opportunities',
             'list_research',
+            'create_research',
+            'archive_research',
+            'discover_opportunities',
+            'create_opportunity_from_idea',
+            'set_opportunity_verdict',
+            'save_research_note',
+            'start_pack_generation',
+            'promote_to_project',
+            'create_export',
+            'get_export',
           ].sort(),
         );
       },
