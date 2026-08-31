@@ -109,7 +109,11 @@ export type AuditLogAction =
   | 'share.accessed'
   | 'comment.resolved'
   | 'api_key.created'
-  | 'api_key.revoked';
+  | 'api_key.revoked'
+  | 'mcp.client_registered'
+  | 'mcp.session_created'
+  | 'mcp.session_revoked'
+  | 'mcp.tool_invoked';
 
 export interface AuditLogEvent extends Timestamps, WorkspaceOwned {
   id: Id;

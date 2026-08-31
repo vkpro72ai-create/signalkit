@@ -191,6 +191,9 @@ model User {
   llmConnections  UserLLMConnection[]
   founderVerdicts OpportunityFounderVerdict[]
   committedProjects ImplementationProject[] @relation("ImplementationProjectCreator")
+  mcpClientSessions      McpClientSession[]
+  mcpAuthorizationCodes  McpAuthorizationCode[]
+  mcpRefreshTokens       McpRefreshToken[]
 }
 
 model Workspace {
@@ -210,6 +213,9 @@ model Workspace {
   llmConnections   UserLLMConnection[]
   billingAccount   BillingAccount?
   apiKeys          APIKey[]
+  mcpClientSessions      McpClientSession[]
+  mcpAuthorizationCodes  McpAuthorizationCode[]
+  mcpRefreshTokens       McpRefreshToken[]
 }
 
 model WorkspaceMember {
@@ -1192,6 +1198,105 @@ model UsageCounter {
   used        Float  @default(0)
 
   @@unique([workspaceId, key, period])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Remote MCP server (Phase A1) — OAuth-authenticated AI-client sessions.
+// Additive, backwards-compatible: does not touch UserLLMConnection /
+// WorkspaceLLMSettings. See docs/DEPLOYMENT_HETZNER.md-adjacent MCP notes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A dynamically-registered OAuth client (RFC 7591) for a remote MCP caller —
+/// one row per external platform (e.g. one for Claude.ai, one for ChatGPT),
+/// not per end user. Public client only for A1 (PKCE, no client secret).
+model McpOAuthClient {
+  id                      String   @id @default(cuid())
+  clientName              String
+  redirectUris            String[] @default([])
+  grantTypes              String[] @default(["authorization_code", "refresh_token"])
+  tokenEndpointAuthMethod String   @default("none")
+  softwareId              String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  authorizationCodes McpAuthorizationCode[]
+  refreshTokens      McpRefreshToken[]
+}
+
+/// Short-lived, single-use PKCE authorization code issued after a human
+/// approves the consent screen. codeHash is SHA-256 of the raw code — the
+/// raw value is never persisted.
+model McpAuthorizationCode {
+  id                  String    @id @default(cuid())
+  codeHash            String    @unique
+  clientId            String
+  workspaceId         String
+  userId              String
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  scopes              String[]  @default([])
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime  @default(now())
+
+  client    McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// A connected remote MCP client, scoped to exactly one workspace + user +
+/// granted scopes. This is what "revoke" acts on — independent of any single
+/// access/refresh token's natural expiry.
+model McpClientSession {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  userId            String
+  clientId          String
+  clientName        String    @default("unknown")
+  clientVersion     String?
+  scopes            String[]  @default([])
+  capabilityProfile Json      @default("{}")
+  issuedAt          DateTime  @default(now())
+  expiresAt         DateTime
+  lastSeenAt        DateTime?
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens McpRefreshToken[]
+
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+/// Opaque refresh token (tokenHash = SHA-256 of the raw value). Access tokens
+/// are stateless JWTs and are not persisted; only refresh tokens need a
+/// revocable row.
+model McpRefreshToken {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  clientId    String
+  workspaceId String
+  userId      String
+  sessionId   String
+  scopes      String[]  @default([])
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  client    McpOAuthClient   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   McpClientSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([sessionId])
 }
 
 model APIKey {

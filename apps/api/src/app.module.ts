@@ -19,6 +19,7 @@ import { NichesModule } from './niches/niches.module';
 import { PacksModule } from './packs/packs.module';
 import { ImplementationProjectsModule } from './implementation-projects/implementation-projects.module';
 import { ExportsModule } from './exports/exports.module';
+import { McpModule } from './mcp/mcp.module';
 import { HealthController } from './health/health.controller';
 
 /**
@@ -45,6 +46,7 @@ import { HealthController } from './health/health.controller';
     PacksModule,
     ImplementationProjectsModule,
     ExportsModule,
+    McpModule,
   ],
   controllers: [HealthController],
   providers: [
