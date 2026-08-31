@@ -19,3 +19,4 @@ export * from './llm.js';
 export * from './export.js';
 export * from './billing.js';
 export * from './api.js';
+export * from './self-improvement.js';

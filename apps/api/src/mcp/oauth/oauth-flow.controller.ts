@@ -6,7 +6,8 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { AuthService } from '../../auth/auth.service';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
 import { PermissionsService } from '../../permissions/permissions.service';
-import { parseRequestedScopes } from '../mcp.constants';
+import { MCP_SUPPORTED_SCOPES, SELF_IMPROVE_SCOPE, parseRequestedScopes } from '../mcp.constants';
+import { SelfImproveAuthzService } from '../../self-improve/self-improve-authz.service';
 import { OAuthClientService } from './oauth-client.service';
 import { OAuthCodeService } from './oauth-code.service';
 import { OAuthTokenService } from './oauth-token.service';
@@ -43,6 +44,7 @@ export class OAuthFlowController {
     private readonly codes: OAuthCodeService,
     private readonly tokens: OAuthTokenService,
     private readonly consentService: OAuthConsentService,
+    private readonly selfImproveAuthz: SelfImproveAuthzService,
   ) {}
 
   @Public()
@@ -58,12 +60,49 @@ export class OAuthFlowController {
       return;
     }
 
-    let scopes: Permission[];
-    try {
-      scopes = parseRequestedScopes(query.scope);
-    } catch {
-      res.redirect(withState(query.redirect_uri, { error: 'invalid_scope', state: query.state }));
+    // Session is resolved before scope resolution because granting
+    // SELF_IMPROVE_SCOPE depends on who is logged in (the platform-superadmin
+    // allowlist), not on workspace membership — so we need the userId first.
+    const session = this.consentService.readSessionCookie(req);
+    if (!session) {
+      const queryIndex = req.originalUrl.indexOf('?');
+      const continueQuery = queryIndex >= 0 ? req.originalUrl.slice(queryIndex + 1) : '';
+      res.send(loginPage({ continueQuery }));
       return;
+    }
+
+    const requestedTokens = (query.scope ?? '').trim() ? query.scope!.trim().split(/\s+/) : null;
+    const wantsSelfImprove = requestedTokens?.includes(SELF_IMPROVE_SCOPE) ?? false;
+    const nonSelfImproveTokens = requestedTokens?.filter((t) => t !== SELF_IMPROVE_SCOPE) ?? null;
+
+    let scopes: string[];
+    if (requestedTokens === null) {
+      // No `scope` param at all — default to every ordinary (non-superadmin) scope.
+      scopes = [...MCP_SUPPORTED_SCOPES];
+    } else if (nonSelfImproveTokens && nonSelfImproveTokens.length > 0) {
+      try {
+        scopes = parseRequestedScopes(nonSelfImproveTokens.join(' '));
+      } catch {
+        res.redirect(withState(query.redirect_uri, { error: 'invalid_scope', state: query.state }));
+        return;
+      }
+    } else {
+      // The client asked ONLY for signalkit:self:propose — grant nothing else.
+      scopes = [];
+    }
+
+    if (wantsSelfImprove) {
+      if (!this.selfImproveAuthz.isSuperadmin(session.userId)) {
+        res.redirect(
+          withState(query.redirect_uri, {
+            error: 'access_denied',
+            error_description: 'not_platform_superadmin',
+            state: query.state,
+          }),
+        );
+        return;
+      }
+      scopes = [...scopes, SELF_IMPROVE_SCOPE];
     }
 
     const pending: PendingAuthorizeRequest = {
@@ -74,14 +113,6 @@ export class OAuthFlowController {
       codeChallenge: query.code_challenge,
       codeChallengeMethod: query.code_challenge_method,
     };
-
-    const session = this.consentService.readSessionCookie(req);
-    if (!session) {
-      const queryIndex = req.originalUrl.indexOf('?');
-      const continueQuery = queryIndex >= 0 ? req.originalUrl.slice(queryIndex + 1) : '';
-      res.send(loginPage({ continueQuery }));
-      return;
-    }
 
     const memberships = await this.workspaces.listForUser(session.userId);
     if (memberships.length === 0) {
@@ -140,8 +171,14 @@ export class OAuthFlowController {
       res.status(403).send(oauthErrorPage('You are not a member of the selected workspace.'));
       return;
     }
-    const allowed = await this.permissions.can(session.userId, dto.workspaceId, pending.scopes as Permission[]);
-    if (!allowed) {
+    // SELF_IMPROVE_SCOPE is not workspace RBAC — it was already gated by the
+    // superadmin allowlist in authorize(). Re-check it here too (defense in
+    // depth against a stale/replayed ticket) instead of feeding it into the
+    // workspace permission check, where it would never match any role.
+    const hasSelfImprove = pending.scopes.includes(SELF_IMPROVE_SCOPE);
+    const workspaceScopes = pending.scopes.filter((s) => s !== SELF_IMPROVE_SCOPE) as Permission[];
+    const allowed = await this.permissions.can(session.userId, dto.workspaceId, workspaceScopes);
+    if (!allowed || (hasSelfImprove && !this.selfImproveAuthz.isSuperadmin(session.userId))) {
       res.redirect(withState(pending.redirectUri, { error: 'access_denied', state: pending.state }));
       return;
     }

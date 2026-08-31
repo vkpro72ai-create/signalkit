@@ -6,6 +6,7 @@ import { NichesModule } from '../niches/niches.module';
 import { PacksModule } from '../packs/packs.module';
 import { ImplementationProjectsModule } from '../implementation-projects/implementation-projects.module';
 import { ExportsModule } from '../exports/exports.module';
+import { SelfImproveModule } from '../self-improve/self-improve.module';
 import { McpController } from './mcp.controller';
 import { McpAuthService } from './mcp-auth.service';
 import { McpServerService } from './mcp-server.service';
@@ -27,6 +28,7 @@ import { McpOAuthModule } from './oauth/oauth.module';
     PacksModule,
     ImplementationProjectsModule,
     ExportsModule,
+    SelfImproveModule,
     McpOAuthModule,
   ],
   controllers: [McpController],

@@ -1,7 +1,6 @@
 import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
-import type { Permission } from '@signalkit/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 
@@ -14,14 +13,16 @@ export interface McpAccessTokenPayload {
   aud: 'mcp';
   sid: string; // McpClientSession id
   workspaceId: string;
-  scope: string; // space-separated Permission strings
+  scope: string; // space-separated scope strings (workspace Permission strings, plus possibly SELF_IMPROVE_SCOPE)
 }
 
 export interface McpAuthContext {
   sessionId: string;
   workspaceId: string;
   userId: string;
-  scopes: Permission[];
+  /** Workspace Permission strings, plus possibly the platform-superadmin SELF_IMPROVE_SCOPE — not
+   * narrowed to Permission[] because that second scope deliberately isn't a workspace Permission. */
+  scopes: string[];
   clientName: string;
 }
 
@@ -65,7 +66,7 @@ export class McpAuthService {
       sessionId: session.id,
       workspaceId: session.workspaceId,
       userId: session.userId,
-      scopes: session.scopes as Permission[],
+      scopes: session.scopes,
       clientName: session.clientName,
     };
   }

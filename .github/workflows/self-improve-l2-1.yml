@@ -1,0 +1,86 @@
+name: Self-Improve Pipeline (L2.1 — proposal only, stops at PR)
+
+# Triggered by SelfImproveDispatchService via the GitHub App installation
+# token. The client_payload carries ONLY identifiers — never a patch, a
+# prompt, or a credential (see github-app-client.service.ts dispatch()).
+# The actual objective/constraints/acceptanceCriteria are fetched from the
+# SignalKit API by runId, authenticated with SELF_IMPROVEMENT_CI_TOKEN.
+#
+# L2.1 scope: proposed -> generating -> testing -> review_pending ->
+# human_review_pending. No auto-merge. No deploy. No rollback. This workflow
+# does not touch scripts/deploy/*, docker-compose*, or any production
+# infrastructure — that is explicitly out of scope until Phase L2.3.
+on:
+  repository_dispatch:
+    types: [self_improve_propose]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  SELF_IMPROVEMENT_RUN_ID: ${{ github.event.client_payload.runId }}
+  SELF_IMPROVEMENT_BASE_SHA: ${{ github.event.client_payload.baseSha }}
+  SELF_IMPROVEMENT_API_BASE_URL: ${{ secrets.SELF_IMPROVEMENT_API_BASE_URL }}
+  SELF_IMPROVEMENT_CI_TOKEN: ${{ secrets.SELF_IMPROVEMENT_CI_TOKEN }}
+  ANTHROPIC_API_KEY: ${{ secrets.SELF_IMPROVEMENT_ANTHROPIC_API_KEY }}
+
+jobs:
+  propose:
+    # GitHub-hosted (not self-hosted) runner — the ephemeral, automatically
+    # torn-down job workspace IS the "isolated temporary workspace" the code
+    # agent operates in. Nothing bespoke is needed for teardown.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout at the recorded base SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.baseSha }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (repo root, so all workspace packages resolve)
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate the change (isolated CodeAgentExecutor — Claude Code)
+        run: pnpm exec tsx scripts/self-improve/run-code-agent.ts
+
+      - name: Gate A — deterministic (typecheck/tests/build + migration classification)
+        id: gate_a
+        run: pnpm exec tsx scripts/self-improve/run-deterministic-gates.ts
+
+      - name: Gate B — independent review (separate context from generation)
+        if: success()
+        run: pnpm exec tsx scripts/self-improve/independent-review.ts
+
+      - name: Open PR (only reached if both gates passed — job would already have failed otherwise)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_URL=$(gh pr create \
+            --title "Self-improve: $(git log -1 --format=%s)" \
+            --body "Automated proposal — SelfImprovementRun ${SELF_IMPROVEMENT_RUN_ID}. Stops here for human review; nothing merges or deploys automatically." \
+            --base main \
+            --head "$(git rev-parse --abbrev-ref HEAD)")
+          PR_NUMBER=$(gh pr view "$PR_URL" --json number -q .number)
+          curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/pull-request" \
+            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"prNumber\": ${PR_NUMBER}, \"prUrl\": \"${PR_URL}\"}"
+
+      - name: Report failure
+        if: failure()
+        run: |
+          curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/fail" \
+            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"stage": "pipeline", "reason": "See workflow run logs for the failing step."}' || true

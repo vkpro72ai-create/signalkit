@@ -30,6 +30,17 @@ export const MCP_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30; // 30d
 export const MCP_SESSION_TTL_SECONDS = 60 * 60 * 24 * 90; // 90d — revocation window, independent of token exp
 export const MCP_AUTH_CODE_TTL_SECONDS = 5 * 60; // 5min, single-use
 
+/**
+ * Platform-superadmin-only scope for the self-improvement pipeline (Layer 2).
+ * Deliberately NOT part of MCP_SUPPORTED_SCOPES/Permission — it changes
+ * SignalKit itself, not one workspace, so it is never grantable through
+ * workspace RBAC and never shown as an option to an ordinary owner/admin.
+ * Granting it requires the connecting user's ID to already be on the
+ * SELF_IMPROVEMENT_SUPERADMIN_USER_IDS allowlist (checked both at OAuth
+ * consent time and again on every tool call).
+ */
+export const SELF_IMPROVE_SCOPE = 'signalkit:self:propose';
+
 export function isSupportedScope(scope: string): scope is Permission {
   return (MCP_SUPPORTED_SCOPES as string[]).includes(scope);
 }

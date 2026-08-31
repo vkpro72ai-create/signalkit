@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../../auth/auth.module';
 import { WorkspacesModule } from '../../workspaces/workspaces.module';
+import { SelfImproveModule } from '../../self-improve/self-improve.module';
 import { OAuthMetadataController } from './oauth-metadata.controller';
 import { OAuthFlowController } from './oauth-flow.controller';
 import { OAuthClientService } from './oauth-client.service';
@@ -17,7 +18,7 @@ import { OAuthConsentService } from './oauth-consent.service';
  * credential verification as /auth/login, never duplicates it.
  */
 @Module({
-  imports: [AuthModule, WorkspacesModule],
+  imports: [AuthModule, WorkspacesModule, SelfImproveModule],
   controllers: [OAuthMetadataController, OAuthFlowController],
   providers: [OAuthClientService, OAuthCodeService, OAuthTokenService, OAuthConsentService],
 })

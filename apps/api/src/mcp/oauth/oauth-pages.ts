@@ -24,6 +24,8 @@ button{margin-top:16px;padding:10px 16px;border-radius:6px;border:none;font-size
 .secondary{background:#eee;color:#111;margin-left:8px}
 .scopes{background:#f6f6f6;border-radius:8px;padding:12px;margin:16px 0;font-size:13px}
 .error{color:#b00020;font-size:13px;margin-top:8px}
+.superadmin{background:#fff3f3;border:1px solid #b00020;border-radius:8px;padding:12px;margin:16px 0;font-size:13px;color:#7a0016}
+.superadmin strong{display:block;margin-bottom:4px}
 </style></head><body>${body}</body></html>`;
 }
 
@@ -64,15 +66,25 @@ export function consentPage(opts: {
     'export:read': 'Check export status',
     'export:create': 'Create exports',
   };
-  const scopesHtml = opts.scopes.map((s) => `<div>• ${escapeHtml(scopeLabels[s] ?? s)}</div>`).join('');
+  const SELF_IMPROVE_SCOPE = 'signalkit:self:propose';
+  const hasSelfImprove = opts.scopes.includes(SELF_IMPROVE_SCOPE);
+  const ordinaryScopes = opts.scopes.filter((s) => s !== SELF_IMPROVE_SCOPE);
+  const scopesHtml = ordinaryScopes.map((s) => `<div>• ${escapeHtml(scopeLabels[s] ?? s)}</div>`).join('');
   const workspaceOptions = opts.workspaces
     .map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)}</option>`)
     .join('');
+  const superadminWarning = hasSelfImprove
+    ? `<div class="superadmin"><strong>Platform superadmin access requested</strong>` +
+      `This also grants the ability to propose code changes to SignalKit itself (a separate, ` +
+      `human-reviewed pipeline — nothing merges or deploys automatically). Only allow this if you ` +
+      `intended to connect a platform self-improvement client.</div>`
+    : '';
   return shell(
     'Connect to SignalKit',
     `<h1>${escapeHtml(opts.clientName)} wants to connect</h1>
 <p>This will let it read the following from one SignalKit workspace:</p>
-<div class="scopes">${scopesHtml}</div>
+<div class="scopes">${scopesHtml || '<em>(no workspace data access)</em>'}</div>
+${superadminWarning}
 <form method="post" action="/oauth/consent">
   <input type="hidden" name="ticket" value="${escapeHtml(opts.ticket)}">
   <label for="workspaceId">Workspace</label>

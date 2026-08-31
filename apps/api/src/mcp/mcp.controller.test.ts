@@ -7,8 +7,20 @@ import { McpController } from './mcp.controller';
 import { McpAuthService } from './mcp-auth.service';
 import { McpServerService } from './mcp-server.service';
 import { McpToolsService } from './mcp-tools.service';
+import type { SelfImproveToolsService } from '../self-improve/self-improve-tools.service';
+import type { SelfImproveAuthzService } from '../self-improve/self-improve-authz.service';
 import type { PermissionsService } from '../permissions/permissions.service';
 import type { AuditService } from '../audit/audit.service';
+
+function makeSelfImproveTools(opts: { isSuperadmin?: boolean } = {}) {
+  const authz = { isSuperadmin: vi.fn().mockReturnValue(opts.isSuperadmin ?? false) } as unknown as SelfImproveAuthzService;
+  const tools = {
+    proposeChange: vi.fn(),
+    getPipelineStatus: vi.fn(),
+    listRecentChanges: vi.fn(),
+  } as unknown as SelfImproveToolsService;
+  return { tools, authz };
+}
 
 function makeToolsService() {
   const permissions = { can: vi.fn().mockResolvedValue(true) } as unknown as PermissionsService;
@@ -52,7 +64,8 @@ async function withServer(
 describe('McpController — authentication', () => {
   it('rejects a request with no bearer token', async () => {
     const mcpAuth = { verifyRequest: vi.fn().mockRejectedValue(new UnauthorizedException('Missing bearer token')) } as unknown as McpAuthService;
-    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService()));
+    const si = makeSelfImproveTools();
+    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService(), si.tools, si.authz));
     const req = { headers: {} } as unknown as Request;
     const res = {} as unknown as Response;
     await expect(controller.handlePost(req, res)).rejects.toBeInstanceOf(UnauthorizedException);
@@ -60,7 +73,8 @@ describe('McpController — authentication', () => {
 
   it('rejects a request whose session was revoked', async () => {
     const mcpAuth = { verifyRequest: vi.fn().mockRejectedValue(new UnauthorizedException('MCP session is revoked or expired')) } as unknown as McpAuthService;
-    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService()));
+    const si = makeSelfImproveTools();
+    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService(), si.tools, si.authz));
     const req = { headers: { authorization: 'Bearer revoked-session-token' } } as unknown as Request;
     const res = {} as unknown as Response;
     await expect(controller.handlePost(req, res)).rejects.toBeInstanceOf(UnauthorizedException);
@@ -84,7 +98,8 @@ describe('McpController — Streamable HTTP handshake (real transport, mocked ap
         clientName: 'Test Client',
       }),
     } as unknown as McpAuthService;
-    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService()));
+    const si = makeSelfImproveTools();
+    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService(), si.tools, si.authz));
 
     await withServer(
       (req, res) => {
@@ -145,6 +160,78 @@ describe('McpController — Streamable HTTP handshake (real transport, mocked ap
             'get_export',
           ].sort(),
         );
+      },
+    );
+  });
+
+  it('lists the 3 self-improve tools too, but only for a session with SELF_IMPROVE_SCOPE granted to an allowlisted superadmin', async () => {
+    const mcpAuth = {
+      verifyRequest: vi.fn().mockResolvedValue({
+        sessionId: 's1',
+        workspaceId: 'ws1',
+        userId: 'superadmin-user',
+        scopes: ['workspace:read', 'signalkit:self:propose'],
+        clientName: 'Ops Console',
+      }),
+    } as unknown as McpAuthService;
+    const si = makeSelfImproveTools({ isSuperadmin: true });
+    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService(), si.tools, si.authz));
+
+    await withServer(
+      (req, res) => {
+        void controller.handlePost(req as unknown as Request, res as unknown as Response);
+      },
+      async (baseUrl) => {
+        const headers = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer valid',
+        };
+        const listRes = await fetch(`${baseUrl}/mcp`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+        });
+        const listBody = await readSseJson<{ result: { tools: Array<{ name: string }> } }>(listRes);
+        const names = listBody.result.tools.map((t) => t.name);
+        expect(names).toEqual(
+          expect.arrayContaining(['signalkit_self_propose_change', 'signalkit_self_get_pipeline_status', 'signalkit_self_list_recent_changes']),
+        );
+      },
+    );
+  });
+
+  it('does NOT list the self-improve tools for a session that lacks SELF_IMPROVE_SCOPE, even if the user happens to be a superadmin', async () => {
+    const mcpAuth = {
+      verifyRequest: vi.fn().mockResolvedValue({
+        sessionId: 's1',
+        workspaceId: 'ws1',
+        userId: 'superadmin-user',
+        scopes: ['workspace:read'],
+        clientName: 'Ops Console',
+      }),
+    } as unknown as McpAuthService;
+    const si = makeSelfImproveTools({ isSuperadmin: true });
+    const controller = new McpController(mcpAuth, new McpServerService(makeToolsService(), si.tools, si.authz));
+
+    await withServer(
+      (req, res) => {
+        void controller.handlePost(req as unknown as Request, res as unknown as Response);
+      },
+      async (baseUrl) => {
+        const headers = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer valid',
+        };
+        const listRes = await fetch(`${baseUrl}/mcp`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+        });
+        const listBody = await readSseJson<{ result: { tools: Array<{ name: string }> } }>(listRes);
+        const names = listBody.result.tools.map((t) => t.name);
+        expect(names).not.toEqual(expect.arrayContaining(['signalkit_self_propose_change']));
       },
     );
   });

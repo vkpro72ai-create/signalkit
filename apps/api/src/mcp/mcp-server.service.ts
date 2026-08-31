@@ -4,6 +4,9 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { McpAuthContext } from './mcp-auth.service';
 import { McpToolsService } from './mcp-tools.service';
+import { SELF_IMPROVE_SCOPE } from './mcp.constants';
+import { SelfImproveToolsService } from '../self-improve/self-improve-tools.service';
+import { SelfImproveAuthzService } from '../self-improve/self-improve-authz.service';
 
 function toResult(data: unknown): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
@@ -40,7 +43,11 @@ const ROLE_BRIEF_TYPE = ['founder', 'pm', 'designer', 'frontend', 'backend', 'gr
  */
 @Injectable()
 export class McpServerService {
-  constructor(private readonly tools: McpToolsService) {}
+  constructor(
+    private readonly tools: McpToolsService,
+    private readonly selfImproveTools: SelfImproveToolsService,
+    private readonly selfImproveAuthz: SelfImproveAuthzService,
+  ) {}
 
   build(ctx: McpAuthContext): McpServer {
     const server = new McpServer(
@@ -322,6 +329,54 @@ export class McpServerService {
       },
       async (args) => toResult(await this.tools.getExport(ctx, args)),
     );
+
+    // ── Layer 2: self-improvement pipeline (platform-superadmin only) ──────
+    // Registered only when the session both holds SELF_IMPROVE_SCOPE and the
+    // connecting user is on the superadmin allowlist — a non-superadmin
+    // session never even sees these in tools/list. This is a visibility
+    // nicety only: SelfImproveToolsService re-checks both conditions on every
+    // call regardless, so this is not the actual security boundary.
+    if (ctx.scopes.includes(SELF_IMPROVE_SCOPE) && this.selfImproveAuthz.isSuperadmin(ctx.userId)) {
+      server.registerTool(
+        'signalkit_self_propose_change',
+        {
+          title: 'Propose a SignalKit self-improvement change',
+          description:
+            'Propose WHAT should change about SignalKit itself — objective, constraints, acceptance criteria. ' +
+            'Does NOT accept a code patch: the actual diff is produced by an isolated, controlled code-generation ' +
+            'pipeline in a separate GitHub Actions job, checked out at a recorded base commit, then gated by tests, ' +
+            'typecheck, build, migration-safety classification, and an independent automated review before a PR is ' +
+            'opened. This never merges or deploys — it always stops at an open PR awaiting human review.',
+          inputSchema: {
+            summary: z.string().min(1).describe('Short summary of the requested change'),
+            objective: z.string().min(1).describe('What the change should accomplish, in detail'),
+            constraints: z.array(z.string()).optional().describe('Explicit boundaries the change must respect'),
+            acceptanceCriteria: z.array(z.string()).optional().describe('How to know the change succeeded'),
+          },
+        },
+        async (args) => toResult(await this.selfImproveTools.proposeChange(ctx, args)),
+      );
+
+      server.registerTool(
+        'signalkit_self_get_pipeline_status',
+        {
+          title: 'Get self-improvement pipeline status',
+          description: 'Get the current status of a proposed self-improvement run by id.',
+          inputSchema: { runId: z.string().min(1) },
+        },
+        async (args) => toResult(await this.selfImproveTools.getPipelineStatus(ctx, args)),
+      );
+
+      server.registerTool(
+        'signalkit_self_list_recent_changes',
+        {
+          title: 'List recent self-improvement runs',
+          description: 'List recent self-improvement pipeline runs for audit — every proposal, regardless of outcome.',
+          inputSchema: { limit: z.number().int().min(1).max(100).optional() },
+        },
+        async (args) => toResult(await this.selfImproveTools.listRecentChanges(ctx, args)),
+      );
+    }
 
     return server;
   }

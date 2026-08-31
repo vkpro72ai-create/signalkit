@@ -1266,9 +1266,10 @@ model McpClientSession {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshTokens McpRefreshToken[]
+  workspace          Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens      McpRefreshToken[]
+  selfImprovementRuns SelfImprovementRun[]
 
   @@index([workspaceId])
   @@index([userId])
@@ -1297,6 +1298,80 @@ model McpRefreshToken {
 
   @@index([clientId])
   @@index([sessionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-improvement pipeline (Layer 2 / Phase L2.1) — MCP-proposed, human-gated
+// changes to SignalKit itself. A separate trust boundary from Layer 1 (see
+// McpModule): platform-superadmin only, never granted to workspace roles.
+// SelfImprovementRun is PERMANENT audit history — see onDelete: SetNull below,
+// never Cascade, and the denormalized actor* fields that survive it either way.
+// L2.1 stops at `human_review_pending` (PR open, no merge/deploy) — later
+// statuses exist now so L2.3 (merge/deploy/rollback/circuit breaker) doesn't
+// need another migration, but are unreachable until that phase is built.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SelfImprovementRunStatus {
+  proposed
+  generating
+  testing
+  review_pending
+  human_review_pending
+  failed
+  rolled_back
+  circuit_broken
+}
+
+enum MigrationSafetyClass {
+  none
+  safe_additive_candidate
+  manual_review_required
+  destructive_blocked
+}
+
+model SelfImprovementRun {
+  id                  String   @id @default(cuid())
+
+  // Immutable actor metadata — plain strings, no FK, so this row's meaning
+  // never depends on the User/Workspace rows still existing.
+  actorUserId         String
+  actorWorkspaceId    String?
+  // Historical reference only. onDelete: SetNull (never Cascade) — revoking
+  // or deleting the MCP session must not erase proposal/PR/deploy history.
+  mcpClientSessionId  String?
+
+  requestSummary      String
+  objective           String
+  constraints         Json     @default("[]")
+  acceptanceCriteria  Json     @default("[]")
+
+  baseSha             String
+  generatedBranchName String?
+  generatedCommitSha  String?
+  prNumber            Int?
+  prUrl               String?
+  mergeCommitSha      String?
+
+  status              SelfImprovementRunStatus @default(proposed)
+  failureStage        String?
+  failureReason        String?
+
+  testsPassed          Boolean?
+  reviewFindings        Json    @default("[]")
+  migrationSafety       MigrationSafetyClass @default(none)
+  healthcheckOk          Boolean?
+
+  deployedAt            DateTime?
+  rolledBackAt           DateTime?
+  rollbackReason          String?
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  mcpClientSession McpClientSession? @relation(fields: [mcpClientSessionId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([actorUserId])
 }
 
 model APIKey {
