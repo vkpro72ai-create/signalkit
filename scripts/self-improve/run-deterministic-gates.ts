@@ -1,16 +1,24 @@
 /**
- * Gate A (deterministic): install/typecheck/tests/build, plus migration
- * safety classification, run in-process here so exactly one combined result
- * is reported to the API. Uses the SAME classifier the API's own model uses
- * (`@signalkit/shared`) so the two can never drift apart. A non-zero exit
- * from typecheck/test/build fails this script — and, since it fails the
- * GitHub Actions step, the run never reaches `review_pending`.
+ * deterministic_gates job ONLY. This is the one job that actually executes
+ * the generated repository's own code (pnpm install/typecheck/test/build) —
+ * the critical rule is that generated code executes ONLY here, in a job with
+ * NO secrets at all: no SELF_IMPROVEMENT_CODE_AGENT_KEY, no
+ * SELF_IMPROVEMENT_REVIEW_AGENT_KEY, no SELF_IMPROVEMENT_CI_TOKEN, no
+ * deploy/SSH/prod credential of any kind. This script must never read a
+ * `secrets.*`-sourced env var, and never calls the SignalKit API — it only
+ * writes its result to the GitHub Actions job output (via GITHUB_OUTPUT),
+ * which `publish_result_and_pr` (the only job with the CI token) reports on
+ * its behalf.
+ *
+ * Uses the SAME migration classifier the API's own model uses
+ * (`@signalkit/shared`) so the two can never drift apart.
  *
  * Run via (from repo root): pnpm exec tsx scripts/self-improve/run-deterministic-gates.ts
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { classifyMigrationFiles, type MigrationSafetyClass } from '@signalkit/shared';
+import { setGithubOutput } from './github-actions-output.js';
 
 function requireEnv(key: string): string {
   const value = process.env[key];
@@ -35,15 +43,10 @@ function classifyChangedMigrations(baseSha: string): MigrationSafetyClass {
 }
 
 async function main(): Promise<void> {
-  const runId = requireEnv('SELF_IMPROVEMENT_RUN_ID');
+  // Only non-secret inputs: a public base-commit SHA. No API base URL, no
+  // token of any kind is read anywhere in this script.
   const baseSha = requireEnv('SELF_IMPROVEMENT_BASE_SHA');
-  const base = requireEnv('SELF_IMPROVEMENT_API_BASE_URL');
-  const token = requireEnv('SELF_IMPROVEMENT_CI_TOKEN');
 
-  // `pnpm install` already ran as its own workflow step before this script —
-  // the generated commit could only change the lockfile if the code agent
-  // touched a package.json, in which case a plain `pnpm install` (not
-  // --frozen-lockfile) here picks that up before the gates run.
   let testsPassed = true;
   try {
     run('pnpm', ['install']);
@@ -57,20 +60,12 @@ async function main(): Promise<void> {
   const migrationSafety = classifyChangedMigrations(baseSha);
   console.log(`testsPassed=${testsPassed} migrationSafety=${migrationSafety}`);
 
-  await fetch(`${base}/self-improve/runs/${runId}/test-result`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ testsPassed, migrationSafety }),
-  });
-
-  if (!testsPassed) {
-    process.exit(1);
-  }
-  // destructive_blocked and manual_review_required both stop L2.1 short of
-  // review — they're recorded (above) and visible on the run, but this
-  // script does not itself decide whether that should hard-fail the job in
-  // later phases with auto-merge; for L2.1 the pipeline always stops at an
-  // open PR regardless, so no auto-merge decision is made here at all.
+  setGithubOutput('tests_passed', String(testsPassed));
+  setGithubOutput('migration_safety', migrationSafety);
+  // Deliberately exits 0 either way: `testsPassed=false` is a DATA result for
+  // publish_result_and_pr to act on (it reports the run as failed via the
+  // API), not a crash of this job. Only an actual script error below (e.g. a
+  // missing env var) is a real job failure.
 }
 
 main().catch((error: unknown) => {

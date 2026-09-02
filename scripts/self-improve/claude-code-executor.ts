@@ -3,11 +3,14 @@ import type { BoundedImprovementTask, CodeAgentExecutor, CodeAgentResult } from 
 
 /**
  * First CodeAgentExecutor implementation — invokes the `claude` CLI in
- * headless/print mode inside the already-isolated CI job workspace.
- * Credentials come only from the environment the workflow provides
- * (ANTHROPIC_API_KEY as a GitHub Actions secret) — never a workspace's
- * UserLLMConnection or any per-user credential; see
- * .github/workflows/self-improve-l2-1.yml for how that secret is scoped.
+ * headless/print mode inside the `generate` job's isolated workspace. Used
+ * ONLY by that job: the workflow maps `ANTHROPIC_API_KEY` from
+ * `secrets.SELF_IMPROVEMENT_CODE_AGENT_KEY` there and nowhere else — the
+ * separate `independent_review` job runs this same CLI with a DIFFERENT key
+ * (`SELF_IMPROVEMENT_REVIEW_AGENT_KEY`, see independent-review.ts) so the
+ * agent that writes the code is never the one that approves it. Never a
+ * workspace's UserLLMConnection or any per-user credential; see
+ * .github/workflows/self-improve-l2-1.yml for the per-job secret scoping.
  *
  * NOTE: not exercised end-to-end in this environment — no live GitHub
  * Actions run has been triggered. The exact `claude` CLI flags below may

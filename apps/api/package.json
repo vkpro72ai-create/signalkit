@@ -55,8 +55,10 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/pdf-parse": "^1.1.4",
     "@types/pdfkit": "^0.13.7",
+    "js-yaml": "^4.1.0",
     "pdf-parse": "^1.1.1",
     "tsx": "^4.19.2"
   }

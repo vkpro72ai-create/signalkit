@@ -1,39 +1,63 @@
 name: Self-Improve Pipeline (L2.1 — proposal only, stops at PR)
 
 # Triggered by SelfImproveDispatchService via the GitHub App installation
-# token. The client_payload carries ONLY identifiers — never a patch, a
+# token. client_payload carries ONLY {runId, baseSha} — never a patch, a
 # prompt, or a credential (see github-app-client.service.ts dispatch()).
 # The actual objective/constraints/acceptanceCriteria are fetched from the
-# SignalKit API by runId, authenticated with SELF_IMPROVEMENT_CI_TOKEN.
+# SignalKit API by runId, authenticated with SELF_IMPROVEMENT_CI_TOKEN —
+# held only by the jobs below that explicitly declare it.
 #
-# L2.1 scope: proposed -> generating -> testing -> review_pending ->
-# human_review_pending. No auto-merge. No deploy. No rollback. This workflow
-# does not touch scripts/deploy/*, docker-compose*, or any production
-# infrastructure — that is explicitly out of scope until Phase L2.3.
+# Four separate jobs, each a fresh GitHub-hosted runner, with strictly
+# isolated secrets — this is the load-bearing property of this workflow:
+#
+#   generate              — SELF_IMPROVEMENT_CODE_AGENT_KEY + CI token (task
+#                            fetch/report) + a job-scoped, auto-expiring
+#                            GITHUB_TOKEN to push the branch. Never the
+#                            reviewer key.
+#   deterministic_gates   — NO secrets at all. This is the ONLY job that
+#                            executes the generated repository's own code
+#                            (pnpm install/typecheck/test/build) — the
+#                            critical rule is that generated code executes
+#                            only in a job with nothing to steal.
+#   independent_review    — ONLY SELF_IMPROVEMENT_REVIEW_AGENT_KEY. Never the
+#                            writer key, never a push token, never the CI
+#                            token — it cannot report to the API itself or
+#                            push anything; it only reads a diff.
+#   publish_result_and_pr — Never runs generated code or checks it out. Reads
+#                            the (non-secret) results the other three jobs
+#                            produced as job outputs, reports them to the API
+#                            with the CI token, and opens the PR with a
+#                            job-scoped GITHUB_TOKEN. This is where the run
+#                            reaches human_review_pending — no merge, no
+#                            deploy, no rollback exists anywhere here.
+#
+# L2.1 does not touch scripts/deploy/*, docker-compose*, or any production
+# infrastructure — that stays out of scope until Phase L2.3.
 on:
   repository_dispatch:
     types: [self_improve_propose]
 
-permissions:
-  contents: write
-  pull-requests: write
-
-env:
-  SELF_IMPROVEMENT_RUN_ID: ${{ github.event.client_payload.runId }}
-  SELF_IMPROVEMENT_BASE_SHA: ${{ github.event.client_payload.baseSha }}
-  SELF_IMPROVEMENT_API_BASE_URL: ${{ secrets.SELF_IMPROVEMENT_API_BASE_URL }}
-  SELF_IMPROVEMENT_CI_TOKEN: ${{ secrets.SELF_IMPROVEMENT_CI_TOKEN }}
-  ANTHROPIC_API_KEY: ${{ secrets.SELF_IMPROVEMENT_ANTHROPIC_API_KEY }}
+# No workflow-level `env:` block — with four jobs holding different secrets,
+# a shared env block would leak all of them into every job. Every secret is
+# declared at the job level, only on the job that needs it.
+permissions: {}
 
 jobs:
-  propose:
-    # GitHub-hosted (not self-hosted) runner — the ephemeral, automatically
-    # torn-down job workspace IS the "isolated temporary workspace" the code
-    # agent operates in. Nothing bespoke is needed for teardown.
+  generate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # the only job that pushes a branch
+    outputs:
+      branch_name: ${{ steps.generate.outputs.branch_name }}
+      commit_sha: ${{ steps.generate.outputs.commit_sha }}
+    env:
+      SELF_IMPROVEMENT_RUN_ID: ${{ github.event.client_payload.runId }}
+      SELF_IMPROVEMENT_BASE_SHA: ${{ github.event.client_payload.baseSha }}
+      SELF_IMPROVEMENT_API_BASE_URL: ${{ secrets.SELF_IMPROVEMENT_API_BASE_URL }}
+      SELF_IMPROVEMENT_CI_TOKEN: ${{ secrets.SELF_IMPROVEMENT_CI_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.SELF_IMPROVEMENT_CODE_AGENT_KEY }}
     steps:
-      - name: Checkout at the recorded base SHA
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.client_payload.baseSha }}
           fetch-depth: 0
@@ -47,40 +71,138 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install (repo root, so all workspace packages resolve)
-        run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
 
-      - name: Generate the change (isolated CodeAgentExecutor — Claude Code)
+      - name: Generate the change (isolated CodeAgentExecutor — Claude Code) and push the branch
+        id: generate
         run: pnpm exec tsx scripts/self-improve/run-code-agent.ts
 
-      - name: Gate A — deterministic (typecheck/tests/build + migration classification)
-        id: gate_a
+  deterministic_gates:
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read-only — no push, no PR, nothing written to the repo
+    outputs:
+      tests_passed: ${{ steps.gates.outputs.tests_passed }}
+      migration_safety: ${{ steps.gates.outputs.migration_safety }}
+    env:
+      # The ONLY input this job receives: a public commit SHA from the
+      # dispatch payload, used to diff for new migration files. No API base
+      # URL, no CI token, no provider key, no deploy/SSH credential — nothing
+      # under `secrets.*` is referenced anywhere in this job.
+      SELF_IMPROVEMENT_BASE_SHA: ${{ github.event.client_payload.baseSha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.generate.outputs.commit_sha }}
+          persist-credentials: false # this job must not be able to push, even accidentally
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Gate A — install/typecheck/tests/build + migration classification (generated code executes ONLY here)
+        id: gates
         run: pnpm exec tsx scripts/self-improve/run-deterministic-gates.ts
 
-      - name: Gate B — independent review (separate context from generation)
-        if: success()
+  independent_review:
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read-only — reads the diff, never pushes, never PRs
+    outputs:
+      findings: ${{ steps.review.outputs.findings }}
+    env:
+      SELF_IMPROVEMENT_BASE_SHA: ${{ github.event.client_payload.baseSha }}
+      # The ONLY secret in this job. No writer key, no branch-push token
+      # (persist-credentials: false below), no CI token, no deploy credential.
+      ANTHROPIC_API_KEY: ${{ secrets.SELF_IMPROVEMENT_REVIEW_AGENT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.generate.outputs.commit_sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Gate B — independent review (separate context from generation, never executes the generated code's own scripts)
+        id: review
         run: pnpm exec tsx scripts/self-improve/independent-review.ts
 
-      - name: Open PR (only reached if both gates passed — job would already have failed otherwise)
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
+  publish_result_and_pr:
+    needs: [generate, deterministic_gates, independent_review]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # only to open the PR
+    env:
+      SELF_IMPROVEMENT_RUN_ID: ${{ github.event.client_payload.runId }}
+      SELF_IMPROVEMENT_API_BASE_URL: ${{ secrets.SELF_IMPROVEMENT_API_BASE_URL }}
+      SELF_IMPROVEMENT_CI_TOKEN: ${{ secrets.SELF_IMPROVEMENT_CI_TOKEN }}
+      GH_TOKEN: ${{ github.token }} # job-scoped, auto-expiring — only pull-requests:write
+    steps:
+      # No checkout — this job never reads or executes generated repository
+      # code. `gh pr create --repo` and the API calls below work without a
+      # local working copy.
+
+      - name: Report a crashed upstream job, if any
+        if: needs.generate.result != 'success' || needs.deterministic_gates.result != 'success' || needs.independent_review.result != 'success'
         run: |
+          STAGE="pipeline"
+          if [ "${{ needs.generate.result }}" != "success" ]; then STAGE="generating"; fi
+          if [ "${{ needs.deterministic_gates.result }}" != "success" ]; then STAGE="testing"; fi
+          if [ "${{ needs.independent_review.result }}" != "success" ]; then STAGE="review"; fi
+          curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/fail" \
+            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" -H "Content-Type: application/json" \
+            -d "{\"stage\": \"$STAGE\", \"reason\": \"A pipeline job did not complete successfully — see workflow run logs.\"}"
+
+      - name: Report the deterministic gate result
+        if: needs.generate.result == 'success' && needs.deterministic_gates.result == 'success' && needs.independent_review.result == 'success'
+        run: |
+          curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/test-result" \
+            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" -H "Content-Type: application/json" \
+            -d "{\"testsPassed\": ${{ needs.deterministic_gates.outputs.tests_passed }}, \"migrationSafety\": \"${{ needs.deterministic_gates.outputs.migration_safety }}\"}"
+
+      - name: Report the review result, then open the PR only if both gates are clean
+        if: needs.generate.result == 'success' && needs.deterministic_gates.result == 'success' && needs.independent_review.result == 'success' && needs.deterministic_gates.outputs.tests_passed == 'true'
+        env:
+          FINDINGS_JSON: ${{ needs.independent_review.outputs.findings }}
+          BRANCH_NAME: ${{ needs.generate.outputs.branch_name }}
+        run: |
+          curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/review" \
+            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" -H "Content-Type: application/json" \
+            -d "{\"findings\": ${FINDINGS_JSON}}"
+
+          HAS_CONFIRMED=$(echo "$FINDINGS_JSON" | jq '[.[] | select(.verdict == "CONFIRMED")] | length > 0')
+          if [ "$HAS_CONFIRMED" = "true" ]; then
+            echo "CONFIRMED finding(s) present — the run is now failed. Stopping before PR creation."
+            exit 0
+          fi
+
           PR_URL=$(gh pr create \
-            --title "Self-improve: $(git log -1 --format=%s)" \
+            --repo "${{ github.repository }}" \
+            --title "Self-improve: ${SELF_IMPROVEMENT_RUN_ID}" \
             --body "Automated proposal — SelfImprovementRun ${SELF_IMPROVEMENT_RUN_ID}. Stops here for human review; nothing merges or deploys automatically." \
             --base main \
-            --head "$(git rev-parse --abbrev-ref HEAD)")
-          PR_NUMBER=$(gh pr view "$PR_URL" --json number -q .number)
+            --head "$BRANCH_NAME")
+          PR_NUMBER=$(gh pr view "$PR_URL" --repo "${{ github.repository }}" --json number -q .number)
           curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/pull-request" \
-            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" \
-            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" -H "Content-Type: application/json" \
             -d "{\"prNumber\": ${PR_NUMBER}, \"prUrl\": \"${PR_URL}\"}"
-
-      - name: Report failure
-        if: failure()
-        run: |
-          curl -sf -X PATCH "${SELF_IMPROVEMENT_API_BASE_URL}/self-improve/runs/${SELF_IMPROVEMENT_RUN_ID}/fail" \
-            -H "Authorization: Bearer ${SELF_IMPROVEMENT_CI_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"stage": "pipeline", "reason": "See workflow run logs for the failing step."}' || true

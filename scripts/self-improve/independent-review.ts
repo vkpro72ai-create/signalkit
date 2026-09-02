@@ -1,21 +1,26 @@
 /**
- * Gate B: independent review. A SEPARATE `claude -p` invocation from the one
- * that generated the change — no shared context, no memory of the
- * generation step's reasoning, only the actual git diff and repository. This
- * is what makes it independent: the agent that wrote the code is never the
- * only one that approves it.
+ * independent_review job ONLY. A SEPARATE `claude -p` invocation from the one
+ * that generated the change (different job, different runner, no shared
+ * context) — no memory of the generation step's reasoning, only the actual
+ * git diff. This is what makes it independent: the agent that wrote the code
+ * is never the only one that approves it.
  *
- * Any CONFIRMED finding blocks (recordReview() moves the run to `failed`).
- * PLAUSIBLE findings never block in L2.1 (there is no auto-merge to gate)
- * but are always recorded for human audit, including ones flagged
- * `requiresHumanReview` (security/auth/tenant-isolation/migration/deployment)
- * — those must never be silently treated as safe just because they're not
- * CONFIRMED.
+ * Holds ONLY SELF_IMPROVEMENT_REVIEW_AGENT_KEY (mapped to ANTHROPIC_API_KEY
+ * by the workflow) — no writer key, no branch-push token, no CI callback
+ * token, no deploy credential. It cannot report to the API itself; it writes
+ * findings to the job output for publish_result_and_pr to report.
+ *
+ * Any CONFIRMED finding is reported and blocks progression (handled by
+ * publish_result_and_pr, not here). PLAUSIBLE findings — including ones
+ * flagged `requiresHumanReview` for security/auth/tenant-isolation/
+ * migration/deployment — are always included in the output for human audit,
+ * never silently dropped.
  *
  * Run via (from repo root): pnpm exec tsx scripts/self-improve/independent-review.ts
  */
 import { execFileSync } from 'node:child_process';
 import type { ReviewFinding } from '@signalkit/shared';
+import { setGithubOutput } from './github-actions-output.js';
 
 function requireEnv(key: string): string {
   const value = process.env[key];
@@ -33,10 +38,7 @@ even at PLAUSIBLE confidence — those must never be treated as safe by default.
 are no findings. Output nothing else — no prose, no markdown fences.`;
 
 async function main(): Promise<void> {
-  const runId = requireEnv('SELF_IMPROVEMENT_RUN_ID');
   const baseSha = requireEnv('SELF_IMPROVEMENT_BASE_SHA');
-  const base = requireEnv('SELF_IMPROVEMENT_API_BASE_URL');
-  const token = requireEnv('SELF_IMPROVEMENT_CI_TOKEN');
 
   const diff = execFileSync('git', ['diff', baseSha, 'HEAD']).toString('utf8');
   const prompt = `${REVIEW_PROMPT}\n\n--- DIFF ---\n${diff}`;
@@ -64,17 +66,11 @@ async function main(): Promise<void> {
     ];
   }
 
-  await fetch(`${base}/self-improve/runs/${runId}/review`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ findings }),
-  });
-
+  setGithubOutput('findings', JSON.stringify(findings));
   const confirmed = findings.filter((f) => f.verdict === 'CONFIRMED');
   console.log(`Review complete: ${findings.length} finding(s), ${confirmed.length} CONFIRMED`);
-  if (confirmed.length > 0) {
-    process.exit(1);
-  }
+  // Deliberately exits 0 regardless of verdict: CONFIRMED findings are a DATA
+  // result for publish_result_and_pr to act on, not a crash of this job.
 }
 
 main().catch((error: unknown) => {

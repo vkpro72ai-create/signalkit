@@ -1,14 +1,20 @@
 /**
- * Orchestration entrypoint the GitHub Actions job runs after checking out
- * `baseSha` in its own (isolated, ephemeral) workspace. Fetches the bounded
- * task from the SignalKit API by `runId` (never from the repository_dispatch
- * payload, which carries only {runId, baseSha}), runs the configured
- * CodeAgentExecutor, pushes the resulting branch, and reports the result
- * back. Run via: `tsx scripts/self-improve/run-code-agent.ts`.
+ * generate job only. Fetches the bounded task from the SignalKit API by
+ * `runId` (never from the repository_dispatch payload, which carries only
+ * {runId, baseSha}), runs the configured CodeAgentExecutor, pushes the
+ * resulting branch, and reports {branchName, commitSha} back — both as a job
+ * output (for deterministic_gates/independent_review to check out the exact
+ * generatedCommitSha, since neither of those jobs holds a CI token to ask the
+ * API) and to the API itself (this job is the one place SELF_IMPROVEMENT_CI_
+ * TOKEN and SELF_IMPROVEMENT_CODE_AGENT_KEY are both present — deliberately;
+ * no other job has both, or either, of these).
+ *
+ * Run via (from repo root): pnpm exec tsx scripts/self-improve/run-code-agent.ts
  */
 import { execFileSync } from 'node:child_process';
 import { ClaudeCodeExecutor } from './claude-code-executor.js';
 import type { CodeAgentExecutor } from './code-agent-executor.js';
+import { setGithubOutput } from './github-actions-output.js';
 
 function requireEnv(key: string): string {
   const value = process.env[key];
@@ -56,6 +62,9 @@ async function main(): Promise<void> {
     method: 'PATCH',
     body: JSON.stringify({ branchName: result.branchName, commitSha: result.commitSha }),
   });
+
+  setGithubOutput('branch_name', result.branchName);
+  setGithubOutput('commit_sha', result.commitSha);
 
   console.log(`Generated ${result.branchName} @ ${result.commitSha} (${result.filesChanged.length} files changed)`);
 }
