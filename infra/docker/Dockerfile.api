@@ -16,8 +16,8 @@ COPY . .
 
 RUN pnpm install --frozen-lockfile --prod=false \
  && DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder pnpm --filter @signalkit/api exec prisma generate \
- && pnpm --filter @signalkit/config build \
- && pnpm --filter @signalkit/shared build \
+ && pnpm exec tsc -b \
+
  && pnpm --filter @signalkit/api build
 
 ENV NODE_ENV=production
