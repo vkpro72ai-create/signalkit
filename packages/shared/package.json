@@ -1,21 +1,22 @@
 {
-  "name": "@signalkit/shared",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "clean": "rimraf dist *.tsbuildinfo"
-  }
+    "name":  "@signalkit/shared",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "module":  "dist/index.js",
+    "types":  "dist/index.d.ts",
+    "exports":  {
+                    ".":  {
+                              "types":  "./dist/index.d.ts",
+                              "import":  "./dist/index.js",
+                              "require":  "./dist-cjs/index.js"
+                          }
+                },
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json \u0026\u0026 tsc -p tsconfig.cjs.json \u0026\u0026 node -e \"require(\u0027fs\u0027).writeFileSync(\u0027dist-cjs/package.json\u0027,\u0027{\\\"type\\\":\\\"commonjs\\\"}\u0027)\"",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit",
+                    "test":  "vitest run",
+                    "clean":  "rimraf dist *.tsbuildinfo"
+                },
+    "main":  "./dist-cjs/index.js"
 }
