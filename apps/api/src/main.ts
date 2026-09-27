@@ -35,9 +35,12 @@ async function bootstrap(): Promise<void> {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
 
+  // Bind all interfaces explicitly so the API is reachable from outside its
+  // container regardless of how the runtime resolves the default host.
   const port = intEnv('PORT', 4000);
-  await app.listen(port);
-  console.log(`SignalKit API listening on :${port}`);
+  const host = optionalEnv('HOST', '0.0.0.0');
+  await app.listen(port, host);
+  console.log(`SignalKit API listening on ${host}:${port}`);
 }
 
 void bootstrap();
