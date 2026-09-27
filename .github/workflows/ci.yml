@@ -31,3 +31,8 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+
+
+      - name: Build SignalKit API container
+        run: docker build -f infra/docker/Dockerfile.api -t signalkit-api:ci .
