@@ -54,5 +54,13 @@ export default [
       '@typescript-eslint/consistent-type-imports': 'off',
     },
   },
+  {
+    // Plain Node scripts (build/runtime checks) run untranspiled under CommonJS.
+    files: ['**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { console: 'readonly', process: 'readonly', require: 'readonly', module: 'writable' },
+    },
+  },
   prettier,
 ];

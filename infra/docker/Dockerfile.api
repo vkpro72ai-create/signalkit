@@ -1,0 +1,115 @@
+# ── SignalKit API — production image ──────────────────────────────────────────
+#
+# Build from the repository root (the build context is the monorepo root):
+#
+#   docker build -f infra/docker/Dockerfile.api -t signalkit-api .
+#   docker run --rm -p 4000:4000 \
+#     -e DATABASE_URL=... -e REDIS_URL=... -e JWT_SECRET=... \
+#     -e ENCRYPTION_KEY_FOR_LLM_KEYS=... -e CORS_ORIGINS=... \
+#     signalkit-api
+#
+# Stages:
+#   base    — node + pnpm (+ openssl for the Prisma engines)
+#   deps    — install workspace deps from the frozen lockfile (cached layer)
+#   builder — `pnpm --filter @signalkit/api build`: builds the workspace
+#             packages the API depends on, generates the Prisma client, runs
+#             `nest build`, verifies runtime resolution; then `pnpm deploy
+#             --prod` produces a self-contained /deploy/api
+#   runner  — non-root runtime: prod deps + compiled output + Prisma only
+#
+# Module format: the API compiles to CommonJS and the @signalkit/* packages are
+# ESM. The API loads them through Node's native require(esm), so the runtime is
+# pinned to Node >= 22.12 (see "engines" in apps/api/package.json).
+#
+# Migrations (`prisma migrate deploy`) are not run by default. Either run them
+# as a separate release step with the same image:
+#   docker run --rm -e DATABASE_URL=... signalkit-api \
+#     node_modules/.bin/prisma migrate deploy --schema ./prisma/schema.prisma
+# or set RUN_MIGRATIONS=true to run them before the API starts.
+#
+# No secrets are baked into the image — all configuration is runtime env.
+
+ARG NODE_VERSION=22
+ARG PNPM_VERSION=10.32.1
+
+# ── base ──────────────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS base
+ARG PNPM_VERSION
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN apk add --no-cache openssl && \
+    corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+# ── deps ──────────────────────────────────────────────────────────────────────
+FROM base AS deps
+WORKDIR /app
+
+# Manifests only, so this layer is reused until dependencies change.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY apps/api/package.json          apps/api/package.json
+COPY packages/config/package.json   packages/config/package.json
+COPY packages/shared/package.json   packages/shared/package.json
+COPY packages/evidence/package.json packages/evidence/package.json
+COPY packages/exports/package.json  packages/exports/package.json
+COPY packages/i18n/package.json     packages/i18n/package.json
+COPY packages/llm/package.json      packages/llm/package.json
+COPY packages/ui/package.json       packages/ui/package.json
+
+RUN pnpm install --frozen-lockfile
+
+# ── builder ───────────────────────────────────────────────────────────────────
+FROM deps AS builder
+WORKDIR /app
+
+# Packages extend ../../tsconfig.base.json. node_modules/dist are excluded by
+# .dockerignore, so these copies merge with the deps-stage node_modules.
+COPY tsconfig.base.json tsconfig.json ./
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+
+# Same command as from a clean checkout (see apps/api/package.json "build").
+RUN pnpm --filter @signalkit/api build
+
+# pnpm v10 requires --legacy for non-injected workspace deploys.
+RUN pnpm --filter @signalkit/api deploy --prod --legacy /deploy/api
+
+# pnpm deploy follows the package graph only; the Prisma schema + migrations are
+# needed at runtime for `prisma migrate deploy`.
+RUN cp -r apps/api/prisma /deploy/api/prisma
+
+# pnpm deploy builds a fresh node_modules without running postinstall scripts,
+# so the generated client (.prisma/client) is missing there. Generate in place.
+RUN cd /deploy/api && node_modules/.bin/prisma generate --schema ./prisma/schema.prisma
+
+# Fail the build if the deployed tree cannot load its workspace packages or
+# the Prisma client — i.e. exactly what `node dist/main.js` will require.
+RUN cd /deploy/api && node scripts/verify-runtime-deps.cjs && \
+    node -e "require('@prisma/client')"
+
+# ── runner ────────────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS runner
+WORKDIR /app
+
+# openssl: Prisma engines. tini: PID 1 that forwards SIGTERM to node.
+RUN apk add --no-cache openssl tini && \
+    addgroup --system --gid 1001 signalkit && \
+    adduser --system --uid 1001 --ingroup signalkit signalkit
+
+COPY --from=builder --chown=signalkit:signalkit /deploy/api ./
+COPY infra/docker/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/api-entrypoint.sh
+
+USER signalkit
+
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=4000
+
+EXPOSE 4000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:4000/health >/dev/null 2>&1 || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/api-entrypoint.sh"]
+CMD ["node", "dist/main.js"]
