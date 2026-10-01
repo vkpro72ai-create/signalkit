@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { DEFAULT_LOCALE, isRtl } from '@signalkit/i18n';
 
 export const metadata = {
@@ -7,7 +6,7 @@ export const metadata = {
     'Evidence-backed market opportunity discovery and build-ready Product Document Packs.',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = DEFAULT_LOCALE;
   return (
     <html lang={locale} dir={isRtl(locale) ? 'rtl' : 'ltr'}>
