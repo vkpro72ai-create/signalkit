@@ -25,6 +25,9 @@ Hard rules for every contributor — human or AI agent — working in this repos
 - **All AI calls go through the `LLMRouter`** (`@signalkit/llm`). Feature modules must never call a provider SDK directly.
 - Mocking is allowed **only** in tests, local demo/seed data, and provider simulation when credentials are absent. Even without external keys, implement the real integration contract, UI, config, error states and tests.
 - Secrets are never committed, never logged, never returned to the frontend (masked display only).
+- **Recurring work has a data budget.** Cron/reconcile/polling/queue scans must filter in the database, use explicit column projections, exclude heavy payload/blob/result/error fields from summary reads, and enforce a hard limit/cursor. Never fetch unbounded history and filter it in application code.
+- **Heavy history needs retention.** Large payload/result/error bodies need an explicit retention/archive policy; list/reconcile paths read summaries only and fetch detail by id.
+- **Scheduled-query regressions need tests.** Critical recurring paths must have a test proving server-side filters, bounded reads and omission of heavy fields.
 
 ## After every session
 
