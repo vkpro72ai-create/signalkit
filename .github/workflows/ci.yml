@@ -93,3 +93,36 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs signalkit-api || true
+
+
+  # Builds the production web image exactly as Rundea deploys it and proves
+  # the server answers over HTTP. This protects the real deployment path.
+  web-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build production web image
+        run: |
+          docker build -f infra/docker/Dockerfile.web \
+            --build-arg NEXT_PUBLIC_API_URL=https://api.example.test \
+            --build-arg NEXT_PUBLIC_DEFAULT_LOCALE=en \
+            -t signalkit-web:ci .
+
+      - name: Start web container
+        run: docker run -d --name signalkit-web -p 3000:3000 signalkit-web:ci
+
+      - name: GET /
+        run: |
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS http://127.0.0.1:3000/); then
+              echo "$body" | grep -q 'SignalKit' && exit 0
+            fi
+            sleep 2
+          done
+          echo "Web did not become healthy"
+          exit 1
+
+      - name: Container logs
+        if: always()
+        run: docker logs signalkit-web || true
