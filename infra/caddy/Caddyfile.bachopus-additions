@@ -1,0 +1,77 @@
+# ── Append these blocks to /etc/caddy/Caddyfile on the server ────────────────
+# Backup first: cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%Y%m%d%H%M%S)
+# Validate: caddy validate --config /etc/caddy/Caddyfile
+# Reload: systemctl reload caddy
+
+# SignalKit Web
+signalkit.sys.bachopus.com {
+    encode gzip zstd
+
+    header {
+        X-Content-Type-Options    "nosniff"
+        X-Frame-Options           "SAMEORIGIN"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        Permissions-Policy        "camera=(), microphone=(), geolocation=()"
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        -Server
+    }
+
+    request_body {
+        max_size 50MB
+    }
+
+    reverse_proxy 127.0.0.1:3000 {
+        # "/" 307-redirects to "/signalkit" (the app's base route); Caddy's
+        # active health check only accepts 2xx by default, so probe a path
+        # that resolves without a redirect.
+        health_uri      /signalkit
+        health_interval 30s
+        health_timeout  5s
+    }
+
+    log {
+        output file /var/log/caddy/signalkit-web.access.log {
+            roll_size    100mb
+            roll_keep    5
+            roll_keep_for 168h
+        }
+        format json
+        level  INFO
+    }
+}
+
+# SignalKit API — permanent domain (replaces sslip.io)
+api.signalkit.sys.bachopus.com {
+    encode gzip zstd
+
+    header {
+        X-Content-Type-Options    "nosniff"
+        X-Frame-Options           "DENY"
+        Referrer-Policy           "no-referrer"
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        -Server
+    }
+
+    request_body {
+        max_size 50MB
+    }
+
+    reverse_proxy 127.0.0.1:4000 {
+        health_uri      /health
+        health_interval 30s
+        health_timeout  5s
+        header_up X-Real-IP        {remote_host}
+        header_up X-Forwarded-For  {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    log {
+        output file /var/log/caddy/signalkit-api-bachopus.access.log {
+            roll_size    100mb
+            roll_keep    5
+            roll_keep_for 168h
+        }
+        format json
+        level  INFO
+    }
+}

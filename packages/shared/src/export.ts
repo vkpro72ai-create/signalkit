@@ -68,17 +68,64 @@ export interface ExportArtifact extends Timestamps {
   checksum: string;
 }
 
-/** Manifest describing the contents of an export bundle. */
+export interface ExportManifestFile {
+  path: string;
+  docType: string | null;
+  bytes: number;
+}
+
+export interface ExportManifestSummary {
+  count: number;
+  ids: string[];
+}
+
+export interface WhiteLabelSnapshot {
+  brandName: string | null;
+  logoUrl: string | null;
+  preparedBy: string | null;
+  clientName: string | null;
+  footerText: string | null;
+  customDisclaimer: string | null;
+  hideSignalKitBrand: boolean;
+}
+
+/** Full manifest written into every export bundle. */
 export interface ExportManifest {
+  schemaVersion: string;
+  exportId: string | null;
+  workspaceId: string;
+  projectId: string | null;
   packId: Id;
+  packVersion: number;
   exportType: ExportType;
-  language: LocaleCode;
+  outputLanguage: LocaleCode;
+  createdBy: string | null;
   generatedAt: string;
-  files: { path: string; docType: string | null; bytes: number }[];
+  /** All document types included in this export. */
+  documentList: string[];
+  includedDocuments: string[];
+  excludedDocuments: string[];
+  qualityGateSummary: {
+    status: string;
+    passedCount: number;
+    warnCount: number;
+    failCount: number;
+  } | null;
+  evidenceSummary: ExportManifestSummary;
+  assumptionsSummary: ExportManifestSummary;
+  constraintsSummary: ExportManifestSummary;
+  unresolvedQuestionsSummary: ExportManifestSummary;
+  sourceRefs: { id: string; url: string | null; title: string | null; adapter: string }[];
+  roleBriefType: RoleBriefType | null;
+  whiteLabelSettings: WhiteLabelSnapshot | null;
+  fileList: ExportManifestFile[];
+  checksum: string | null;
+  /** Legacy compatibility fields */
+  language: LocaleCode;
+  files: ExportManifestFile[];
   documentCount: number;
   evidenceCount: number;
   claimCount: number;
-  schemaVersion: string;
 }
 
 export interface ShareLink extends Timestamps, WorkspaceOwned {

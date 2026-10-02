@@ -76,6 +76,78 @@ export function hasUnresolvedContradiction(contradictions: Contradiction[]): boo
   return contradictions.some((c) => !c.resolved);
 }
 
+/**
+ * Grounding status — the trust contract every claim must satisfy. A claim is
+ * either backed by evidence, explicitly held as an assumption, or `ungrounded`
+ * (which is forbidden: the platform never asserts an ungrounded claim).
+ */
+export type ClaimGroundingStatus = 'evidence_backed' | 'assumption_only' | 'ungrounded';
+
+export function claimGroundingStatus(input: {
+  supportingEvidenceCount: number;
+  assumptionCount: number;
+}): ClaimGroundingStatus {
+  if (input.supportingEvidenceCount > 0) return 'evidence_backed';
+  if (input.assumptionCount > 0) return 'assumption_only';
+  return 'ungrounded';
+}
+
+/** Guard: is this claim allowed to exist (evidence or assumption present)? */
+export function isClaimGrounded(input: {
+  supportingEvidenceCount: number;
+  assumptionCount: number;
+}): boolean {
+  return claimGroundingStatus(input) !== 'ungrounded';
+}
+
+export interface ClaimAssessment {
+  grounding: ClaimGroundingStatus;
+  confidence: Confidence;
+  /** True when the claim should be surfaced as weak in the UI. */
+  weak: boolean;
+}
+
+/**
+ * Full assessment of a claim from its evidence/assumptions/contradictions.
+ * Assumption-only claims are capped at low confidence; open contradictions and
+ * thin evidence mark a claim "weak" so the UI can show "what is weak?".
+ */
+export function assessClaim(input: {
+  supporting: EvidenceItem[];
+  contradicting: EvidenceItem[];
+  assumptionCount: number;
+  hasOpenContradiction: boolean;
+}): ClaimAssessment {
+  const grounding = claimGroundingStatus({
+    supportingEvidenceCount: input.supporting.length,
+    assumptionCount: input.assumptionCount,
+  });
+
+  let confidence: Confidence;
+  if (grounding === 'assumption_only') {
+    confidence = makeConfidence(
+      input.hasOpenContradiction ? 0.12 : 0.2,
+      'Held as an assumption; not yet supported by evidence.',
+    );
+  } else if (grounding === 'ungrounded') {
+    confidence = makeConfidence(0.05, 'Ungrounded — not allowed to be asserted.');
+  } else {
+    confidence = deriveClaimConfidence({
+      supporting: input.supporting,
+      contradicting: input.contradicting,
+      hasOpenContradiction: input.hasOpenContradiction,
+    });
+  }
+
+  const weak =
+    grounding !== 'evidence_backed' ||
+    input.hasOpenContradiction ||
+    input.supporting.length < 2 ||
+    confidence.value < 0.5;
+
+  return { grounding, confidence, weak };
+}
+
 function clamp01(value: number): number {
   if (Number.isNaN(value)) return 0;
   return Math.min(1, Math.max(0, value));

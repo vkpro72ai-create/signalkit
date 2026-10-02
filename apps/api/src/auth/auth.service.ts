@@ -16,7 +16,7 @@ export class AuthService {
     private readonly jwt: JwtService,
   ) {}
 
-  /** Register a new user with a default UserSettings row. */
+  /** Register a new user, create default settings and first workspace. */
   async register(dto: RegisterDto): Promise<{ accessToken: string; userId: string }> {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) {
@@ -30,6 +30,21 @@ export class AuthService {
         passwordHash,
         displayName: dto.displayName ?? null,
         settings: { create: {} },
+      },
+    });
+
+    // Auto-provision first workspace so mobile is self-starting (no "go to web" dead end)
+    const name = 'My Product Lab';
+    const slug = `lab-${user.id.slice(-8)}`;
+    await this.prisma.workspace.create({
+      data: {
+        name,
+        slug,
+        ownerId: user.id,
+        members: { create: { userId: user.id, role: 'owner', status: 'active' } },
+        settings: { create: {} },
+        llmSettings: { create: {} },
+        billingAccount: { create: { plan: 'free' } },
       },
     });
 

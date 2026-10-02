@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { findMissingSecrets, REQUIRED_API_SECRETS, intEnv, optionalEnv } from '@signalkit/config';
 
@@ -21,6 +22,9 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  // Only used by the /oauth/* consent-flow mini-login (short-lived, path-scoped
+  // cookie) — the rest of the API stays bearer-token auth, no session cookies.
+  app.use(cookieParser());
 
   const corsOrigins = optionalEnv('CORS_ORIGINS', '*');
   app.enableCors({ origin: corsOrigins === '*' ? true : corsOrigins.split(',') });
@@ -35,12 +39,9 @@ async function bootstrap(): Promise<void> {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
 
-  // Bind all interfaces explicitly so the API is reachable from outside its
-  // container regardless of how the runtime resolves the default host.
   const port = intEnv('PORT', 4000);
-  const host = optionalEnv('HOST', '0.0.0.0');
-  await app.listen(port, host);
-  console.log(`SignalKit API listening on ${host}:${port}`);
+  await app.listen(port);
+  console.log(`SignalKit API listening on :${port}`);
 }
 
 void bootstrap();

@@ -14,6 +14,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +106,48 @@ enum ExportStatus {
   expired
 }
 
+enum PackGenerationJobStatus {
+  queued
+  running
+  partially_ready
+  completed
+  failed
+  cancelled
+}
+
+enum PackGenerationStepStatus {
+  pending
+  running
+  completed
+  repairing
+  failed
+  skipped
+}
+
+enum PackGenerationMode {
+  standard
+  strong_model
+}
+
+// Founder's personal decision on an opportunity (separate from AI scoring).
+// Prisma enum (not a free string) so a typo can never reach the DB.
+enum FounderDecision {
+  undecided
+  explore
+  generate_pack
+  postpone
+  reject
+  ready_to_commit
+}
+
+// Founder-selected ambition for a promoted implementation project. Ambition
+// is a founder framing choice — it never gates buildReady.
+enum AmbitionMode {
+  cash_flow_business
+  venture_scale
+  unicorn_ambition
+}
+
 enum RiskLevel {
   low
   medium
@@ -146,6 +189,11 @@ model User {
   auditEvents     AuditLog[]        @relation("AuditActor")
   createdProjects Project[]         @relation("ProjectCreator")
   llmConnections  UserLLMConnection[]
+  founderVerdicts OpportunityFounderVerdict[]
+  committedProjects ImplementationProject[] @relation("ImplementationProjectCreator")
+  mcpClientSessions      McpClientSession[]
+  mcpAuthorizationCodes  McpAuthorizationCode[]
+  mcpRefreshTokens       McpRefreshToken[]
 }
 
 model Workspace {
@@ -165,6 +213,9 @@ model Workspace {
   llmConnections   UserLLMConnection[]
   billingAccount   BillingAccount?
   apiKeys          APIKey[]
+  mcpClientSessions      McpClientSession[]
+  mcpAuthorizationCodes  McpAuthorizationCode[]
+  mcpRefreshTokens       McpRefreshToken[]
 }
 
 model WorkspaceMember {
@@ -222,6 +273,10 @@ model WorkspaceSettings {
   clientName          String?
   preparedBy          String?
   agencyContact       String?
+  // Display name for the AI engine on customer-facing surfaces (dashboard,
+  // side panels) instead of the raw provider/model id. Null falls back to
+  // a translated default ("SignalKit AI") chosen in application code.
+  aiEngineName        String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -272,6 +327,10 @@ model Region {
 // Projects & search context
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// DEPRECATED name: this model is a Research / Opportunity-Search context
+/// (market scope + discovery goal + its opportunities), NOT an implementation
+/// project. Real, founder-committed projects live in `ImplementationProject`.
+/// Kept under this name for backward compatibility — do not repurpose its rows.
 model Project {
   id                  String        @id @default(cuid())
   workspaceId         String
@@ -297,6 +356,7 @@ model Project {
   sourceRefs     SourceReference[]
   signals        TrendSignal[]
   niches         Niche[]
+  implementationProjects ImplementationProject[] @relation("ResearchProject")
 
   @@index([workspaceId])
 }
@@ -430,13 +490,22 @@ model Niche {
   recommendedProductFormat String    @default("")
   riskLevel                RiskLevel @default(medium)
   language                 String    @default("en")
+  // 'discovered' (default, via discover()) | 'founder_idea' (via createFromIdea()).
+  intakeMode               String    @default("discovered")
+  // Verbatim founder-supplied idea text when intakeMode is 'founder_idea'; kept
+  // separate from the LLM-derived oneLiner/problem so Pack generation can use
+  // the founder's own words as founderRequest.
+  founderIdeaText          String    @default("")
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
-  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scores     NicheScore[]
-  claims     Claim[]
-  packs      ProductDocumentPack[]
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scores         NicheScore[]
+  claims         Claim[]
+  packs          ProductDocumentPack[]
+  ventureTheses  VentureThesis[]
+  founderVerdicts        OpportunityFounderVerdict[]
+  implementationProjects ImplementationProject[]
 
   @@index([projectId])
 }
@@ -470,12 +539,103 @@ model NicheScore {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Breakout Opportunity Engine — Venture Thesis + Venture Scale Score
+// (feature module: Session 14). Additive, backwards-compatible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VentureThesis {
+  id                      String   @id @default(cuid())
+  workspaceId             String
+  nicheId                 String
+  projectId               String
+  // Full structured VentureThesis contract (shared type).
+  thesis                  Json     @default("{}")
+  // Venture Scale Score — SEPARATE from opportunity & confidence.
+  ventureScaleScore       Float    @default(0)
+  ventureScaleConfidence  Float    @default(0)
+  ventureScaleLevel       String   @default("low")
+  ventureScaleBreakdown   Json     @default("[]")
+  whatMustBeTrue          Json     @default("[]")
+  version                 Int      @default(1)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  niche Niche @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+
+  @@index([nicheId])
+  @@index([projectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Human decision layer — founder verdict + promoted implementation projects
+// (additive, backwards-compatible). Kept SEPARATE from AI scoring: a high AI
+// score never auto-promotes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A founder's personal, per-user verdict on an opportunity (Niche). One row
+/// per (niche, user) so multi-founder workspaces each keep their own rating;
+/// promotion uses the committing founder's own verdict.
+model OpportunityFounderVerdict {
+  id          String          @id @default(cuid())
+  workspaceId String
+  nicheId     String
+  userId      String
+  rating      Int?            // 1–5 personal rating (nullable = not yet rated)
+  comment     String          @default("")
+  decision    FounderDecision @default(undecided)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  niche Niche @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([nicheId, userId])
+  @@index([nicheId])
+  @@index([workspaceId])
+}
+
+/// A real, founder-committed implementation project. Created ONLY via the
+/// explicit promotion gate (Build-Ready pack + founder commitment) — never
+/// automatically. Snapshots the decision inputs at commitment time.
+model ImplementationProject {
+  id                     String       @id @default(cuid())
+  workspaceId            String
+  researchProjectId      String       // the source Research/Search-context Project
+  nicheId                String       // the promoted opportunity
+  packId                 String       // the selected Build-Ready Product Pack
+  founderRatingSnapshot  Int?
+  founderCommentSnapshot String       @default("")
+  ambitionMode           AmbitionMode
+  buildReadySnapshot     Boolean      @default(false)
+  ventureReadySnapshot   Boolean      @default(false)
+  unicornPotentialSnapshot Boolean    @default(false)
+  // Top risks / kill-reasons frozen from the VentureThesis at promotion time.
+  topRisksSnapshot       Json         @default("[]")
+  committedAt            DateTime     @default(now())
+  status                 String       @default("active") // active | paused | archived
+  createdById            String
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  researchProject Project             @relation("ResearchProject", fields: [researchProjectId], references: [id], onDelete: Cascade)
+  niche           Niche               @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  pack            ProductDocumentPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  createdBy       User                @relation("ImplementationProjectCreator", fields: [createdById], references: [id])
+
+  @@unique([packId]) // one implementation project per pack — re-promotion returns the existing one
+  @@index([workspaceId])
+  @@index([nicheId])
+  @@index([researchProjectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Evidence graph  (feature module: Session 8)
 // ─────────────────────────────────────────────────────────────────────────────
 
 model EvidenceItem {
   id               String   @id @default(cuid())
   workspaceId      String
+  projectId        String?
   sourceRefId      String
   evidenceType     String
   originalText     String
@@ -496,11 +656,13 @@ model EvidenceItem {
   links     ClaimEvidenceLink[]
 
   @@index([sourceRefId])
+  @@index([projectId])
 }
 
 model Claim {
   id              String   @id @default(cuid())
   workspaceId     String
+  projectId       String?
   nicheId         String?
   text            String
   type            String
@@ -518,6 +680,7 @@ model Claim {
   contradictions Contradiction[]
 
   @@index([nicheId])
+  @@index([projectId])
 }
 
 model ClaimEvidenceLink {
@@ -551,6 +714,8 @@ model Contradiction {
 model Assumption {
   id               String   @id @default(cuid())
   workspaceId      String
+  projectId        String?
+  claimId          String?
   text             String
   language         String   @default("en")
   rationale        String   @default("")
@@ -558,25 +723,38 @@ model Assumption {
   impactIfWrong    String   @default("medium")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([claimId])
 }
 
 model Constraint {
-  id        String   @id @default(cuid())
-  text      String
-  category  String   @default("technical")
-  language  String   @default("en")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  workspaceId String?
+  projectId   String?
+  text        String
+  category    String   @default("technical")
+  language    String   @default("en")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
 }
 
 model UnresolvedQuestion {
-  id        String   @id @default(cuid())
-  text      String
-  language  String   @default("en")
-  priority  String   @default("medium")
-  status    String   @default("open")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  workspaceId String?
+  projectId   String?
+  claimId     String?
+  text        String
+  language    String   @default("en")
+  priority    String   @default("medium")
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([claimId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -601,6 +779,7 @@ model ProductDocumentPack {
 
   niche     Niche                 @relation(fields: [nicheId], references: [id], onDelete: Cascade)
   documents ProductPackDocument[]
+  implementationProject ImplementationProject?
 
   @@index([nicheId])
 }
@@ -616,6 +795,9 @@ model ProductPackDocument {
   confidenceValue   Float          @default(0)
   confidenceLevel   String         @default("low")
   qualityGateStatus String         @default("not_run")
+  // Per-document metadata contract: market, packDepth, verticalTemplate,
+  // sourceRefIds, claimIds, assumptionIds, constraintIds, unresolvedQuestionIds.
+  metadata          Json           @default("{}")
   version           Int            @default(1)
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -626,18 +808,190 @@ model ProductPackDocument {
   @@index([packId])
 }
 
+model QualityGateResult {
+  id          String   @id @default(cuid())
+  packId      String
+  status      String   @default("not_run")
+  checks      Json     @default("[]")
+  passedCount Int      @default(0)
+  warnCount   Int      @default(0)
+  failCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([packId])
+}
+
+// Async, job-based Product Pack v2 generation (Task 3): the API returns a
+// job+pack id immediately instead of blocking on the ~20-25min multi-step
+// LLM pipeline. ProductPackGenerationStep tracks per-step progress/timing so
+// the client can poll for staged availability instead of a bare spinner.
+model ProductPackGenerationJob {
+  id                         String                  @id @default(cuid())
+  workspaceId                String
+  projectId                  String
+  nicheId                    String
+  packId                     String
+  status                     PackGenerationJobStatus @default(queued)
+  generationMode             PackGenerationMode      @default(standard)
+  depth                      String
+  verticalTemplate           String
+  language                   String?
+  requestedById              String?
+  currentStep                String?
+  progressPercent            Int                     @default(0)
+  readyDocumentCount         Int                     @default(0)
+  totalExpectedDocumentCount Int                     @default(0)
+  buildReady                 Boolean                 @default(false)
+  errorCode                  String?
+  errorReason                String?
+  startedAt                  DateTime?
+  completedAt                DateTime?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+  // Free-form extras: durationsMsByStep summary, repair totals, etc.
+  metadata                   Json                    @default("{}")
+
+  steps ProductPackGenerationStep[]
+
+  @@index([workspaceId])
+  @@index([packId])
+  @@index([nicheId])
+}
+
+model ProductPackGenerationStep {
+  id              String                    @id @default(cuid())
+  jobId           String
+  stepKey         String
+  status          PackGenerationStepStatus  @default(pending)
+  provider        String?
+  model           String?
+  maxOutputTokens Int?
+  inputTokens     Int?
+  outputTokens    Int?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+  attemptCount    Int                       @default(0)
+  repairCount     Int                       @default(0)
+  errorCode       String?
+  errorReason     String?
+  documentIds     Json                      @default("[]")
+  metadata        Json                      @default("{}")
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  job ProductPackGenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, stepKey])
+  @@index([jobId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build Blueprint Layer (feature module: Session 14). Additive.
+// One blueprint per pack: screen contracts, state matrix, API↔screen map,
+// component contracts, permission matrix, analytics events, DO_NOT_BUILD.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BuildBlueprint {
+  id                       String   @id @default(cuid())
+  workspaceId              String
+  packId                   String
+  nicheId                  String
+  projectId                String
+  screenContracts          Json     @default("[]")
+  stateMatrix              Json     @default("[]")
+  apiToScreenMap           Json     @default("[]")
+  componentContracts       Json     @default("[]")
+  permissionMatrix         Json     @default("[]")
+  analyticsEvents          Json     @default("[]")
+  doNotBuild               Json     @default("[]")
+  validationRules          Json     @default("[]")
+  // Build Readiness Score — SEPARATE from opportunity/confidence/venture scale.
+  buildReadinessScore      Float    @default(0)
+  buildReadinessLevel      String   @default("low")
+  buildReadinessBreakdown  Json     @default("[]")
+  warnings                 Json     @default("[]")
+  version                  Int      @default(1)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([packId])
+  @@index([nicheId])
+}
+
 model DocumentVersion {
-  id            String   @id @default(cuid())
-  documentId    String
-  version       Int
-  body          String
-  changeSummary String   @default("")
-  authorId      String?
-  generatedBy   String   @default("llm")
-  createdAt     DateTime @default(now())
+  id                     String   @id @default(cuid())
+  documentId             String
+  packId                 String?
+  workspaceId            String?
+  version                Int
+  body                   String
+  changeSummary          String   @default("")
+  authorId               String?
+  generatedBy            String   @default("human")
+  // Provenance of an AI-generated version (null for human edits) — surfaced by
+  // the "why this changed" decision-history UI.
+  provider               String?
+  model                  String?
+  linkedResearchUpdateId String?
+  affectedClaimIds       Json     @default("[]")
+  affectedAssumptionIds  Json     @default("[]")
+  createdAt              DateTime @default(now())
 
   document ProductPackDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@index([documentId])
+  @@index([packId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Document Governance  (feature module: Session 11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ResearchUpdate {
+  id                  String   @id @default(cuid())
+  packId              String
+  workspaceId         String
+  projectId           String?
+  title               String
+  type                String   @default("internal_team_note")
+  content             String   @default("")
+  language            String   @default("en")
+  marketContext       String?
+  sourceRefs          Json     @default("[]")
+  linkedDocumentIds   Json     @default("[]")
+  linkedClaimIds      Json     @default("[]")
+  linkedAssumptionIds Json     @default("[]")
+  linkedQuestionIds   Json     @default("[]")
+  confidenceImpact    String?
+  createdById         String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([packId])
+  @@index([workspaceId])
+}
+
+model DocumentComment {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  projectId     String?
+  packId        String
+  documentId    String?
+  claimId       String?
+  assumptionId  String?
+  // Which document section (by its `### heading` text) this comment is
+  // about. Null = whole-document comment (pre-existing behavior).
+  sectionHeading String?
+  authorId      String
+  body          String
+  status        String    @default("open")
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
+  resolvedBy    String?
+
+  @@index([packId])
   @@index([documentId])
 }
 
@@ -844,6 +1198,180 @@ model UsageCounter {
   used        Float  @default(0)
 
   @@unique([workspaceId, key, period])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Remote MCP server (Phase A1) — OAuth-authenticated AI-client sessions.
+// Additive, backwards-compatible: does not touch UserLLMConnection /
+// WorkspaceLLMSettings. See docs/DEPLOYMENT_HETZNER.md-adjacent MCP notes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A dynamically-registered OAuth client (RFC 7591) for a remote MCP caller —
+/// one row per external platform (e.g. one for Claude.ai, one for ChatGPT),
+/// not per end user. Public client only for A1 (PKCE, no client secret).
+model McpOAuthClient {
+  id                      String   @id @default(cuid())
+  clientName              String
+  redirectUris            String[] @default([])
+  grantTypes              String[] @default(["authorization_code", "refresh_token"])
+  tokenEndpointAuthMethod String   @default("none")
+  softwareId              String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  authorizationCodes McpAuthorizationCode[]
+  refreshTokens      McpRefreshToken[]
+}
+
+/// Short-lived, single-use PKCE authorization code issued after a human
+/// approves the consent screen. codeHash is SHA-256 of the raw code — the
+/// raw value is never persisted.
+model McpAuthorizationCode {
+  id                  String    @id @default(cuid())
+  codeHash            String    @unique
+  clientId            String
+  workspaceId         String
+  userId              String
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  scopes              String[]  @default([])
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime  @default(now())
+
+  client    McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// A connected remote MCP client, scoped to exactly one workspace + user +
+/// granted scopes. This is what "revoke" acts on — independent of any single
+/// access/refresh token's natural expiry.
+model McpClientSession {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  userId            String
+  clientId          String
+  clientName        String    @default("unknown")
+  clientVersion     String?
+  scopes            String[]  @default([])
+  capabilityProfile Json      @default("{}")
+  issuedAt          DateTime  @default(now())
+  expiresAt         DateTime
+  lastSeenAt        DateTime?
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  workspace          Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens      McpRefreshToken[]
+  selfImprovementRuns SelfImprovementRun[]
+
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+/// Opaque refresh token (tokenHash = SHA-256 of the raw value). Access tokens
+/// are stateless JWTs and are not persisted; only refresh tokens need a
+/// revocable row.
+model McpRefreshToken {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  clientId    String
+  workspaceId String
+  userId      String
+  sessionId   String
+  scopes      String[]  @default([])
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  client    McpOAuthClient   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   McpClientSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([sessionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-improvement pipeline (Layer 2 / Phase L2.1) — MCP-proposed, human-gated
+// changes to SignalKit itself. A separate trust boundary from Layer 1 (see
+// McpModule): platform-superadmin only, never granted to workspace roles.
+// SelfImprovementRun is PERMANENT audit history — see onDelete: SetNull below,
+// never Cascade, and the denormalized actor* fields that survive it either way.
+// L2.1 stops at `human_review_pending` (PR open, no merge/deploy) — later
+// statuses exist now so L2.3 (merge/deploy/rollback/circuit breaker) doesn't
+// need another migration, but are unreachable until that phase is built.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SelfImprovementRunStatus {
+  proposed
+  generating
+  testing
+  review_pending
+  human_review_pending
+  failed
+  rolled_back
+  circuit_broken
+}
+
+enum MigrationSafetyClass {
+  none
+  safe_additive_candidate
+  manual_review_required
+  destructive_blocked
+}
+
+model SelfImprovementRun {
+  id                  String   @id @default(cuid())
+
+  // Immutable actor metadata — plain strings, no FK, so this row's meaning
+  // never depends on the User/Workspace rows still existing.
+  actorUserId         String
+  actorWorkspaceId    String?
+  // Historical reference only. onDelete: SetNull (never Cascade) — revoking
+  // or deleting the MCP session must not erase proposal/PR/deploy history.
+  mcpClientSessionId  String?
+
+  requestSummary      String
+  objective           String
+  constraints         Json     @default("[]")
+  acceptanceCriteria  Json     @default("[]")
+
+  baseSha             String
+  generatedBranchName String?
+  generatedCommitSha  String?
+  prNumber            Int?
+  prUrl               String?
+  mergeCommitSha      String?
+
+  status              SelfImprovementRunStatus @default(proposed)
+  failureStage        String?
+  failureReason        String?
+
+  testsPassed          Boolean?
+  reviewFindings        Json    @default("[]")
+  migrationSafety       MigrationSafetyClass @default(none)
+  healthcheckOk          Boolean?
+
+  deployedAt            DateTime?
+  rolledBackAt           DateTime?
+  rollbackReason          String?
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  mcpClientSession McpClientSession? @relation(fields: [mcpClientSessionId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([actorUserId])
 }
 
 model APIKey {

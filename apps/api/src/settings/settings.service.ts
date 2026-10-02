@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { UpdateUserSettingsDto, UpdateWorkspaceSettingsDto } from './dto/settings.dto';
@@ -28,12 +28,11 @@ export class SettingsService {
     return updated;
   }
 
+  /** Fetch (creating defaults if absent) a workspace's settings — same pattern as getUserSettings. */
   async getWorkspaceSettings(workspaceId: string) {
-    const settings = await this.prisma.workspaceSettings.findUnique({ where: { workspaceId } });
-    if (!settings) {
-      throw new NotFoundException('Workspace settings not found');
-    }
-    return settings;
+    const existing = await this.prisma.workspaceSettings.findUnique({ where: { workspaceId } });
+    if (existing) return existing;
+    return this.prisma.workspaceSettings.create({ data: { workspaceId } });
   }
 
   async updateWorkspaceSettings(

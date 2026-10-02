@@ -14,8 +14,11 @@ export default [
       '**/dist/**',
       '**/build/**',
       '**/.next/**',
+      '**/next-env.d.ts',
       '**/node_modules/**',
       '**/*.tsbuildinfo',
+      '**/.chrome-profile/**',
+      '**/coverage/**',
     ],
   },
   js.configs.recommended,
@@ -55,11 +58,39 @@ export default [
     },
   },
   {
-    // Plain Node scripts (build/runtime checks) run untranspiled under CommonJS.
-    files: ['**/*.cjs'],
+    // Engineering law: all AI calls go through LlmRouterService. No feature
+    // module may build a provider adapter or call a provider directly. The LLM
+    // module itself is exempt (it IS the router).
+    files: ['apps/**/*.{ts,tsx}'],
+    ignores: ['apps/api/src/llm/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@signalkit/llm',
+              importNames: [
+                'createAdapter',
+                'OpenAICompatibleAdapter',
+                'AnthropicAdapter',
+                'GoogleAdapter',
+                'DefaultLLMRouter',
+              ],
+              message:
+                'Do not call LLM providers directly. Route AI generation through LlmRouterService (docs/AGENT_RULES.md).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Node-run config files (next.config.mjs, *.config.{js,mjs}) legitimately use
+    // Node globals like `process`. Scope these globals to config files only.
+    files: ['**/*.config.{js,mjs}', '**/next.config.mjs'],
     languageOptions: {
-      sourceType: 'commonjs',
-      globals: { console: 'readonly', process: 'readonly', require: 'readonly', module: 'writable' },
+      globals: { process: 'readonly', __dirname: 'readonly', module: 'readonly', require: 'readonly' },
     },
   },
   prettier,

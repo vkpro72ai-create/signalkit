@@ -1,0 +1,70 @@
+ARG NODE_VERSION=22
+ARG PNPM_VERSION=10.32.1
+
+FROM node:${NODE_VERSION}-alpine AS base
+ARG PNPM_VERSION
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+FROM base AS deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY apps/api/package.json apps/api/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/evidence/package.json packages/evidence/package.json
+COPY packages/exports/package.json packages/exports/package.json
+COPY packages/llm/package.json packages/llm/package.json
+COPY packages/i18n/package.json packages/i18n/package.json
+COPY packages/ui/package.json packages/ui/package.json
+RUN pnpm install --frozen-lockfile
+
+FROM deps AS builder
+WORKDIR /app
+COPY tsconfig.base.json tsconfig.json ./
+COPY apps/api/ apps/api/
+COPY packages/config/ packages/config/
+COPY packages/shared/ packages/shared/
+COPY packages/evidence/ packages/evidence/
+COPY packages/exports/ packages/exports/
+COPY packages/llm/ packages/llm/
+COPY packages/i18n/ packages/i18n/
+COPY packages/ui/ packages/ui/
+
+RUN pnpm --filter @signalkit/config build && \
+    pnpm --filter @signalkit/shared build && \
+    pnpm --filter @signalkit/evidence build && \
+    pnpm --filter @signalkit/exports build && \
+    pnpm --filter @signalkit/llm build && \
+    pnpm --filter @signalkit/i18n build && \
+    pnpm --filter @signalkit/ui build
+
+ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
+ENV DIRECT_URL=postgresql://build:build@127.0.0.1:5432/build
+RUN pnpm --filter @signalkit/api exec prisma generate
+RUN pnpm --filter @signalkit/api build
+RUN pnpm --filter @signalkit/api deploy --prod --legacy /deploy/api
+RUN cp -r apps/api/prisma /deploy/api/prisma
+RUN cp -r apps/api/assets /deploy/api/assets
+RUN cd /deploy/api && node_modules/.bin/prisma generate --schema ./prisma/schema.prisma
+
+FROM node:${NODE_VERSION}-alpine AS runner
+WORKDIR /app
+RUN apk add --no-cache tini redis openssl && \
+    addgroup --system --gid 1001 signalkit && \
+    adduser --system --uid 1001 --ingroup signalkit signalkit
+COPY --from=builder --chown=signalkit:signalkit /deploy/api ./
+COPY --chown=signalkit:signalkit infra/docker/rundea-api-entrypoint.sh /app/rundea-api-entrypoint.sh
+RUN mkdir -p /var/lib/signalkit/exports /var/lib/signalkit/redis && \
+    chown -R signalkit:signalkit /var/lib/signalkit
+USER signalkit
+ENV NODE_ENV=production
+ENV PORT=4000
+ENV HOST=0.0.0.0
+ENV EXPORT_STORAGE_PATH=/var/lib/signalkit/exports
+EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:4000/health 2>/dev/null | grep -q '"status"' || exit 1
+ENTRYPOINT ["/sbin/tini", "--", "sh", "/app/rundea-api-entrypoint.sh"]

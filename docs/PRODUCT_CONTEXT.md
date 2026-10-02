@@ -32,3 +32,19 @@ The primary deliverable is the **Product Document Pack**: up to 27 structured do
 ## How opportunities are found
 
 Real **source ingestion** → normalized **signals** → an **evidence graph** (claims, evidence, contradictions, assumptions, confidence) → **scoring** → **niches** → **Product Document Pack**. Nothing important is asserted without evidence or an explicit, tracked assumption.
+
+## Venture-scale opportunities & build readiness (Session 14)
+
+SignalKit does not output weak trend niches. Every strong opportunity carries a
+**Venture Thesis** (wedge → expansion → venture path → kill reasons) and four
+**separate** scores: Opportunity (good opportunity?), Confidence (well
+supported?), Venture Scale (could become large?) and Build Readiness (ready to
+build?). There is **no fabricated TAM** and **no unsupported unicorn claims** —
+weak market size and unproven moats are flagged as assumptions / unresolved
+questions, never presented as facts.
+
+The **Build Blueprint** turns a pack into implementation-ready context: screen
+logic, state matrix, API-to-screen mapping, component contracts, permission
+matrix, analytics events and an explicit `DO_NOT_BUILD` list. This lets
+designers, developers and AI coding agents implement without inventing product
+logic. See `docs/BREAKOUT_OPPORTUNITY_ENGINE.md` and `docs/BUILD_BLUEPRINT.md`.

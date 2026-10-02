@@ -95,13 +95,25 @@ export type AuditLogAction =
   | 'llm.connection_revoked'
   | 'llm.settings_updated'
   | 'pack.generated'
+  | 'pack.retried'
   | 'document.approved'
+  | 'document.saved'
+  | 'document.regenerated'
+  | 'document.locked'
+  | 'document.restored'
+  | 'document.changes_requested'
+  | 'implementation_project.promoted'
+  | 'implementation_project.updated'
   | 'export.created'
   | 'share.created'
   | 'share.accessed'
   | 'comment.resolved'
   | 'api_key.created'
-  | 'api_key.revoked';
+  | 'api_key.revoked'
+  | 'mcp.client_registered'
+  | 'mcp.session_created'
+  | 'mcp.session_revoked'
+  | 'mcp.tool_invoked';
 
 export interface AuditLogEvent extends Timestamps, WorkspaceOwned {
   id: Id;
