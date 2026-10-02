@@ -7,14 +7,17 @@ import { PrismaService } from '../prisma/prisma.service';
 /**
  * Liveness/readiness endpoint. Public. Reports a DB sub-check; redis/storage
  * checks are added as those subsystems come online (Session 7 / Session 13).
+ *
+ * The root alias is intentional: older Rundea control planes verify a newly
+ * attached public domain at "/" before switching to the configured health path.
  */
 @ApiTags('health')
-@Controller('health')
+@Controller()
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Public()
-  @Get()
+  @Get(['health', ''])
   @ApiOperation({ summary: 'Health check' })
   async getHealth(): Promise<HealthResponse> {
     const checks: HealthResponse['checks'] = [];
