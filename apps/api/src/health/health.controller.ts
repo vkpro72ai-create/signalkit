@@ -8,20 +8,25 @@ import { PrismaService } from '../prisma/prisma.service';
 /**
  * Health endpoints — all public (no auth required).
  *
- * GET /health        — full check: DB + Redis. Used by Caddy upstream health.
- * GET /health/live   — liveness: always 200 if process is running.
- * GET /health/ready  — readiness: DB + Redis must both be reachable.
- *
- * Docker HEALTHCHECK uses /health. Kubernetes liveness/readiness probes
- * would use /health/live and /health/ready respectively.
+ * GET /             — full check alias used by Rundea domain verification.
+ * GET /health       — full check: DB + Redis.
+ * GET /health/live  — liveness: always 200 if process is running.
+ * GET /health/ready — readiness: DB + Redis must both be reachable.
  */
 @ApiTags('health')
-@Controller('health')
+@Controller()
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Public()
   @Get()
+  @ApiOperation({ summary: 'Rundea root health check alias' })
+  async getRootHealth(): Promise<HealthResponse> {
+    return this.getHealth();
+  }
+
+  @Public()
+  @Get('health')
   @ApiOperation({ summary: 'Full health check (DB + Redis)' })
   async getHealth(): Promise<HealthResponse> {
     const [dbOk, redisOk] = await Promise.all([this.checkDb(), this.checkRedis()]);
@@ -39,7 +44,7 @@ export class HealthController {
   }
 
   @Public()
-  @Get('live')
+  @Get('health/live')
   @HttpCode(200)
   @ApiOperation({ summary: 'Liveness probe — always 200 if process is running' })
   getLive(): HealthResponse {
@@ -52,7 +57,7 @@ export class HealthController {
   }
 
   @Public()
-  @Get('ready')
+  @Get('health/ready')
   @HttpCode(200)
   @ApiOperation({ summary: 'Readiness probe — DB and Redis must be reachable' })
   async getReady(): Promise<HealthResponse> {
@@ -70,8 +75,6 @@ export class HealthController {
     };
   }
 
-  // ── Private helpers ───────────────────────────────────────────────────────
-
   private async checkDb(): Promise<boolean> {
     try {
       await this.prisma.$queryRaw`SELECT 1`;
@@ -83,7 +86,7 @@ export class HealthController {
 
   private async checkRedis(): Promise<boolean> {
     const redisUrl = optionalEnv('REDIS_URL', '');
-    if (!redisUrl) return true; // Redis optional in dev; don't fail if not configured
+    if (!redisUrl) return true;
 
     let client: import('ioredis').default | null = null;
     try {
