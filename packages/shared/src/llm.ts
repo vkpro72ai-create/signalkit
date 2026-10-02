@@ -77,6 +77,7 @@ export interface LLMModel extends Timestamps {
 
 /** Every AI task type the platform routes. Stable identifiers — used in configs. */
 export type LLMTaskType =
+  | 'llm_smoke_test'
   | 'source_summarization'
   | 'signal_extraction'
   | 'signal_normalization'

@@ -22,12 +22,9 @@ Hard rules for every contributor — human or AI agent — working in this repos
 
 - No intentional temporary architecture; no TODO-only features.
 - No duplicated systems for language / geo / LLM / evidence / document pipeline. There is exactly one of each (`@signalkit/i18n`, geo in `@signalkit/shared`, `@signalkit/llm`, `@signalkit/evidence`, the Product Pack pipeline).
-- **All AI calls go through the `LLMRouter`** (`@signalkit/llm`). Feature modules must never call a provider SDK directly.
+- **All AI calls go through the router.** Feature modules call `LlmRouterService.run(GenerationRequest)` (API) — they must never build a provider adapter or call a provider directly. This is enforced by ESLint (`no-restricted-imports` bans `createAdapter`/adapters/`DefaultLLMRouter` outside `apps/api/src/llm/`). Every generation carries a `GenerationContract` (interface/output/market language, target country/region, evidence requirement, unsupported-claims policy, document type, pack depth, vertical template). The router applies routing rules, a cost gate, retry, fallback, output validation, and writes a usage log on every attempt.
 - Mocking is allowed **only** in tests, local demo/seed data, and provider simulation when credentials are absent. Even without external keys, implement the real integration contract, UI, config, error states and tests.
 - Secrets are never committed, never logged, never returned to the frontend (masked display only).
-- **Recurring work has a data budget.** Cron/reconcile/polling/queue scans must filter in the database, use explicit column projections, exclude heavy payload/blob/result/error fields from summary reads, and enforce a hard limit/cursor. Never fetch unbounded history and filter it in application code.
-- **Heavy history needs retention.** Large payload/result/error bodies need an explicit retention/archive policy; list/reconcile paths read summaries only and fetch detail by id.
-- **Scheduled-query regressions need tests.** Critical recurring paths must have a test proving server-side filters, bounded reads and omission of heavy fields.
 
 ## After every session
 

@@ -5,6 +5,8 @@
  */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { STATIC_MODEL_CATALOG, DEFAULT_BASE_URLS } from '@signalkit/llm';
+import { LLM_PROVIDER_TYPES } from '@signalkit/shared';
 
 const prisma = new PrismaClient();
 
@@ -128,8 +130,93 @@ async function main(): Promise<void> {
     });
   }
 
+  // LLM providers (registry rows).
+  const PROVIDER_DISPLAY: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    google: 'Google',
+    mistral: 'Mistral',
+    deepseek: 'DeepSeek',
+    openrouter: 'OpenRouter',
+    openai_compatible: 'OpenAI-compatible endpoint',
+    custom: 'Custom provider',
+  };
+  for (const type of LLM_PROVIDER_TYPES) {
+    await prisma.lLMProvider.upsert({
+      where: { type },
+      update: { displayName: PROVIDER_DISPLAY[type] ?? type, hasAdapter: true },
+      create: {
+        type,
+        displayName: PROVIDER_DISPLAY[type] ?? type,
+        baseUrl: DEFAULT_BASE_URLS[type] ?? null,
+        hasAdapter: true,
+      },
+    });
+  }
+
+  // Static model catalog (seed pricing; refreshed live when a key is present).
+  const fetchedAt = new Date();
+  for (const m of STATIC_MODEL_CATALOG) {
+    await prisma.lLMModel.upsert({
+      where: { provider_modelId: { provider: m.provider, modelId: m.modelId } },
+      update: {
+        displayName: m.displayName,
+        contextWindow: m.contextWindow,
+        maxOutputTokens: m.maxOutputTokens,
+        inputTokenPrice: m.inputTokenPrice,
+        outputTokenPrice: m.outputTokenPrice,
+        currency: m.currency,
+        pricingSource: m.pricingSource,
+        pricingFetchedAt: fetchedAt,
+        ratingOverall: m.ratingOverall,
+        ratingReasoning: m.ratingReasoning,
+        ratingResearch: m.ratingResearch,
+        ratingDocumentWriting: m.ratingDocumentWriting,
+        ratingMultilingual: m.ratingMultilingual,
+        speedRating: m.speedRating,
+        privacyRating: m.privacyRating,
+        strengths: m.strengths,
+        weaknesses: m.weaknesses,
+        bestUseCases: m.bestUseCases,
+        supportedLanguages: m.supportedLanguages,
+        supportsJsonMode: m.supportsJsonMode,
+        supportsTools: m.supportsTools,
+        supportsVision: m.supportsVision,
+        supportsReasoning: m.supportsReasoning,
+      },
+      create: {
+        provider: m.provider,
+        modelId: m.modelId,
+        displayName: m.displayName,
+        contextWindow: m.contextWindow,
+        maxOutputTokens: m.maxOutputTokens,
+        inputTokenPrice: m.inputTokenPrice,
+        outputTokenPrice: m.outputTokenPrice,
+        currency: m.currency,
+        pricingSource: m.pricingSource,
+        pricingFetchedAt: fetchedAt,
+        ratingOverall: m.ratingOverall,
+        ratingReasoning: m.ratingReasoning,
+        ratingResearch: m.ratingResearch,
+        ratingDocumentWriting: m.ratingDocumentWriting,
+        ratingMultilingual: m.ratingMultilingual,
+        speedRating: m.speedRating,
+        privacyRating: m.privacyRating,
+        strengths: m.strengths,
+        weaknesses: m.weaknesses,
+        bestUseCases: m.bestUseCases,
+        supportedLanguages: m.supportedLanguages,
+        supportsJsonMode: m.supportsJsonMode,
+        supportsTools: m.supportsTools,
+        supportsVision: m.supportsVision,
+        supportsReasoning: m.supportsReasoning,
+      },
+    });
+  }
+
   console.log(
-    `Seeded: ${countries.length} countries, 3 users, workspace "${workspace.slug}", demo projects.\n` +
+    `Seeded: ${countries.length} countries, 3 users, workspace "${workspace.slug}", demo projects, ` +
+      `${LLM_PROVIDER_TYPES.length} providers, ${STATIC_MODEL_CATALOG.length} models.\n` +
       `Demo login: founder@signalkit.dev / ${DEMO_PASSWORD}`,
   );
 }

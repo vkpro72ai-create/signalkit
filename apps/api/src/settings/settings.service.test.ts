@@ -39,4 +39,18 @@ describe('SettingsService', () => {
     const svc = new SettingsService(prisma, audit);
     expect(await svc.getUserSettings('u1')).toEqual(created);
   });
+
+  it('creates default workspace settings when none exist (workspaces created before this feature never got a settings row)', async () => {
+    const created = { id: 'ws1', workspaceId: 'w1', aiEngineName: null };
+    const prisma = {
+      workspaceSettings: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(created),
+      },
+    } as unknown as PrismaService;
+    const audit = { record: vi.fn() } as unknown as AuditService;
+
+    const svc = new SettingsService(prisma, audit);
+    expect(await svc.getWorkspaceSettings('w1')).toEqual(created);
+  });
 });

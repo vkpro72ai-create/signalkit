@@ -53,11 +53,13 @@ export class PermissionsGuard implements CanActivate {
     const params = (request.params ?? {}) as Record<string, string>;
     const body = (request.body ?? {}) as Record<string, unknown>;
     const query = (request.query ?? {}) as Record<string, unknown>;
+    // Explicit workspace references win over the generic `:id` param, which only
+    // means a workspace on the /workspaces/:id route.
     return (
       params['workspaceId'] ??
-      params['id'] ??
       (typeof body['workspaceId'] === 'string' ? body['workspaceId'] : undefined) ??
       (typeof query['workspaceId'] === 'string' ? (query['workspaceId'] as string) : undefined) ??
+      params['id'] ??
       null
     );
   }

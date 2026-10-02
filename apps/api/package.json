@@ -3,22 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "description": "SignalKit NestJS backend.",
-  "files": [
-    "dist",
-    "scripts"
-  ],
-  "engines": {
-    "node": ">=22.12.0"
-  },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "scripts": {
-    "build:deps": "pnpm --filter \"@signalkit/api^...\" run build",
-    "predev": "pnpm run build:deps && pnpm run prisma:generate",
+    "predev": "pnpm --filter @signalkit/api^... build",
     "dev": "nest start --watch",
-    "build": "pnpm run build:deps && pnpm run prisma:generate && nest build",
-    "postbuild": "node scripts/verify-runtime-deps.cjs",
+    "prestart": "pnpm --filter @signalkit/api^... build",
+    "build": "nest build",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -30,6 +22,7 @@
     "db:reset": "prisma migrate reset --force"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@nestjs/common": "^10.4.15",
     "@nestjs/core": "^10.4.15",
     "@nestjs/jwt": "^10.2.0",
@@ -37,20 +30,36 @@
     "@nestjs/swagger": "^8.1.0",
     "@prisma/client": "^6.1.0",
     "@signalkit/config": "workspace:*",
+    "@signalkit/evidence": "workspace:*",
+    "@signalkit/exports": "workspace:*",
+    "@signalkit/i18n": "workspace:*",
+    "@signalkit/llm": "workspace:*",
     "@signalkit/shared": "workspace:*",
     "bcryptjs": "^2.4.3",
+    "bullmq": "^5.34.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "cookie-parser": "^1.4.7",
+    "ioredis": "^5.11.0",
+    "jsonrepair": "^3.15.0",
+    "jszip": "^3.10.1",
+    "pdfkit": "^0.15.1",
     "prisma": "^6.1.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
     "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.9.3"
+    "@types/js-yaml": "^4.0.9",
+    "@types/pdf-parse": "^1.1.4",
+    "@types/pdfkit": "^0.13.7",
+    "js-yaml": "^4.1.0",
+    "pdf-parse": "^1.1.1",
+    "tsx": "^4.19.2"
   }
 }
