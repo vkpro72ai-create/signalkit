@@ -47,16 +47,25 @@ export default function SignalKitHome() {
       }
       setWs({ id: membership.workspace.id, name: membership.workspace.name });
       const projects = await workspaceApi.listProjects(membership.workspace.id);
-      const p = projects[0] ?? null;
+      const allOpportunities = await opportunityApi.listAll(membership.workspace.id);
+      const projectIdsWithOpportunities = new Set(allOpportunities.map((opportunity) => opportunity.projectId));
+      // A newly created project may be empty, while smoke/scenario projects
+      // are internal diagnostics. Prefer the newest real project that already
+      // contains discoveries so returning users see their existing work.
+      const isDiagnosticProject = (name: string) =>
+        /(?:^|\\b)(?:test|smoke|scenario)(?:\\b|$)|тест/i.test(name);
+      const p =
+        projects.find(
+          (candidate) =>
+            projectIdsWithOpportunities.has(candidate.id) && !isDiagnosticProject(candidate.name),
+        ) ??
+        projects.find((candidate) => projectIdsWithOpportunities.has(candidate.id)) ??
+        projects[0] ??
+        null;
       setProject(p);
       if (p) {
-        // Same call/shape the Opportunities page uses (scoped to this project) —
-        // previously Home and Opportunities used two different endpoints for
-        // what was meant to be the same "top opportunities" concept.
-        const [opps, radarSummary] = await Promise.all([
-          opportunityApi.listAll(membership.workspace.id, p.id),
-          opportunityApi.radarSummary(membership.workspace.id, p.id),
-        ]);
+        const opps = allOpportunities.filter((opportunity) => opportunity.projectId === p.id);
+        const radarSummary = await opportunityApi.radarSummary(membership.workspace.id, p.id);
         setOpportunities(opps);
         setSummary(radarSummary);
       } else {

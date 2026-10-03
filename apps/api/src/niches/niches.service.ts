@@ -719,11 +719,28 @@ export class NichesService {
   /** Optional projectId scopes this to one project's opportunities — same shape/fields either way, so the Radar (per-project) and Opportunities (workspace-wide) pages can't silently disagree on what "top opportunities" means. */
   async listAll(workspaceId: string, projectId?: string) {
     const scope = projectId ? { workspaceId, projectId } : { workspaceId };
+    // Dashboard/list endpoints must never materialize the document/blueprint
+    // JSON payloads. Some production packs are large enough to exhaust the
+    // container heap when Prisma returns whole rows.
     const niches = await this.prisma.niche.findMany({
       where: scope,
-      include: {
-        scores: { orderBy: { createdAt: 'desc' }, take: 1 },
-        ventureTheses: { orderBy: { createdAt: 'desc' }, take: 1 },
+      select: {
+        id: true,
+        title: true,
+        oneLiner: true,
+        whyNow: true,
+        riskLevel: true,
+        projectId: true,
+        scores: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { totalScore: true, confidenceLevel: true, confidenceValue: true },
+        },
+        ventureTheses: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { ventureScaleScore: true, ventureScaleLevel: true },
+        },
         project: { select: { targetCountry: true, marketScope: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -736,6 +753,7 @@ export class NichesService {
       }),
       this.prisma.buildBlueprint.findMany({
         where: { workspaceId },
+        select: { nicheId: true, buildReadinessScore: true },
         orderBy: { createdAt: 'desc' },
       }),
     ]);
@@ -749,7 +767,7 @@ export class NichesService {
 
     return niches.map((n) => {
       const score = n.scores[0];
-      const vt = n.ventureTheses?.[0];
+      const vt = n.ventureTheses[0];
       return {
         id: n.id,
         name: n.title,
@@ -772,12 +790,9 @@ export class NichesService {
   }
 
   /**
-   * Real, honestly-derived headline metrics for the Radar dashboard — every
-   * field is computed from existing rows (Niche/NicheScore/VentureThesis/
-   * LLMUsageLog createdAt timestamps), not fabricated. There is no daily
-   * snapshot table, so week-over-week deltas compare *rows created* in the
-   * last 7 days vs. the 7 days before that (a proxy for "is discovery
-   * trending up/down"), not the historical state of existing rows.
+   * Real, honestly-derived headline metrics for the Radar dashboard.
+   * Aggregates keep the response bounded and select only the three scalar
+   * values needed from each latest per-niche relation.
    */
   async radarSummary(workspaceId: string, projectId: string) {
     const now = new Date();
@@ -800,24 +815,59 @@ export class NichesService {
       this.prisma.niche.count({ where: { projectId } }),
       this.prisma.niche.count({ where: { projectId, createdAt: { gte: weekAgo } } }),
       this.prisma.niche.count({ where: { projectId, createdAt: { gte: twoWeeksAgo, lt: weekAgo } } }),
-      this.prisma.nicheScore.findMany({ where: { niche: { projectId }, createdAt: { gte: weekAgo } }, select: { confidenceValue: true } }),
-      this.prisma.nicheScore.findMany({ where: { niche: { projectId }, createdAt: { gte: twoWeeksAgo, lt: weekAgo } }, select: { confidenceValue: true } }),
+      this.prisma.nicheScore.aggregate({
+        where: { niche: { projectId }, createdAt: { gte: weekAgo } },
+        _avg: { confidenceValue: true },
+      }),
+      this.prisma.nicheScore.aggregate({
+        where: { niche: { projectId }, createdAt: { gte: twoWeeksAgo, lt: weekAgo } },
+        _avg: { confidenceValue: true },
+      }),
       this.prisma.niche.findMany({
         where: { projectId },
-        include: { scores: { orderBy: { createdAt: 'desc' }, take: 1 } },
+        select: {
+          scores: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { confidenceValue: true },
+          },
+        },
       }),
-      this.prisma.ventureThesis.findMany({ where: { niche: { projectId }, createdAt: { gte: weekAgo } }, select: { ventureScaleScore: true } }),
-      this.prisma.ventureThesis.findMany({ where: { niche: { projectId }, createdAt: { gte: twoWeeksAgo, lt: weekAgo } }, select: { ventureScaleScore: true } }),
+      this.prisma.ventureThesis.aggregate({
+        where: { niche: { projectId }, createdAt: { gte: weekAgo } },
+        _avg: { ventureScaleScore: true },
+      }),
+      this.prisma.ventureThesis.aggregate({
+        where: { niche: { projectId }, createdAt: { gte: twoWeeksAgo, lt: weekAgo } },
+        _avg: { ventureScaleScore: true },
+      }),
       this.prisma.niche.findMany({
         where: { projectId },
-        include: { ventureTheses: { orderBy: { createdAt: 'desc' }, take: 1 } },
+        select: {
+          ventureTheses: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { ventureScaleScore: true },
+          },
+        },
       }),
-      this.prisma.lLMUsageLog.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
-      this.prisma.workspaceSettings.findUnique({ where: { workspaceId }, select: { aiEngineName: true } }),
+      this.prisma.lLMUsageLog.findFirst({
+        where: { workspaceId },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+      this.prisma.workspaceSettings.findUnique({
+        where: { workspaceId },
+        select: { aiEngineName: true },
+      }),
     ]);
 
     const currentAvgConfidence = avg(latestScores.map((n) => n.scores[0]?.confidenceValue).filter(isNumber));
     const currentAvgVentureScale = avg(latestTheses.map((n) => n.ventureTheses[0]?.ventureScaleScore).filter(isNumber));
+    const thisWeekConfidence = scoresThisWeek._avg.confidenceValue ?? 0;
+    const priorWeekConfidence = scoresPriorWeek._avg.confidenceValue ?? 0;
+    const thisWeekVenture = thesesThisWeek._avg.ventureScaleScore ?? 0;
+    const priorWeekVenture = thesesPriorWeek._avg.ventureScaleScore ?? 0;
 
     return {
       opportunitiesFound: {
@@ -827,22 +877,11 @@ export class NichesService {
       avgConfidence: {
         value: currentAvgConfidence,
         level: bandOfScore(currentAvgConfidence),
-        deltaPct: percentDelta(
-          avg(scoresThisWeek.map((s) => s.confidenceValue)),
-          avg(scoresPriorWeek.map((s) => s.confidenceValue)),
-        ),
+        deltaPct: percentDelta(thisWeekConfidence, priorWeekConfidence),
       },
-      // "Investor interest" has no dedicated backend signal today — this is
-      // an honest relabeling of the existing Venture Scale Score/Level
-      // (apps/api/src/niches/venture.ts), not a new fabricated metric.
-      // ventureScaleScore is 0-100 (see computeVentureScaleScore), unlike
-      // confidenceValue which is already 0-1 — normalize before banding.
       investorInterest: {
         level: bandOfScore(currentAvgVentureScale / 100),
-        deltaPct: percentDelta(
-          avg(thesesThisWeek.map((t) => t.ventureScaleScore)),
-          avg(thesesPriorWeek.map((t) => t.ventureScaleScore)),
-        ),
+        deltaPct: percentDelta(thisWeekVenture, priorWeekVenture),
       },
       aiEngine: {
         displayName: settings?.aiEngineName ?? null,

@@ -1217,25 +1217,56 @@ export class PackService {
     const packs = await this.prisma.productDocumentPack.findMany({
       where: { workspaceId, nicheId },
       orderBy: { createdAt: 'desc' },
-      include: { documents: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        nicheId: true,
+        projectId: true,
+        title: true,
+        depth: true,
+        verticalTemplate: true,
+        primaryLanguage: true,
+        status: true,
+        confidenceValue: true,
+        confidenceLevel: true,
+        version: true,
+        createdAt: true,
+        updatedAt: true,
+        // List views only need the count. Loading document body + metadata for
+        // every pack can materialize hundreds of megabytes.
+        documents: { select: { id: true } },
+      },
     });
     return this.attachLatestGates(packs);
   }
 
   /**
    * List every pack in the workspace (optionally scoped to one research
-   * project) in a single pair of queries — the workspace-wide "Пакеты
-   * документов" page used to fetch niches workspace-wide and then call
-   * `listForNiche` once per niche in a sequential loop; with dozens of
-   * niches across many research contexts that N+1 round-trip chain is what
-   * made the page look stuck on "Loading…" (each request is fast, but
-   * awaiting 50+ of them one at a time is not).
+   * project) without loading document bodies, per-document JSON metadata, or
+   * quality-gate checks. The detail endpoint remains the place for full data.
    */
   async listForWorkspace(workspaceId: string, projectId?: string) {
     const packs = await this.prisma.productDocumentPack.findMany({
       where: { workspaceId, ...(projectId ? { projectId } : {}) },
       orderBy: { createdAt: 'desc' },
-      include: { documents: true, niche: { select: { id: true, title: true } } },
+      select: {
+        id: true,
+        workspaceId: true,
+        nicheId: true,
+        projectId: true,
+        title: true,
+        depth: true,
+        verticalTemplate: true,
+        primaryLanguage: true,
+        status: true,
+        confidenceValue: true,
+        confidenceLevel: true,
+        version: true,
+        createdAt: true,
+        updatedAt: true,
+        documents: { select: { id: true } },
+        niche: { select: { id: true, title: true } },
+      },
     });
     return this.attachLatestGates(packs);
   }
@@ -1245,6 +1276,15 @@ export class PackService {
     const gates = await this.prisma.qualityGateResult.findMany({
       where: { packId: { in: packs.map((pack) => pack.id) } },
       orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        packId: true,
+        status: true,
+        passedCount: true,
+        warnCount: true,
+        failCount: true,
+        createdAt: true,
+      },
     });
     const latestGateByPack = new Map<string, (typeof gates)[number]>();
     for (const gate of gates) {
