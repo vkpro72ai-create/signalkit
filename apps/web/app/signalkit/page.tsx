@@ -49,9 +49,19 @@ export default function SignalKitHome() {
       const projects = await workspaceApi.listProjects(membership.workspace.id);
       const allOpportunities = await opportunityApi.listAll(membership.workspace.id);
       const projectIdsWithOpportunities = new Set(allOpportunities.map((opportunity) => opportunity.projectId));
-      // A newly created project may be empty. Prefer the newest project that
-      // already contains discoveries so returning users see their existing work.
-      const p = projects.find((candidate) => projectIdsWithOpportunities.has(candidate.id)) ?? projects[0] ?? null;
+      // A newly created project may be empty, while smoke/scenario projects
+      // are internal diagnostics. Prefer the newest real project that already
+      // contains discoveries so returning users see their existing work.
+      const isDiagnosticProject = (name: string) =>
+        /(?:^|\\b)(?:test|smoke|scenario)(?:\\b|$)|тест/i.test(name);
+      const p =
+        projects.find(
+          (candidate) =>
+            projectIdsWithOpportunities.has(candidate.id) && !isDiagnosticProject(candidate.name),
+        ) ??
+        projects.find((candidate) => projectIdsWithOpportunities.has(candidate.id)) ??
+        projects[0] ??
+        null;
       setProject(p);
       if (p) {
         const opps = allOpportunities.filter((opportunity) => opportunity.projectId === p.id);
